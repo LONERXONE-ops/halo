@@ -1,9 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FF05050A" android:strokeColor="#66FFFFFF" android:strokeWidth="1.5"
-        android:pathData="M40,45h28a9,9 0 0 1 0,18h-28a9,9 0 0 1 0,-18z" />
-    <path android:fillColor="#FF34C759"
-        android:pathData="M68,50a4,4 0 1 1 0,8a4,4 0 1 1 0,-8z" />
+    <!-- glass pill -->
+    <path android:strokeColor="#66FFFFFF" android:strokeWidth="1.2"
+        android:pathData="M38,43h32a11,11 0 0 1 0,22h-32a11,11 0 0 1 0,-22z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear"
+                android:startX="54" android:startY="43"
+                android:endX="54" android:endY="65">
+                <item android:offset="0" android:color="#FF26262F" />
+                <item android:offset="0.5" android:color="#FF0B0B10" />
+                <item android:offset="1" android:color="#FF050507" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- top sheen -->
+    <path android:fillColor="#1FFFFFFF"
+        android:pathData="M38,44.2h32a9.8,9.8 0 0 1 9.4,7h-50.8a9.8,9.8 0 0 1 9.4,-7z" />
+    <!-- album art dot -->
+    <path android:pathData="M38,48a6,6 0 1 1 0,12a6,6 0 1 1 0,-12z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear"
+                android:startX="32" android:startY="48"
+                android:endX="44" android:endY="60">
+                <item android:offset="0" android:color="#FFFFB347" />
+                <item android:offset="1" android:color="#FFFF4F8B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- waveform -->
+    <path android:strokeColor="#FF34C759" android:strokeWidth="2.2" android:strokeLineCap="round"
+        android:pathData="M63,52v4M67,49.5v9M71,51v6M75,52.5v3" />
 </vector>

@@ -1,8 +1,11 @@
 package com.lonerxone.halo
 
+import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -96,6 +99,19 @@ class MainActivity : Activity() {
             }
         })
         setup.addView(line())
+        setup.addView(statusRow("Calls, Bluetooth & alerts", "Phone state, end call, earbuds, notifications", runtimeOk()) {
+            val missing = RUNTIME_PERMS.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (missing.isEmpty()) {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            } else {
+                requestPermissions(missing.toTypedArray(), 7)
+            }
+        })
+        setup.addView(line())
+        setup.addView(statusRow("Do Not Disturb access", "Shows silent and DND changes", dndOk()) {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        })
+        setup.addView(line())
         setup.addView(infoRow("Switch greyed out?", "App info → ⋮ → Allow restricted settings, then try again. Or run the ADB commands below.") {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         })
@@ -162,6 +178,25 @@ class MainActivity : Activity() {
         })
         col.addView(adb)
 
+        // ----- About -----
+        col.addView(sectionTitle("About"))
+        val about = card()
+        about.addView(infoRow("Version", version()) {})
+        about.addView(line())
+        about.addView(infoRow("Built for", "Galaxy A06 · One UI 8 · Android 16") {})
+        about.addView(line())
+        about.addView(infoRow("What's new", WHATS_NEW) {})
+        about.addView(line())
+        about.addView(infoRow("Updates", "New versions land on GitHub Releases") {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/LONERXONE-ops/halo/releases")))
+            } catch (_: Exception) {
+            }
+        })
+        about.addView(line())
+        about.addView(infoRow("Privacy", "Halo never reads your screen and sends nothing off your phone. Music and alerts stay on-device.") {})
+        col.addView(about)
+
         col.addView(label("Halo ${version()} · built for One UI", 12f, text2, false).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(24), 0, 0)
@@ -187,6 +222,17 @@ class MainActivity : Activity() {
     private fun accessibilityOn(): Boolean {
         val s = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
         return s.contains("$packageName/")
+    }
+
+    private fun runtimeOk(): Boolean =
+        RUNTIME_PERMS.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
+    private fun dndOk(): Boolean =
+        getSystemService(NotificationManager::class.java)?.isNotificationPolicyAccessGranted == true
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        render()
     }
 
     private fun listenerOn(): Boolean {
@@ -220,6 +266,8 @@ class MainActivity : Activity() {
             adb shell settings put secure accessibility_enabled 1
             adb shell cmd deviceidle whitelist +${'$'}PKG
             adb shell cmd appops set ${'$'}PKG RUN_ANY_IN_BACKGROUND allow
+            for P in READ_PHONE_STATE ANSWER_PHONE_CALLS BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant ${'$'}PKG android.permission.${'$'}P; done
+            adb shell cmd notification allow_dnd ${'$'}PKG
         """.trimIndent()
     }
 
@@ -342,5 +390,18 @@ class MainActivity : Activity() {
     @Suppress("unused")
     private fun spacer(h: Int): View = FrameLayout(this).apply {
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h)
+    }
+
+    companion object {
+        private val RUNTIME_PERMS = listOf(
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.ANSWER_PHONE_CALLS,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
+
+        private const val WHATS_NEW =
+            "New glass icon, About section, and one-tap permissions for calls, Bluetooth and alerts. " +
+                "Fixed the island staying hidden on some screens."
     }
 }
