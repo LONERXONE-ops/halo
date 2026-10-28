@@ -46,9 +46,44 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
+    private var liveView: TextView? = null
+    private val ui = android.os.Handler(android.os.Looper.getMainLooper())
+    private val liveTick = object : Runnable {
+        override fun run() {
+            liveView?.text = liveStatus()
+            ui.postDelayed(this, 1000L)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         render()
+        // If access is on but the listener never connected, ask Android to bind it again.
+        if (listenerOn() && !Debug.listenerConnected) {
+            try {
+                android.service.notification.NotificationListenerService.requestRebind(
+                    android.content.ComponentName(this, HaloNotificationListener::class.java),
+                )
+            } catch (_: Exception) {
+            }
+        }
+        ui.post(liveTick)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        ui.removeCallbacks(liveTick)
+    }
+
+    private fun liveStatus(): String {
+        val svc = HaloService.instance
+        return buildString {
+            append("Island     ").append(if (svc == null) "service not running" else Debug.island).append('\n')
+            append("Listener   ").append(if (Debug.listenerConnected) "connected" else "not connected").append('\n')
+            append("Sessions   ").append(Debug.sessions).append('\n')
+            append("Playing    ").append(Debug.nowPlaying).append('\n')
+            append("Last alert ").append(Debug.lastNotification)
+        }
     }
 
     private fun render() {
@@ -79,6 +114,19 @@ class MainActivity : Activity() {
         header.addView(label("Halo", 40f, text1, false))
         header.addView(label(statusLine(), 14f, text2, false).apply { setPadding(0, dp(6), 0, 0) })
         col.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.30f).toInt()))
+
+        // ----- Live status -----
+        col.addView(sectionTitle("Live status"))
+        val live = card()
+        val liveText = label(liveStatus(), 13f, text1, false).apply {
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setLineSpacing(0f, 1.25f)
+            setPadding(dp(22), dp(14), dp(20), dp(14))
+        }
+        live.addView(liveText)
+        col.addView(live)
+        liveView = liveText
 
         // ----- Setup -----
         col.addView(sectionTitle("Setup"))
@@ -121,6 +169,12 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Island"))
         val island = card()
         island.addView(switchRow("Music", "Album art and waveform while something plays", Prefs.MUSIC))
+        island.addView(line())
+        island.addView(switchRow("Messages", "WhatsApp, SMS and app alerts as a banner", Prefs.NOTIFS))
+        island.addView(line())
+        island.addView(switchRow("Calls", "Caller, timer and end-call button", Prefs.CALLS))
+        island.addView(line())
+        island.addView(switchRowDefault("Hide message text", "Show \"New message\" instead of the words", Prefs.HIDE_TEXT, false))
         island.addView(line())
         island.addView(switchRow("Charging", "Short pop when you plug in", Prefs.CHARGING))
         island.addView(line())
@@ -342,12 +396,15 @@ class MainActivity : Activity() {
         return row
     }
 
+    private fun switchRow(title: String, summary: String, key: String): View =
+        switchRowDefault(title, summary, key, true)
+
     @Suppress("UseSwitchCompatOrMaterialCode")
-    private fun switchRow(title: String, summary: String, key: String): View {
+    private fun switchRowDefault(title: String, summary: String, key: String, def: Boolean): View {
         val (row, _) = rowBase(title, summary)
         val prefs = Prefs.get(this)
         val sw = Switch(this).apply {
-            isChecked = prefs.getBoolean(key, true)
+            isChecked = prefs.getBoolean(key, def)
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().putBoolean(key, checked).apply()
                 HaloService.instance?.reloadPrefs()
@@ -401,7 +458,7 @@ class MainActivity : Activity() {
         )
 
         private const val WHATS_NEW =
-            "New glass icon, About section, and one-tap permissions for calls, Bluetooth and alerts. " +
-                "Fixed the island staying hidden on some screens."
+            "Messages and calls on the island, smoother spring animations, a black-glass look, " +
+                "backup music detection, and a Live status card."
     }
 }

@@ -3,6 +3,7 @@ package com.lonerxone.halo
 import android.accessibilityservice.AccessibilityService
 import android.app.ActivityOptions
 import android.app.KeyguardManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -39,8 +40,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             when (intent.action) {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
                 Intent.ACTION_SCREEN_OFF -> locked = true
-                Intent.ACTION_SCREEN_ON -> locked = keyguard().isKeyguardLocked
-                Intent.ACTION_USER_PRESENT -> locked = false
+                else -> locked = keyguard().isKeyguardLocked
             }
             push()
         }
@@ -67,7 +67,18 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Window changes are a cheap moment to re-check the lock screen state.
+        val now = try {
+            keyguard().isKeyguardLocked
+        } catch (_: Exception) {
+            locked
+        }
+        if (now != locked) {
+            locked = now
+            push()
+        }
+    }
 
     override fun onInterrupt() {}
 
@@ -96,6 +107,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         island = null
         lp = null
         if (instance === this) instance = null
+        Debug.island = "not running"
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -188,16 +200,28 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val v = island ?: return
         val p = Prefs.get(this)
         val pop = IslandStore.pop
-        // Short pops still show over fullscreen apps; only lock and landscape hide them.
-        val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && pop == null
-        val hide = locked || landscape || hideFs
+        val call = IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }
+        val note = IslandStore.notif
         val music = IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }
+        // Priority: calls, then message banners, then system pops, then music.
         val content = when {
+            call != null -> IslandView.Content.Call(call)
+            note != null -> IslandView.Content.Note(note)
             pop != null -> IslandView.Content.Popup(pop)
             music != null -> IslandView.Content.Music(music)
             else -> IslandView.Content.None
         }
+        // Alerts still show over fullscreen apps; only lock and landscape hide them.
+        val alert = content is IslandView.Content.Call || content is IslandView.Content.Note || content is IslandView.Content.Popup
+        val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
+        val hide = locked || landscape || hideFs
+        val reasons = buildList {
+            if (locked) add("locked")
+            if (landscape) add("landscape")
+            if (hideFs) add("fullscreen")
+        }
         v.setState(content, hide)
+        Debug.island = "on · ${v.mode.name.lowercase()}" + if (reasons.isEmpty()) "" else " · hidden: ${reasons.joinToString()}"
     }
 
     private fun onCharging() {
@@ -248,6 +272,20 @@ class HaloService : AccessibilityService(), IslandView.Host {
         p.flags = flags
         try {
             wm?.updateViewLayout(v, p)
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun send(intent: PendingIntent?) {
+        intent ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val opts = ActivityOptions.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                intent.send(this, 0, null, null, null, null, opts.toBundle())
+            } else {
+                intent.send()
+            }
         } catch (_: Exception) {
         }
     }

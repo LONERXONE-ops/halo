@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 jobs:
   build:
@@ -45,15 +44,15 @@ jobs:
 
       - name: Report failure
         if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           touch build.log
-          {
-            echo '```'
-            grep -nE "^e: |error:|What went wrong|FAILURE|Could not" build.log | head -80
-            echo '--- last lines ---'
-            tail -60 build.log
-            echo '```'
-          } > report.md
-          gh issue create --title "Build failed: run ${{ github.run_number }}" --body-file report.md
+          git config user.name "halo-ci"
+          git config user.email "ci@users.noreply.github.com"
+          mkdir -p /tmp/log && cp build.log /tmp/log/build.log
+          git checkout --orphan ci-log
+          git rm -rf --quiet . || true
+          cp /tmp/log/build.log build.log
+          echo "${{ github.run_number }}" > run.txt
+          git add build.log run.txt
+          git commit -q -m "Build log for failed run ${{ github.run_number }}"
+          git push -f origin ci-log
