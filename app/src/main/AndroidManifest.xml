@@ -5,6 +5,12 @@
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 
+    <!-- The link with Halo Launcher: only apps signed with the same key can use it. -->
+    <permission
+        android:name="com.lonerxone.halo.permission.LINK"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.lonerxone.halo.permission.LINK" />
+
     <!-- In-app updates from GitHub Releases -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Wi-Fi connected pop -->
@@ -32,6 +38,7 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
     <queries>
+        <package android:name="com.lonerxone.halo.launcher" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

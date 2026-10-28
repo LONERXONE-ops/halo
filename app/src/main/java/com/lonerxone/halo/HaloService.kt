@@ -141,6 +141,51 @@ class HaloService : AccessibilityService(), IslandView.Host {
         watchTorch()
         watchWifi()
         PopupControl.sync(this)
+        // Commands from Halo Launcher (signature-protected).
+        val link = IntentFilter(LauncherLink.ACTION_COMMAND)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(linkReceiver, link, LauncherLink.PERMISSION, null, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(linkReceiver, link, LauncherLink.PERMISSION, null)
+        }
+        LauncherLink.schedule(this)
+    }
+
+    private val linkReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            LauncherLink.handle(this@HaloService, intent.getStringExtra("cmd"), intent.getStringExtra("arg"))
+        }
+    }
+
+    /** What Halo Launcher asked for: media keys, the notification center, lock, switches. */
+    fun launcherCommand(cmd: String, arg: String?) {
+        val m = IslandStore.music
+        val tc = m?.controller?.transportControls
+        when (cmd) {
+            "play_pause" -> if (tc != null) {
+                if (m?.playing == true) tc.pause() else tc.play()
+            } else {
+                mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+            }
+            "next" -> if (tc != null) tc.skipToNext() else mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+            "prev" -> if (tc != null) tc.skipToPrevious() else mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+            "open_music" -> if (m != null) openMusicApp(m) else mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+            "open_panel" -> island?.openPanel()
+            "open_notif" -> if (arg != null) openDetail(arg)
+            "lock" -> performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+            "quick" -> if (arg != null) quickAction(arg)
+        }
+        main.postDelayed({ LauncherLink.sendNow(this) }, 400L)
+    }
+
+    /** No player in focus: wake the last one with a media key, like a headset button. */
+    private fun mediaKey(code: Int) {
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code))
+            am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, code))
+        } catch (_: Exception) {
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -196,6 +241,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
         drawLp = null
         touch = null
         touchLp = null
+        try {
+            unregisterReceiver(linkReceiver)
+        } catch (_: Exception) {
+        }
         Beat.stop()
         if (instance === this) instance = null
         Debug.island = "not running"
@@ -430,6 +479,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             null
         }
         v.setState(main, bubble, hide)
+        LauncherLink.schedule(this)
         val reasons = buildList {
             if (locked) add("locked")
             if (hideFs) add("fullscreen")

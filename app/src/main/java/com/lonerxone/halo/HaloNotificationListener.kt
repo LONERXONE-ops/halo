@@ -532,6 +532,25 @@ class HaloNotificationListener : NotificationListenerService() {
             .toList()
     }
 
+    /** For Halo Launcher: unread counts per app (icon badges) and the newest few. */
+    fun launcherSnapshot(): Pair<Map<String, Int>, List<PanelItem>> {
+        val all: Array<StatusBarNotification> = try {
+            activeNotifications ?: emptyArray<StatusBarNotification>()
+        } catch (_: Exception) {
+            emptyArray<StatusBarNotification>()
+        }
+        val blocked = Prefs.blocked(this)
+        val counts = HashMap<String, Int>()
+        for (sbn in all) {
+            if (sbn.packageName == packageName || sbn.isOngoing || mediaToken(sbn.notification) != null) continue
+            if ((sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) continue
+            val n = sbn.notification.number.takeIf { it > 0 } ?: 1
+            counts[sbn.packageName] = (counts[sbn.packageName] ?: 0) + n
+        }
+        val recent = panelItems().filter { it.packageName !in blocked }.take(5)
+        return counts to recent
+    }
+
     /** Ranking's "no lock screen override" value (hidden constant in the SDK). */
     private val NO_OVERRIDE = -1000
 

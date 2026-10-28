@@ -260,6 +260,13 @@ class MainActivity : Activity() {
         col.addView(group(
             iconRow(R.drawable.ic_shield, Colors.GRAPHITE, "Permissions", if (missing == 0) "All set" else "$missing to go") { go(Page.SETUP) },
             iconRow(R.drawable.ic_update, Colors.GRAPHITE, "Updates", "v${version()} · $updateStatus") { go(Page.UPDATES) },
+            iconRow(R.drawable.ic_apps, Colors.GRAPHITE, "Halo Launcher", if (LauncherLink.launcherInstalled(this)) "Installed · linked with the island" else "A home screen made for Halo") {
+                val launch = packageManager.getLaunchIntentForPackage(LauncherLink.LAUNCHER)
+                try {
+                    if (launch != null) startActivity(launch) else startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/LONERXONE-ops/halo-launcher/releases/latest")))
+                } catch (_: Exception) {
+                }
+            },
             iconRow(R.drawable.ic_info, Colors.GRAPHITE, "About", "Creator, privacy, diagnostics") { go(Page.ABOUT) },
         ))
         credit(col)
