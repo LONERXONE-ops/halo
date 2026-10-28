@@ -43,6 +43,15 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".NotificationActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@style/Halo.Sheet"
+            android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name=".HaloService"
             android:exported="true"

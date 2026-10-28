@@ -67,6 +67,7 @@ class HaloNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        instance = this
         Debug.listenerConnected = true
         val m = getSystemService(MediaSessionManager::class.java)
         sessions = m
@@ -90,6 +91,7 @@ class HaloNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        if (instance === this) instance = null
         Debug.listenerConnected = false
         try {
             sessions?.removeOnActiveSessionsChangedListener(sessionsChanged)
@@ -219,7 +221,7 @@ class HaloNotificationListener : NotificationListenerService() {
         val state = c.playbackState
         val playing = isPlaying(c)
 
-        val key = "${c.packageName}|$title|$artist|${art?.generationId ?: 0}"
+        val key = "${c.packageName}|$title|$artist|${art != null}"
         if (key != accentKey) {
             accentKey = key
             accent = accentFrom(art)
@@ -320,12 +322,8 @@ class HaloNotificationListener : NotificationListenerService() {
         }
 
         val ex = n.extras ?: Bundle()
-        val title = (ex.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
-            ?: ex.getCharSequence(Notification.EXTRA_TITLE))?.toString()?.trim().orEmpty()
-        val text = lastMessage(ex)
-            ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-            ?: ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-            ?: ""
+        val title = titleOf(ex)
+        val text = textOf(ex)
         if (title.isEmpty() && text.isEmpty()) return skip("no text")
 
         val fingerprint = "$title|$text"
@@ -370,22 +368,88 @@ class HaloNotificationListener : NotificationListenerService() {
     }
 
     // =====================================================================
+    // Panel (opened from the camera circle)
+    // =====================================================================
+
+    /** Notifications worth showing in the panel, newest first. */
+    fun panelItems(): List<PanelItem> {
+        val all = try {
+            activeNotifications ?: return emptyList()
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        val blocked = Prefs.blocked(this)
+        return all.asSequence()
+            .filter { it.packageName != packageName }
+            .filter { it.packageName !in blocked }
+            .filter { !it.isOngoing || isCall(it) }
+            .filter { (it.notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0 }
+            .filter { mediaToken(it.notification) == null }
+            .sortedByDescending { it.postTime }
+            .take(20)
+            .mapNotNull { sbn ->
+                val n = sbn.notification
+                val ex = n.extras ?: Bundle()
+                val title = titleOf(ex)
+                val text = textOf(ex)
+                if (title.isEmpty() && text.isEmpty()) return@mapNotNull null
+                val icon = iconBitmap(n.getLargeIcon()) ?: appIcon(sbn.packageName)
+                val app = appName(sbn.packageName)
+                PanelItem(
+                    key = sbn.key,
+                    packageName = sbn.packageName,
+                    appName = app,
+                    title = title.ifEmpty { app },
+                    text = if (Prefs.get(this).getBoolean(Prefs.HIDE_TEXT, false)) "New message" else text,
+                    icon = icon,
+                    accent = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else Colors.ACCENT_DEFAULT,
+                    postTime = sbn.postTime,
+                    canReply = n.actions?.any { a -> a.remoteInputs?.isNotEmpty() == true } == true,
+                )
+            }
+            .toList()
+    }
+
+    fun find(key: String): StatusBarNotification? = try {
+        activeNotifications?.firstOrNull { it.key == key }
+    } catch (_: Exception) {
+        null
+    }
+
+    fun dismiss(key: String) {
+        try {
+            cancelNotification(key)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun titleOf(ex: Bundle): String =
+        (ex.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
+            ?: ex.getCharSequence(Notification.EXTRA_TITLE))?.toString()?.trim().orEmpty()
+
+    fun textOf(ex: Bundle): String =
+        lastMessage(ex)
+            ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
+            ?: ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            ?: ""
+
+    // =====================================================================
     // Helpers
     // =====================================================================
 
-    private fun appName(pkg: String): String = try {
+    fun appName(pkg: String): String = try {
         packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
     } catch (_: PackageManager.NameNotFoundException) {
         pkg.substringAfterLast('.')
     }
 
-    private fun appIcon(pkg: String): Bitmap? = try {
+    fun appIcon(pkg: String): Bitmap? = try {
         drawableToBitmap(packageManager.getApplicationIcon(pkg))
     } catch (_: Exception) {
         null
     }
 
-    private fun iconBitmap(icon: Icon?): Bitmap? {
+    fun iconBitmap(icon: Icon?): Bitmap? {
         icon ?: return null
         return try {
             drawableToBitmap(icon.loadDrawable(this))
@@ -395,6 +459,9 @@ class HaloNotificationListener : NotificationListenerService() {
     }
 
     companion object {
+        var instance: HaloNotificationListener? = null
+            private set
+
         fun drawableToBitmap(d: Drawable?): Bitmap? {
             d ?: return null
             if (d is BitmapDrawable && d.bitmap != null) return d.bitmap

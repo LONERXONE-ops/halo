@@ -23,9 +23,13 @@ data class MusicInfo(
     val positionUpdatedAt: Long,
     val speed: Float,
 ) {
-    /** Same song (art included) means the island updates in place instead of rebuilding. */
+    /**
+     * Same song means the island updates in place instead of rebuilding.
+     * Art is deliberately left out: players hand over a fresh bitmap object on
+     * every update, which used to make the island redraw constantly.
+     */
     val trackKey: String
-        get() = "$packageName|$title|$artist|${art?.generationId ?: 0}"
+        get() = "$packageName|$title|$artist"
 
     fun currentPosition(): Long {
         if (!playing || positionUpdatedAt <= 0L) return positionMs
@@ -70,6 +74,19 @@ data class CallInfo(
     val contentIntent: PendingIntent?,
     val answer: PendingIntent?,
     val hangUp: PendingIntent?,
+)
+
+/** One row in the notification panel that opens from the camera circle. */
+data class PanelItem(
+    val key: String,
+    val packageName: String,
+    val appName: String,
+    val title: String,
+    val text: String,
+    val icon: Bitmap?,
+    val accent: Int,
+    val postTime: Long,
+    val canReply: Boolean,
 )
 
 /** Live readings shown in the app's status card, so problems are visible on the phone. */

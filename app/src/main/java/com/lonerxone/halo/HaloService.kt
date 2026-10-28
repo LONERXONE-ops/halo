@@ -1,6 +1,7 @@
 package com.lonerxone.halo
 
 import android.accessibilityservice.AccessibilityService
+import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.app.PendingIntent
@@ -10,24 +11,37 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.os.BatteryManager
 import android.os.Build
 import android.view.Display
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 
 /**
- * Hosts the island as a trusted accessibility overlay, so it can sit on top of
- * the status bar right over the camera notch. It never reads screen content.
+ * Hosts the island as trusted accessibility overlays, so it can sit on top of
+ * the status bar right over the camera. It never reads screen content.
+ *
+ * Two windows:
+ * - the DRAW window: fixed size, never resized, never touchable. Resizing an
+ *   overlay makes Android stretch the old frame for a moment, which was the
+ *   flicker in earlier builds.
+ * - the TOUCH window: invisible, follows the island's shape, and forwards
+ *   every touch to the draw window. Moving it costs nothing visually.
  */
 class HaloService : AccessibilityService(), IslandView.Host {
 
     private var wm: WindowManager? = null
     private var island: IslandView? = null
-    private var lp: WindowManager.LayoutParams? = null
+    private var drawLp: WindowManager.LayoutParams? = null
+    private var touch: TouchProxy? = null
+    private var touchLp: WindowManager.LayoutParams? = null
+    private var touchAttached = false
 
     private var locked = false
     private var landscape = false
@@ -98,6 +112,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             unregisterReceiver(receiver)
         } catch (_: Exception) {
         }
+        removeTouch()
         island?.let { v ->
             try {
                 wm?.removeView(v)
@@ -105,7 +120,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
             }
         }
         island = null
-        lp = null
+        drawLp = null
+        touch = null
+        touchLp = null
         if (instance === this) instance = null
         Debug.island = "not running"
     }
@@ -115,8 +132,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
         landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
         val v = island ?: return
         v.geometry = geometry()
-        lp?.let { p ->
-            p.x = notchOffsetX(v.geometry)
+        drawLp?.let { p ->
+            p.width = v.geometry.screenW
+            p.height = drawHeight(v.geometry)
             try {
                 wm?.updateViewLayout(v, p)
             } catch (_: Exception) {
@@ -127,31 +145,42 @@ class HaloService : AccessibilityService(), IslandView.Host {
     }
 
     // ---------------------------------------------------------------------
+    // Windows
+    // ---------------------------------------------------------------------
 
     private fun keyguard() = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
+
+    private fun baseParams(w: Int, h: Int, flags: Int) = WindowManager.LayoutParams(
+        w, h,
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        flags,
+        PixelFormat.TRANSLUCENT,
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        fitInsetsTypes = 0
+        x = 0
+        y = 0
+    }
+
+    private fun drawHeight(g: IslandView.Geometry): Int =
+        (g.screenH * 0.6f + g.statusBarH + 64 * resources.displayMetrics.density).toInt()
 
     private fun attach() {
         val w = wm ?: return
         val v = IslandView(this, this)
         v.geometry = geometry()
         applyPrefs(v)
-        val params = WindowManager.LayoutParams(
-            1, 1,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            BASE_FLAGS or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            fitInsetsTypes = 0
-            title = "Halo"
-            x = notchOffsetX(v.geometry)
-            y = 0
-        }
+
+        val params = baseParams(
+            v.geometry.screenW,
+            drawHeight(v.geometry),
+            DRAW_FLAGS,
+        ).apply { title = "Halo" }
+
         v.setOnApplyWindowInsetsListener { _, insets ->
             // Only call it fullscreen when the status bar exists for this window
-            // but is currently collapsed. Overlays that get no status bar insets
-            // at all are never treated as fullscreen.
+            // but is currently collapsed.
             val max = insets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
             val now = insets.getInsets(WindowInsets.Type.statusBars()).top
             val fs = max > 0 && now == 0
@@ -167,9 +196,41 @@ class HaloService : AccessibilityService(), IslandView.Host {
             return
         }
         island = v
-        lp = params
+        drawLp = params
+
+        touch = TouchProxy(this)
+        touchLp = baseParams(1, 1, TOUCH_FLAGS).apply { title = "Halo touch" }
         v.post { push() }
     }
+
+    private fun removeTouch() {
+        val t = touch ?: return
+        if (touchAttached) {
+            try {
+                wm?.removeView(t)
+            } catch (_: Exception) {
+            }
+        }
+        touchAttached = false
+    }
+
+    /** Forwards touches from the small touch window into the big draw window. */
+    @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
+    private inner class TouchProxy(ctx: Context) : View(ctx) {
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            val target = island ?: return false
+            val p = touchLp ?: return false
+            val ev = MotionEvent.obtain(event)
+            ev.offsetLocation(p.x.toFloat(), p.y.toFloat())
+            target.dispatchTouchEvent(ev)
+            ev.recycle()
+            return true
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // State
+    // ---------------------------------------------------------------------
 
     private fun applyPrefs(v: IslandView) {
         val p = Prefs.get(this)
@@ -178,22 +239,21 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.sizeScale = p.getInt(Prefs.SCALE, 100) / 100f
     }
 
-    /** One line for the test button, so problems are visible without a PC. */
-    fun diagnostics(): String {
-        val v = island
-        val attached = v?.isAttachedToWindow == true
-        val n = v?.geometry?.notch
-        val notch = if (n == null) "none" else "${n.width()}x${n.height()}"
-        return "overlay: ${if (attached) "on" else "OFF"}, notch: $notch, " +
-            "fullscreen: $fullscreen, locked: $locked, size: ${lp?.width}x${lp?.height}"
-    }
-
     /** Called by the settings screen after a change. */
     fun reloadPrefs() {
         val v = island ?: return
         applyPrefs(v)
         v.rebuild()
         push()
+    }
+
+    /** One line for the test button, so problems are visible without a PC. */
+    fun diagnostics(): String {
+        val v = island
+        val attached = v?.isAttachedToWindow == true
+        val n = v?.geometry?.notch
+        val notch = if (n == null) "none" else "${n.width()}x${n.height()} at ${n.centerX()},${n.centerY()}"
+        return "overlay: ${if (attached) "on" else "OFF"}, notch: $notch, fullscreen: $fullscreen, locked: $locked"
     }
 
     private fun push() {
@@ -211,16 +271,15 @@ class HaloService : AccessibilityService(), IslandView.Host {
             music != null -> IslandView.Content.Music(music)
             else -> IslandView.Content.None
         }
-        // Alerts still show over fullscreen apps; only lock and landscape hide them.
         val alert = content is IslandView.Content.Call || content is IslandView.Content.Note || content is IslandView.Content.Popup
         val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
         val hide = locked || landscape || hideFs
+        v.setState(content, hide)
         val reasons = buildList {
             if (locked) add("locked")
             if (landscape) add("landscape")
             if (hideFs) add("fullscreen")
         }
-        v.setState(content, hide)
         Debug.island = "on · ${v.mode.name.lowercase()}" + if (reasons.isEmpty()) "" else " · hidden: ${reasons.joinToString()}"
     }
 
@@ -234,8 +293,13 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private fun geometry(): IslandView.Geometry {
         val dm = resources.displayMetrics
         var screenW = dm.widthPixels
+        var screenH = dm.heightPixels
         try {
-            wm?.let { screenW = it.maximumWindowMetrics.bounds.width() }
+            wm?.let {
+                val b = it.maximumWindowMetrics.bounds
+                screenW = b.width()
+                screenH = b.height()
+            }
         } catch (_: Throwable) {
         }
         val notch = try {
@@ -249,29 +313,45 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
         val id = resources.getIdentifier("status_bar_height", "dimen", "android")
         val sb = if (id > 0) resources.getDimensionPixelSize(id) else (24 * dm.density).toInt()
-        return IslandView.Geometry(notch, screenW, sb)
-    }
-
-    private fun notchOffsetX(g: IslandView.Geometry): Int {
-        val n = g.notch ?: return 0
-        return n.centerX() - g.screenW / 2
+        return IslandView.Geometry(notch, screenW, screenH, sb)
     }
 
     // ---------------------------------------------------------------------
     // IslandView.Host
     // ---------------------------------------------------------------------
 
-    override fun requestWindow(width: Int, height: Int, touchable: Boolean) {
-        val v = island ?: return
-        val p = lp ?: return
-        var flags = BASE_FLAGS
-        if (!touchable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        if (p.width == width && p.height == height && p.flags == flags) return
-        p.width = width
-        p.height = height
-        p.flags = flags
+    override fun setTouchArea(area: Rect?) {
+        val w = wm ?: return
+        val t = touch ?: return
+        val p = touchLp ?: return
+        if (area == null || area.isEmpty) {
+            removeTouch()
+            return
+        }
+        p.x = area.left
+        p.y = area.top
+        p.width = area.width()
+        p.height = area.height()
         try {
-            wm?.updateViewLayout(v, p)
+            if (touchAttached) {
+                w.updateViewLayout(t, p)
+            } else {
+                w.addView(t, p)
+                touchAttached = true
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun panelItems(): List<PanelItem> =
+        HaloNotificationListener.instance?.panelItems() ?: emptyList()
+
+    override fun openDetail(key: String) {
+        val i = Intent(this, NotificationActivity::class.java)
+            .putExtra(NotificationActivity.EXTRA_KEY, key)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        try {
+            startActivity(i)
         } catch (_: Exception) {
         }
     }
@@ -293,17 +373,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
     override fun openMusicApp(info: MusicInfo) {
         val pi = info.controller?.sessionActivity
         if (pi != null) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    val opts = ActivityOptions.makeBasic()
-                        .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                    pi.send(this, 0, null, null, null, null, opts.toBundle())
-                } else {
-                    pi.send()
-                }
-                return
-            } catch (_: Exception) {
-            }
+            send(pi)
+            return
         }
         val launch = packageManager.getLaunchIntentForPackage(info.packageName) ?: return
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -317,11 +388,13 @@ class HaloService : AccessibilityService(), IslandView.Host {
         var instance: HaloService? = null
             private set
 
-        private const val BASE_FLAGS =
+        private const val COMMON =
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+
+        private const val DRAW_FLAGS = COMMON or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        private const val TOUCH_FLAGS = COMMON or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
     }
 }

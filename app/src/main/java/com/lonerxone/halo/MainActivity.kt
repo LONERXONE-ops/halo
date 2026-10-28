@@ -178,7 +178,7 @@ class MainActivity : Activity() {
         island.addView(line())
         island.addView(switchRow("Charging", "Short pop when you plug in", Prefs.CHARGING))
         island.addView(line())
-        island.addView(switchRow("Idle pill", "Keep a small pill around the notch", Prefs.IDLE))
+        island.addView(switchRow("Camera circle", "Hidden circle on the camera; tap it for notifications", Prefs.IDLE))
         island.addView(line())
         island.addView(switchRow("Hide in fullscreen", "Videos, games and reels", Prefs.HIDE_FULLSCREEN))
         island.addView(line())
@@ -458,7 +458,7 @@ class MainActivity : Activity() {
         )
 
         private const val WHATS_NEW =
-            "Messages and calls on the island, smoother spring animations, a black-glass look, " +
-                "backup music detection, and a Live status card."
+            "Smooth: the island no longer flickers. Tap the camera to open your notifications, " +
+                "tap one to read the full chat and reply right there."
     }
 }

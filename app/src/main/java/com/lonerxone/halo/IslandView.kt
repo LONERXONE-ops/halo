@@ -17,6 +17,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextUtils
+import android.text.format.DateUtils
 import android.util.TypedValue
 import android.view.Choreographer
 import android.view.GestureDetector
@@ -30,6 +31,7 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.max
@@ -37,22 +39,27 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * The island: a black glass pill around the camera notch.
+ * The island, drawn inside a FIXED full-width overlay window that never resizes
+ * (resizing an overlay makes Android stretch the old frame, which was the
+ * flicker). Touches arrive from a separate invisible window that follows the
+ * pill; see [HaloService].
  *
- * Every visual channel (width, height, corners, opacity, border, shadow) has its
- * own spring, and springs keep their velocity when interrupted. Width runs a bit
- * faster than height, which gives the "stretch then settle" feel of the iPhone.
+ * Every visual channel has its own spring and keeps its velocity when
+ * interrupted. Width leads height for the iPhone-style stretch.
  */
 @SuppressLint("ViewConstructor")
 class IslandView(context: Context, private val host: Host) : FrameLayout(context) {
 
     interface Host {
-        fun requestWindow(width: Int, height: Int, touchable: Boolean)
+        /** Where touches should be caught, in screen pixels; null when nothing is touchable. */
+        fun setTouchArea(area: Rect?)
         fun openMusicApp(info: MusicInfo)
         fun send(intent: PendingIntent?)
+        fun openDetail(key: String)
+        fun panelItems(): List<PanelItem>
     }
 
-    enum class Mode { HIDDEN, IDLE, COMPACT, EXPANDED }
+    enum class Mode { HIDDEN, IDLE, COMPACT, EXPANDED, PANEL }
 
     sealed class Content {
         object None : Content()
@@ -62,13 +69,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         data class Call(val call: CallInfo) : Content()
     }
 
-    data class Geometry(val notch: Rect?, val screenW: Int, val statusBarH: Int)
+    data class Geometry(val notch: Rect?, val screenW: Int, val screenH: Int, val statusBarH: Int)
 
     // ---------- settings pushed in by the service ----------
     var idleEnabled = true
     var hapticsEnabled = true
     var sizeScale = 1f
-    var geometry: Geometry = Geometry(null, resources.displayMetrics.widthPixels, dp(24))
+    var geometry: Geometry = Geometry(null, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels, dp(24))
 
     // ---------- state ----------
     var mode = Mode.HIDDEN
@@ -76,9 +83,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var content: Content = Content.None
     private var hidden = false
     private var expanded = false
+    private var panelOpen = false
     private var builtKey: String? = null
 
-    // ---------- springs: 0 w, 1 h, 2 radius, 3 alpha, 4 border, 5 shadow ----------
+    // ---------- springs: 0 w, 1 h, 2 radius, 3 alpha, 4 glass, 5 shadow ----------
     private val cur = FloatArray(6)
     private val vel = FloatArray(6)
     private val target = FloatArray(6)
@@ -108,6 +116,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var slot: FrameLayout? = null
     private var revealed = true
     private var wave: WaveformView? = null
+    private var artImage: ImageView? = null
     private var playButton: ImageView? = null
     private var progress: ProgressLine? = null
     private var elapsedText: TextView? = null
@@ -119,12 +128,17 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         override fun run() {
             updateProgress()
             updateTimer()
-            if (mode == Mode.EXPANDED && expanded && SystemClock.uptimeMillis() - lastTouch > 6_000L) {
+            val idleFor = SystemClock.uptimeMillis() - lastTouch
+            if (mode == Mode.PANEL && idleFor > 15_000L) {
+                closePanel()
+                return
+            }
+            if (mode == Mode.EXPANDED && expanded && idleFor > 6_000L) {
                 expanded = false
                 refresh()
                 return
             }
-            if (mode == Mode.EXPANDED || content is Content.Call) postDelayed(this, 500L)
+            if (mode == Mode.EXPANDED || mode == Mode.PANEL || content is Content.Call) postDelayed(this, 500L)
         }
     }
 
@@ -142,6 +156,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val wasCall = content is Content.Call
         if (newContent !is Content.Music && newContent !is Content.Call) expanded = false
         if (newContent is Content.Call && !wasCall) expanded = false
+        if (hide) panelOpen = false
         content = newContent
         hidden = hide
         refresh()
@@ -154,23 +169,31 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     // =====================================================================
-    // Geometry
+    // Geometry (all in this window's pixels, which equal screen pixels)
     // =====================================================================
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
     private fun dpf(v: Float): Float = v * resources.displayMetrics.density
 
+    private fun cx(): Float = geometry.notch?.exactCenterX() ?: (geometry.screenW / 2f)
     private fun notchW(): Int = geometry.notch?.width() ?: 0
     private fun notchH(): Int = geometry.notch?.height() ?: 0
     private fun anchorY(): Float = geometry.notch?.exactCenterY() ?: (geometry.statusBarH / 2f)
     private fun notchBottom(): Int = geometry.notch?.bottom ?: (geometry.statusBarH * 2 / 3)
 
-    private fun idleW(): Float = max(notchW() + dpf(20f), dpf(60f))
-    private fun idleH(): Float = max(notchH() + dpf(4f), dpf(28f))
+    /** The idle circle sits exactly on the camera lens, so it is invisible until touched. */
+    private fun idleD(): Float = if (geometry.notch != null) max(min(notchW(), notchH()).toFloat(), dpf(20f)) else dpf(22f)
     private fun compactW(): Float = max(dpf(206f) * sizeScale, notchW() + dpf(140f))
-    private fun compactH(): Float = max(idleH(), dpf(34f) * sizeScale)
+    private fun compactH(): Float = max(notchH() + dpf(4f), dpf(34f) * sizeScale)
     private fun expandedW(): Float = min(dpf(352f) * sizeScale, geometry.screenW - dpf(14f))
-    private fun topFor(h: Float): Float = max(dpf(4f), anchorY() - h / 2f)
+    private fun panelMaxH(): Float = geometry.screenH * 0.6f
+    private fun topFor(h: Float): Float = max(0f, anchorY() - h / 2f)
+
+    private fun pillRect(w: Float, h: Float, out: RectF) {
+        val l = cx() - w / 2f
+        val t = topFor(h)
+        out.set(l, t, l + w, t + h)
+    }
 
     // =====================================================================
     // State machine
@@ -178,27 +201,32 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun desiredMode(): Mode {
         if (hidden) return Mode.HIDDEN
-        return when (val c = content) {
+        val c = content
+        if (c is Content.Call && c.call.ringing) return Mode.EXPANDED
+        if (panelOpen) return Mode.PANEL
+        return when (c) {
             is Content.None -> if (idleEnabled) Mode.IDLE else Mode.HIDDEN
             is Content.Note -> Mode.EXPANDED
-            is Content.Call -> if (expanded || c.call.ringing) Mode.EXPANDED else Mode.COMPACT
+            is Content.Call -> if (expanded) Mode.EXPANDED else Mode.COMPACT
             is Content.Popup -> Mode.COMPACT
             is Content.Music -> if (expanded) Mode.EXPANDED else Mode.COMPACT
         }
     }
 
-    private fun contentKey(): String = when (val c = content) {
-        is Content.None -> "none"
-        is Content.Music -> "m:" + c.info.trackKey
-        is Content.Popup -> "p:" + c.pop.id
-        is Content.Note -> "n:" + c.note.id
-        is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name
+    private fun contentKey(m: Mode): String {
+        if (m == Mode.PANEL) return "panel"
+        return when (val c = content) {
+            is Content.None -> "none"
+            is Content.Music -> "m:" + c.info.trackKey
+            is Content.Popup -> "p:" + c.pop.id
+            is Content.Note -> "n:" + c.note.id
+            is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name
+        }
     }
 
     private fun refresh() {
         val m = desiredMode()
-        val key = m.name + "/" + contentKey()
-        Debug.island = "mode ${m.name.lowercase()}" + if (hidden) " (hidden)" else ""
+        val key = m.name + "/" + contentKey(m)
         if (key == builtKey) {
             bindInPlace()
             return
@@ -212,11 +240,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         when (m) {
             Mode.HIDDEN -> {
                 swapContent(null, 0, 0, 0f)
-                animateTo(idleW() * 0.5f, idleH() * 0.6f, idleH() * 0.3f, 0f, 0f, 0f, grow = false)
+                val d = idleD()
+                animateTo(d * 0.6f, d * 0.6f, d * 0.3f, 0f, 0f, 0f, grow = false)
             }
             Mode.IDLE -> {
                 swapContent(null, 0, 0, 0f)
-                animateTo(idleW(), idleH(), idleH() / 2f, 1f, 0f, 0f, grow = false)
+                val d = idleD()
+                animateTo(d, d, d / 2f, 1f, 0f, 0f, grow = false)
             }
             Mode.COMPACT -> {
                 val w = compactW()
@@ -228,23 +258,26 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     else -> null
                 }
                 swapContent(view, w.toInt(), h.toInt(), h / 2f)
-                animateTo(w, h, h / 2f, 1f, 0.55f, 0f, grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
-                if (previous == Mode.EXPANDED) haptic()
-                if (content is Content.Popup) haptic()
+                animateTo(w, h, h / 2f, 1f, 0.45f, 0f, grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
+                if (previous == Mode.EXPANDED || previous == Mode.PANEL || content is Content.Popup) haptic()
             }
-            Mode.EXPANDED -> {
+            Mode.EXPANDED, Mode.PANEL -> {
                 val w = expandedW()
-                val view = when (val c = content) {
-                    is Content.Music -> buildExpandedMusic(c.info)
-                    is Content.Note -> buildNote(c.note).also { glowColor = c.note.accent; glow = 0.7f }
-                    is Content.Call -> buildExpandedCall(c.call).also { glowColor = Colors.GREEN; glow = 1f }
-                    else -> View(context)
+                val view = if (m == Mode.PANEL) {
+                    buildPanel(w.toInt())
+                } else {
+                    when (val c = content) {
+                        is Content.Music -> buildExpandedMusic(c.info)
+                        is Content.Note -> buildNote(c.note).also { glowColor = c.note.accent; glow = 0.7f }
+                        is Content.Call -> buildExpandedCall(c.call).also { glowColor = Colors.GREEN; glow = 1f }
+                        else -> View(context)
+                    }
                 }
                 view.measure(
                     MeasureSpec.makeMeasureSpec(w.toInt(), MeasureSpec.EXACTLY),
                     MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
                 )
-                val h = view.measuredHeight.toFloat()
+                val h = min(view.measuredHeight.toFloat(), panelMaxH())
                 val r = min(dpf(30f), h / 2f)
                 swapContent(view, w.toInt(), h.toInt(), r)
                 animateTo(w, h, r, 1f, 1f, 1f, grow = true)
@@ -252,18 +285,37 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 haptic()
             }
         }
+        Debug.island = "mode ${m.name.lowercase()}"
         updateProgress()
         updateTimer()
-        if (m == Mode.EXPANDED || content is Content.Call) postDelayed(ticker, 500L)
+        if (m == Mode.EXPANDED || m == Mode.PANEL || content is Content.Call) postDelayed(ticker, 500L)
     }
 
-    /** Same song or call, same mode: just update what changed. */
+    /** Same song or call, same mode: just update what changed, no redraw of the shape. */
     private fun bindInPlace() {
         val info = (content as? Content.Music)?.info ?: return
         wave?.playing = info.playing
         wave?.color = info.accent
+        if (info.art != null) artImage?.let { img ->
+            img.background = null
+            img.clearColorFilter()
+            img.scaleType = ImageView.ScaleType.CENTER_CROP
+            img.setPadding(0, 0, 0, 0)
+            img.setImageBitmap(info.art)
+        }
         playButton?.setImageResource(if (info.playing) R.drawable.ic_pause else R.drawable.ic_play)
         if (mode == Mode.EXPANDED) updateProgress()
+    }
+
+    private fun openPanel() {
+        panelOpen = true
+        refresh()
+    }
+
+    private fun closePanel() {
+        if (!panelOpen) return
+        panelOpen = false
+        refresh()
     }
 
     // =====================================================================
@@ -277,13 +329,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     /**
-     * Growing is bouncier (damping 0.68) so the island "pops"; shrinking settles
-     * calmly (0.86). Width leads height slightly for an organic stretch.
+     * Growing is bouncier (damping 0.7) so the island "pops"; shrinking settles
+     * calmly (0.88). Width leads height slightly for an organic stretch.
      */
-    private fun animateTo(w: Float, h: Float, r: Float, a: Float, border: Float, shadow: Float, grow: Boolean) {
+    private fun animateTo(w: Float, h: Float, r: Float, a: Float, glass: Float, shadow: Float, grow: Boolean) {
         target[0] = w; target[1] = h; target[2] = r
-        target[3] = a; target[4] = border; target[5] = shadow
+        target[3] = a; target[4] = glass; target[5] = shadow
         System.arraycopy(cur, 0, from, 0, cur.size)
+        updateTouchArea()
 
         val scale = animScale()
         if (scale <= 0f || !isAttachedToWindow) {
@@ -295,15 +348,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             invalidate()
             return
         }
-        val k = 380f / (scale * scale)
-        damping = if (grow) 0.68f else 0.86f
-        stiff[0] = k * 1.25f // width leads
+        val k = 360f / (scale * scale)
+        damping = if (grow) 0.7f else 0.88f
+        stiff[0] = k * 1.22f
         stiff[1] = k
         stiff[2] = k
         stiff[3] = k * 1.8f
         stiff[4] = k
         stiff[5] = k * 0.8f
-        pushWindow(envelope = true)
         if (!animating) {
             animating = true
             lastFrameNanos = 0L
@@ -348,7 +400,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         invalidate()
     }
 
-    /** How far the size has travelled from where it started (0..1+). */
     private fun shapeProgress(): Float {
         val dw = target[0] - from[0]
         val dh = target[1] - from[1]
@@ -359,21 +410,27 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun onSettled() {
         if (!revealed) reveal()
-        pushWindow(envelope = false)
     }
 
-    /** Sizes the overlay window to fit the pill, with room for overshoot while moving. */
-    private fun pushWindow(envelope: Boolean) {
-        val over = if (envelope) 1.1f else 1f
-        val w = max(target[0], if (envelope) max(from[0], cur[0]) else 0f) * over
-        val h = max(target[1], if (envelope) max(from[1], cur[1]) else 0f) * over
-        val bottom = max(topFor(h) + h, topFor(target[1]) + target[1])
-        val shadowy = target[5] > 0f || (envelope && cur[5] > 0.01f)
-        val pad = if (shadowy) dpf(24f) else dpf(8f)
-        val winW = (w + pad * 2f).toInt().coerceAtLeast(1)
-        val winH = (bottom + pad).toInt().coerceAtLeast(1)
-        val touchable = mode == Mode.COMPACT || mode == Mode.EXPANDED
-        host.requestWindow(winW, winH, touchable)
+    private val touchRect = RectF()
+
+    /** The touch window follows the target shape; it draws nothing, so moving it is invisible. */
+    private fun updateTouchArea() {
+        if (mode == Mode.HIDDEN || target[3] <= 0f) {
+            host.setTouchArea(null)
+            return
+        }
+        pillRect(target[0], target[1], touchRect)
+        // The camera circle is small; give it a friendlier tap target.
+        val extra = if (mode == Mode.IDLE) dpf(10f) else 0f
+        host.setTouchArea(
+            Rect(
+                (touchRect.left - extra).toInt(),
+                max(0f, touchRect.top - extra).toInt(),
+                (touchRect.right + extra).toInt(),
+                (touchRect.bottom + extra).toInt(),
+            ),
+        )
     }
 
     // =====================================================================
@@ -386,35 +443,32 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val h = cur[1]
         val a = cur[3].coerceIn(0f, 1f)
         if (a <= 0.01f || w < 1f || h < 1f) return
-        val l = width / 2f - w / 2f
-        val t = topFor(h)
-        rect.set(l, t, l + w, t + h)
+        pillRect(w, h, rect)
         val r = min(max(cur[2], 0f), h / 2f)
-        val border = cur[4].coerceIn(0f, 1f)
+        val glass = cur[4].coerceIn(0f, 1f)
 
         val shadow = cur[5].coerceIn(0f, 1f)
         if (shadow > 0.02f) {
-            fillPaint.setShadowLayer(dpf(16f), 0f, dpf(5f), Color.argb((120 * shadow * a).toInt(), 0, 0, 0))
+            fillPaint.setShadowLayer(dpf(18f), 0f, dpf(6f), Color.argb((130 * shadow * a).toInt(), 0, 0, 0))
         } else {
             fillPaint.clearShadowLayer()
         }
-        // Pure black when resting (melts into the notch), dark glass when open.
-        val glass = border
-        val fillAlpha = 255 - (22 * glass).toInt()
-        fillPaint.color = Color.argb((fillAlpha * a).toInt(), (10 * glass).toInt(), (10 * glass).toInt(), (14 * glass).toInt())
+        // Pure black at rest (melts into the camera), dark glass when open.
+        val fillAlpha = 255 - (20 * glass).toInt()
+        fillPaint.color = Color.argb((fillAlpha * a).toInt(), (12 * glass).toInt(), (12 * glass).toInt(), (16 * glass).toInt())
         canvas.drawRoundRect(rect, r, r, fillPaint)
 
         if (glass > 0.01f) {
             sheenPaint.shader = LinearGradient(
-                0f, t, 0f, t + min(h, dpf(80f)),
-                Color.argb((30 * glass * a).toInt(), 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP,
+                0f, rect.top, 0f, rect.top + min(h, dpf(90f)),
+                Color.argb((28 * glass * a).toInt(), 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP,
             )
             canvas.drawRoundRect(rect, r, r, sheenPaint)
 
             borderPaint.shader = LinearGradient(
-                0f, t, 0f, t + h,
-                Color.argb((80 * glass * a).toInt(), 255, 255, 255),
-                Color.argb((22 * glass * a).toInt(), 255, 255, 255),
+                0f, rect.top, 0f, rect.bottom,
+                Color.argb((75 * glass * a).toInt(), 255, 255, 255),
+                Color.argb((18 * glass * a).toInt(), 255, 255, 255),
                 Shader.TileMode.CLAMP,
             )
             val inset = borderPaint.strokeWidth / 2f
@@ -423,7 +477,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             rect.inset(-inset, -inset)
         }
 
-        // Accent glow ring for alerts: a thin coloured edge, like a halo.
         if (glow > 0.01f && glowColor != 0) {
             glowPaint.color = Color.argb(
                 (110 * glow * a).toInt(),
@@ -446,6 +499,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         slot = null
         wave = null
+        artImage = null
         playButton = null
         progress = null
         elapsedText = null
@@ -467,7 +521,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             clipToOutline = true
             addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
-        val lp = LayoutParams(w, h, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+        val lp = LayoutParams(w, h, Gravity.TOP or Gravity.START).apply {
+            leftMargin = (cx() - w / 2f).toInt()
             topMargin = topFor(h.toFloat()).toInt()
         }
         addView(s, lp)
@@ -515,15 +570,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
 
-    private fun expandedPadTop(): Int = max(dp(16), notchBottom() - dp(4) + dp(10))
+    private fun expandedPadTop(): Int = max(dp(14), notchBottom() + dp(8))
 
     private fun buildCompactMusic(info: MusicInfo, h: Int): View {
         val root = FrameLayout(context)
         val artSize = h - dp(10)
-        root.addView(
-            roundImage(info.art, artSize / 2f, info.accent, R.drawable.ic_note),
-            LayoutParams(artSize, artSize, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(5) },
-        )
+        val art = roundImage(info.art, artSize / 2f, info.accent, R.drawable.ic_note)
+        root.addView(art, LayoutParams(artSize, artSize, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(5) })
+        artImage = art
         val w = WaveformView(context).apply {
             color = info.accent
             playing = info.playing
@@ -588,6 +642,113 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         return row
+    }
+
+    private fun buildPanel(w: Int): View {
+        val items = host.panelItems()
+        val col = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), expandedPadTop(), dp(12), dp(12))
+        }
+
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), 0, 0, dp(4))
+        }
+        header.addView(text(15f, Color.WHITE, true).apply { text = "Notifications" })
+        header.addView(text(13f, Color.argb(130, 255, 255, 255), false).apply {
+            text = if (items.isEmpty()) "" else "  ${items.size}"
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_close)
+            setColorFilter(Color.argb(200, 255, 255, 255))
+            val pad = dp(6)
+            setPadding(pad, pad, pad, pad)
+            setOnClickListener {
+                haptic()
+                closePanel()
+            }
+        }, LinearLayout.LayoutParams(dp(32), dp(32)))
+        col.addView(header)
+
+        val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        if (items.isEmpty()) {
+            list.addView(text(13.5f, Color.argb(150, 255, 255, 255), false).apply {
+                text = "You're all caught up"
+                gravity = Gravity.CENTER
+                setPadding(0, dp(18), 0, dp(18))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        for (item in items) list.addView(panelCard(item))
+
+        // Measure the list so the panel is only as tall as it needs to be.
+        val inner = w - dp(24)
+        list.measure(
+            MeasureSpec.makeMeasureSpec(inner, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+        )
+        header.measure(
+            MeasureSpec.makeMeasureSpec(inner, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+        )
+        val room = (panelMaxH() - expandedPadTop() - dp(12) - header.measuredHeight).toInt()
+        val scroll = ScrollView(context).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFillViewport = true
+            addView(list)
+        }
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, max(room, dp(80)))))
+        return col
+    }
+
+    private fun panelCard(item: PanelItem): View {
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(11), dp(12), dp(11))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(26, 255, 255, 255))
+                cornerRadius = dpf(20f)
+            }
+            setOnClickListener {
+                haptic()
+                panelOpen = false
+                refresh()
+                host.openDetail(item.key)
+            }
+        }
+        card.addView(roundImage(item.icon, dpf(10f), item.accent, R.drawable.ic_check), LinearLayout.LayoutParams(dp(38), dp(38)))
+        val texts = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(11), 0, 0, 0)
+        }
+        val head = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(text(14f, Color.WHITE, true).apply { text = item.title }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val ago = DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+        head.addView(text(11f, Color.argb(130, 255, 255, 255), false).apply {
+            text = if (item.canReply) "$ago · Reply" else ago
+            setPadding(dp(8), 0, 0, 0)
+        })
+        texts.addView(head)
+        texts.addView(text(12.5f, Color.argb(190, 255, 255, 255), false).apply {
+            text = item.text
+            maxLines = 2
+            setPadding(0, dp(3), 0, 0)
+        })
+        texts.addView(text(10.5f, Color.argb(110, 255, 255, 255), false).apply {
+            text = item.appName
+            setPadding(0, dp(4), 0, 0)
+        })
+        card.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        card.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        }
+        return card
     }
 
     private fun buildCompactCall(c: CallInfo): View {
@@ -676,6 +837,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val art = roundImage(info.art, dpf(12f), info.accent, R.drawable.ic_note)
         art.setOnClickListener { openCurrent() }
         row.addView(art, LinearLayout.LayoutParams(dp(54), dp(54)))
+        artImage = art
 
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -751,8 +913,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         when (val c = content) {
             is Content.Music -> host.openMusicApp(c.info)
             is Content.Note -> {
-                host.send(c.note.contentIntent)
                 IslandStore.dismissNotif()
+                host.openDetail(c.note.key)
             }
             is Content.Call -> host.send(c.call.contentIntent)
             else -> return
@@ -788,7 +950,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     // =====================================================================
-    // Touch
+    // Touch (events are forwarded here from the touch window)
     // =====================================================================
 
     private fun haptic() {
@@ -799,27 +961,31 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         override fun onDown(e: MotionEvent): Boolean = true
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            when (content) {
-                is Content.Music, is Content.Call -> if (mode == Mode.COMPACT) {
+            when {
+                mode == Mode.IDLE -> openPanel()
+                mode == Mode.PANEL -> {}
+                content is Content.Music || content is Content.Call -> if (mode == Mode.COMPACT) {
                     expanded = true
                     refresh()
                 } else {
                     openCurrent()
                 }
-                is Content.Note -> openCurrent()
-                is Content.Popup -> IslandStore.dismissPop()
-                else -> {}
+                content is Content.Note -> openCurrent()
+                content is Content.Popup -> IslandStore.dismissPop()
             }
             return true
         }
 
         override fun onLongPress(e: MotionEvent) {
-            if (mode == Mode.COMPACT && (content is Content.Music || content is Content.Call)) openCurrent()
+            when {
+                mode == Mode.COMPACT && content is Content.Music -> openCurrent()
+                mode == Mode.COMPACT || mode == Mode.IDLE -> openPanel()
+            }
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             val music = currentMusic()
-            if (abs(velocityX) > abs(velocityY)) {
+            if (abs(velocityX) > abs(velocityY) && mode != Mode.PANEL) {
                 val tc = music?.controller?.transportControls ?: return false
                 haptic()
                 if (velocityX < 0) tc.skipToNext() else tc.skipToPrevious()
@@ -827,6 +993,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
             if (velocityY < 0) {
                 when {
+                    mode == Mode.PANEL -> closePanel()
                     content is Content.Note -> IslandStore.dismissNotif()
                     content is Content.Popup -> IslandStore.dismissPop()
                     mode == Mode.EXPANDED -> {
@@ -836,9 +1003,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 }
                 return true
             }
-            if (velocityY > 0 && mode == Mode.COMPACT && (music != null || content is Content.Call)) {
-                expanded = true
-                refresh()
+            if (velocityY > 0) {
+                when {
+                    mode == Mode.IDLE -> openPanel()
+                    mode == Mode.COMPACT && (music != null || content is Content.Call) -> {
+                        expanded = true
+                        refresh()
+                    }
+                    content is Content.Note -> openCurrent()
+                }
                 return true
             }
             return false
@@ -846,17 +1019,17 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     })
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-            val w = cur[0]
-            val h = cur[1]
-            val l = width / 2f - w / 2f
-            val t = topFor(h)
-            if (ev.x < l || ev.x > l + w || ev.y < t || ev.y > t + h) return false
-            // Press feedback: a slight squeeze of the whole island.
-            animate().scaleX(0.97f).scaleY(0.97f).setDuration(80L).start()
-        }
-        if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
-            animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pillRect(cur[0], cur[1], rect)
+                pivotX = rect.centerX()
+                pivotY = rect.centerY()
+                // Press feedback: a slight squeeze (skipped for the big panel).
+                if (mode != Mode.PANEL) animate().scaleX(0.97f).scaleY(0.97f).setDuration(80L).start()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
+            }
         }
         lastTouch = SystemClock.uptimeMillis()
         if (content is Content.Note) IslandStore.holdNotif(4_000L)
@@ -867,13 +1040,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     override fun onTouchEvent(event: MotionEvent): Boolean {
         gestures.onTouchEvent(event)
         return true
-    }
-
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        super.onLayout(changed, left, top, right, bottom)
-        // Scale presses around the pill's centre, not the window's.
-        pivotX = width / 2f
-        pivotY = topFor(cur[1]) + cur[1] / 2f
     }
 
     override fun onDetachedFromWindow() {
