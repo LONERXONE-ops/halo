@@ -36,6 +36,9 @@ class HaloNotificationListener : NotificationListenerService() {
     private var accentKey: String? = null
     private var accent = Colors.ACCENT_DEFAULT
 
+    /** Recent banner times per app, for the spam cooldown. */
+    private val bursts = HashMap<String, ArrayDeque<Long>>()
+
     /** key -> last text we showed, so re-posted notifications do not pop twice. */
     private val shown = HashMap<String, String>()
 
@@ -429,6 +432,14 @@ class HaloNotificationListener : NotificationListenerService() {
         }
         shown[sbn.key] = fingerprint
         if (shown.size > 200) shown.clear()
+
+        // Cooldown: an app that fires 3+ alerts within 20 s stops popping the island
+        // (everything still shows in the notification center).
+        val now = System.currentTimeMillis()
+        val times = bursts.getOrPut(pkg) { ArrayDeque() }
+        while (times.isNotEmpty() && now - times.first() > 20_000L) times.removeFirst()
+        times.addLast(now)
+        if (times.size > 3) return skip("busy app, cooling down")
 
         val icon = rich.avatar ?: rich.appIcon
         val color = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else accentFrom(rich.appIcon)

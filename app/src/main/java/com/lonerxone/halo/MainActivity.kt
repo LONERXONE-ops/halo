@@ -194,6 +194,10 @@ class MainActivity : Activity() {
         shows.addView(line())
         shows.addView(switchRow("System pops", "Low battery, full, silent, earbuds, DND", Prefs.SYSTEM_POPS))
         shows.addView(line())
+        shows.addView(switchRow("Connections & modes", "Wi-Fi, airplane mode, power saving", Prefs.CONNECTIVITY))
+        shows.addView(line())
+        shows.addView(switchRow("Flashlight", "Stays on the island while it's on; tap to turn off", Prefs.TORCH))
+        shows.addView(line())
         shows.addView(navRow("Choose apps", "Pick which apps can pop up") {
             startActivity(Intent(this, AppsActivity::class.java))
         })
@@ -236,7 +240,7 @@ class MainActivity : Activity() {
         // About
         col.addView(sectionTitle("About"))
         val about = card()
-        about.addView(infoRow("Creator", "Wisdom (LONERXONE-ops)"))
+        about.addView(infoRow("Creator", "LONERXONE"))
         about.addView(line())
         about.addView(infoRow("Works on", "Android 11 and newer. Tuned for Samsung One UI, where it feels most at home."))
         about.addView(line())
@@ -251,7 +255,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, dp(30), 0, dp(10))
         }
-        credit.addView(label("Made by Wisdom", 15f, text1, true).apply { gravity = Gravity.CENTER })
+        credit.addView(label("Made by LONERXONE", 15f, text1, true).apply { gravity = Gravity.CENTER })
         credit.addView(label("Halo v${version()} · open source", 12.5f, text2, false).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(4), 0, dp(12))

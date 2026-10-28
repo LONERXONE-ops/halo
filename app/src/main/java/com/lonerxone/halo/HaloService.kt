@@ -7,7 +7,15 @@ import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -75,6 +83,24 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     onDnd()
                     return
                 }
+                Intent.ACTION_AIRPLANE_MODE_CHANGED -> {
+                    if (connectivityOn()) {
+                        val on = intent.getBooleanExtra("state", false)
+                        IslandStore.showPop("Airplane mode", if (on) "On" else "Off", Colors.ORANGE, R.drawable.ic_airplane, 2_200L)
+                    }
+                    return
+                }
+                PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                    if (connectivityOn()) {
+                        val on = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+                        IslandStore.showPop("Power saving", if (on) "On" else "Off", Colors.GREEN, R.drawable.ic_leaf, 2_200L)
+                    }
+                    return
+                }
+                ACTION_BT_BATTERY -> {
+                    onBudsBattery(intent)
+                    return
+                }
                 else -> locked = keyguard().isKeyguardLocked
             }
             push()
@@ -98,12 +124,17 @@ class HaloService : AccessibilityService(), IslandView.Host {
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
+            addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED)
+            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+            addAction(ACTION_BT_BATTERY)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(receiver, filter)
         }
+        watchTorch()
+        watchWifi()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -135,6 +166,14 @@ class HaloService : AccessibilityService(), IslandView.Host {
         IslandStore.removeListener(storeListener)
         try {
             unregisterReceiver(receiver)
+        } catch (_: Exception) {
+        }
+        try {
+            getSystemService(CameraManager::class.java)?.unregisterTorchCallback(torchCallback)
+        } catch (_: Exception) {
+        }
+        try {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(wifiCallback)
         } catch (_: Exception) {
         }
         removeTouch()
@@ -306,6 +345,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }?.let { add(IslandView.Content.Music(it)) }
             IslandStore.nav?.takeIf { p.getBoolean(Prefs.NAV, true) }?.let { add(IslandView.Content.Nav(it)) }
             IslandStore.transfer?.takeIf { p.getBoolean(Prefs.TRANSFERS, true) }?.let { add(IslandView.Content.Transfer(it)) }
+            IslandStore.torch?.takeIf { p.getBoolean(Prefs.TORCH, true) }?.let { add(IslandView.Content.Torch(it)) }
         }
         val main: IslandView.Content
         val second: IslandView.Content?
@@ -333,7 +373,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             main !is IslandView.Content.None && main !is IslandView.Content.Note && main !is IslandView.Content.Popup &&
             IslandStore.notifCount > 0 && p.getBoolean(Prefs.NOTIFS, true)
         ) {
-            IslandView.Bubble("bell", null, R.drawable.ic_bell, android.graphics.Color.WHITE, -1f) { island?.openPanel() }
+            IslandView.Bubble("bell", null, R.drawable.ic_bell, android.graphics.Color.WHITE, -1f, small = true) { island?.openPanel() }
         } else {
             null
         }
@@ -352,6 +392,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         is IslandView.Content.Timer -> IslandView.Bubble("t", null, R.drawable.ic_timer, Colors.ORANGE, -1f) { send(c.timer.contentIntent) }
         is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.BLUE, max(0f, c.transfer.progress)) { send(c.transfer.contentIntent) }
         is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f) { send(c.nav.contentIntent) }
+        is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.YELLOW, -1f) { torchOff() }
         else -> null
     }
 
@@ -413,7 +454,69 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val now = System.currentTimeMillis()
         if (now - lastBt < 8_000L) return
         lastBt = now
+        lastBudsName = info
         IslandStore.showPop("Connected", info.take(18), Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+    }
+
+    private fun connectivityOn() = popsOn() && Prefs.get(this).getBoolean(Prefs.CONNECTIVITY, true)
+
+    // ----- Flashlight -----
+    private val main = Handler(Looper.getMainLooper())
+    private val torchCallback = object : CameraManager.TorchCallback() {
+        override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+            if (enabled) IslandStore.setTorch(cameraId) else if (IslandStore.torch == cameraId) IslandStore.setTorch(null)
+        }
+    }
+
+    private fun watchTorch() {
+        try {
+            getSystemService(CameraManager::class.java)?.registerTorchCallback(torchCallback, main)
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun torchOff() {
+        val id = IslandStore.torch ?: return
+        try {
+            getSystemService(CameraManager::class.java)?.setTorchMode(id, false)
+        } catch (_: Exception) {
+        }
+    }
+
+    // ----- Wi-Fi -----
+    private var wifiWatchStarted = 0L
+    private var lastWifi = 0L
+    private val wifiCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val now = System.currentTimeMillis()
+            // The callback fires straight away for the current network; that is not news.
+            if (now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn()) return
+            lastWifi = now
+            IslandStore.showPop("Wi-Fi", "Connected", Colors.BLUE, R.drawable.ic_wifi, 2_200L)
+        }
+    }
+
+    private fun watchWifi() {
+        try {
+            wifiWatchStarted = System.currentTimeMillis()
+            val req = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
+            getSystemService(ConnectivityManager::class.java)?.registerNetworkCallback(req, wifiCallback, main)
+        } catch (_: Exception) {
+        }
+    }
+
+    // ----- Earbuds battery (reported by most buds shortly after they connect) -----
+    private var lastBudsName: String? = null
+
+    @Suppress("DEPRECATION")
+    private fun onBudsBattery(i: Intent) {
+        if (!popsOn()) return
+        val level = i.getIntExtra(EXTRA_BT_BATTERY, -1)
+        if (level !in 0..100) return
+        if (System.currentTimeMillis() - lastBt > 20_000L) return
+        val name = lastBudsName ?: return
+        IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.ORANGE else Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+        lastBudsName = null
     }
 
     private fun onDnd() {
@@ -427,7 +530,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (!Prefs.get(this).getBoolean(Prefs.CHARGING, true)) return
         val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
         val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        IslandStore.showPop("Charging", "$pct%", Colors.GREEN, R.drawable.ic_bolt, 3_000L)
+        IslandStore.showPop("Charging", "$pct%", Colors.GREEN, R.drawable.ic_bolt, 3_500L, kind = "charge")
     }
 
     private fun geometry(): IslandView.Geometry {
@@ -531,6 +634,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
     companion object {
         var instance: HaloService? = null
             private set
+
+        private const val ACTION_BT_BATTERY = "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"
+        private const val EXTRA_BT_BATTERY = "android.bluetooth.device.extra.BATTERY_LEVEL"
 
         private const val COMMON =
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or

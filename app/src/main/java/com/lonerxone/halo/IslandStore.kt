@@ -49,6 +49,8 @@ data class Pop(
     val accent: Int,
     val icon: Int,
     val durationMs: Long,
+    /** Tapping grows it into a card (used by charging). */
+    val kind: String = "",
 )
 
 /**
@@ -172,6 +174,16 @@ object IslandStore {
         private set
     var nav: NavInfo? = null
         private set
+    /** Camera id of the flashlight while it is on, else null. */
+    var torch: String? = null
+        private set
+
+    fun setTorch(id: String?) {
+        if (id == torch) return
+        torch = id
+        dispatch()
+    }
+
     /** Notifications waiting in the panel (drives the bell next to the pill). */
     var notifCount = 0
         private set
@@ -232,11 +244,18 @@ object IslandStore {
         dispatch()
     }
 
-    fun showPop(title: String, value: String, accent: Int, icon: Int, durationMs: Long) {
-        pop = Pop(nextId(), title, value, accent, icon, durationMs)
+    fun showPop(title: String, value: String, accent: Int, icon: Int, durationMs: Long, kind: String = "") {
+        pop = Pop(nextId(), title, value, accent, icon, durationMs, kind)
         handler.removeCallbacks(clearPop)
         handler.postDelayed(clearPop, durationMs)
         dispatch()
+    }
+
+    /** Keeps a pop open (for example while its card is expanded). */
+    fun holdPop(durationMs: Long) {
+        if (pop == null) return
+        handler.removeCallbacks(clearPop)
+        handler.postDelayed(clearPop, durationMs)
     }
 
     fun dismissPop() {
@@ -294,6 +313,8 @@ object Prefs {
     const val GLASS = "glass"
     const val ART_BACKDROP = "art_backdrop"
     const val LOW_POWER = "low_power"
+    const val TORCH = "torch"
+    const val CONNECTIVITY = "connectivity"
 
     /** Banking and OTP apps stay off the island unless the user turns them on. */
     val DEFAULT_BLOCKED = setOf(
@@ -320,4 +341,5 @@ object Colors {
     const val ORANGE = 0xFFFF9F0A.toInt()
     const val PURPLE = 0xFFAF8CFF.toInt()
     const val LAVENDER = 0xFFB9C3FF.toInt()
+    const val YELLOW = 0xFFFFD60A.toInt()
 }

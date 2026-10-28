@@ -6,6 +6,8 @@
 
     <!-- In-app updates from GitHub Releases -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wi-Fi connected pop -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Keep running: One UI battery exemption -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />

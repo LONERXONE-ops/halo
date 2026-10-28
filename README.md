@@ -36,10 +36,12 @@
 | **Timers** | Countdown or stopwatch from the Clock app, with its Pause / Cancel buttons. |
 | **Downloads** | A progress ring for downloads, uploads and app installs, and a "Done" pop at the end. |
 | **Navigation** | Next turn and distance from Google Maps. |
-| **Split bubble** | Two things at once (say a timer while music plays): the second one sits in a small circle beside the pill. |
-| **Little pops** | Charging, fully charged, low battery, silent / vibrate / ring, earbuds connected, Do Not Disturb. |
+| **Split bubble** | Two things at once (say a timer while music plays): the second one sits in a circle beside the pill. With only one, a small bell sits there instead and opens the notification center. |
+| **Charging** | A pop when you plug in; tap it for the charging card: big percentage, wattage, time to full and temperature. |
+| **Flashlight** | Stays on the island while the torch is on. Tap it to switch it off. |
+| **Little pops** | Fully charged, low battery, silent / vibrate / ring, earbuds connected (with their battery), Do Not Disturb, Wi-Fi, airplane mode, power saving. |
 
-Touch anywhere else on the screen and an open island retracts.
+Touch anywhere else on the screen and an open island retracts. Apps that fire lots of alerts in a row get a short cooldown so they can't flood the island.
 
 ## Settings
 
@@ -68,7 +70,7 @@ Kotlin, plain Android views, no extra libraries. `minSdk 30`, `targetSdk 35`.
 
 ## Made by
 
-**Wisdom** ([LONERXONE-ops](https://github.com/LONERXONE-ops)). Issues and ideas welcome.
+**LONERXONE** ([LONERXONE-ops](https://github.com/LONERXONE-ops)). Issues and ideas welcome.
 
 ## Thanks
 

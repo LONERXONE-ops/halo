@@ -65,6 +65,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         fun openDetail(key: String)
         fun panelItems(): List<PanelItem>
         fun clearAll()
+        fun torchOff()
     }
 
     enum class Mode { HIDDEN, IDLE, COMPACT, EXPANDED, PANEL }
@@ -78,6 +79,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         data class Timer(val timer: TimerInfo) : Content()
         data class Transfer(val transfer: TransferInfo) : Content()
         data class Nav(val nav: NavInfo) : Content()
+        data class Torch(val cameraId: String) : Content()
     }
 
     /** A second live activity shown as a small circle beside the pill. */
@@ -87,6 +89,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val icon: Int,
         val accent: Int,
         val progress: Float,
+        /** A small companion (the bell), rather than a full second activity. */
+        val small: Boolean = false,
         val onTap: () -> Unit,
     )
 
@@ -173,6 +177,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             updateProgress()
             updateTimer()
             updateClock()
+            updateCharge()
+            if (mode == Mode.EXPANDED && content is Content.Popup) IslandStore.holdPop(4_000L)
             val idleFor = SystemClock.uptimeMillis() - lastTouch
             if (mode == Mode.PANEL && idleFor > 15_000L) {
                 closePanel()
@@ -255,14 +261,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         out.set(l, cy - h / 2f, l + w, cy + h / 2f)
     }
 
-    private fun bubbleCenterX(pillW: Float, d: Float): Float = cx() + pillW / 2f + dpf(6f) + d / 2f
+    /** The bell is a small companion; a second activity gets a full pill-height circle. */
+    private fun bubbleD(): Float = if (bubble?.small == true) dpf(26f) * sizeScale else compactH()
+
+    private fun bubbleCenterX(pillW: Float, d: Float): Float =
+        cx() + pillW / 2f + (if (bubble?.small == true) dpf(5f) else dpf(6f)) + d / 2f
 
     // =====================================================================
     // State machine
     // =====================================================================
 
     private fun canExpand(c: Content) =
-        c is Content.Music || c is Content.Call || c is Content.Timer || c is Content.Transfer || c is Content.Nav
+        c is Content.Music || c is Content.Call || c is Content.Timer || c is Content.Transfer || c is Content.Nav ||
+            (c is Content.Popup && c.pop.kind == "charge")
 
     private fun needsTicker() =
         mode == Mode.EXPANDED || mode == Mode.PANEL || content is Content.Call || content is Content.Timer
@@ -275,7 +286,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return when (c) {
             is Content.None -> if (idleEnabled) Mode.IDLE else Mode.HIDDEN
             is Content.Note -> Mode.EXPANDED
-            is Content.Popup -> Mode.COMPACT
+            is Content.Popup -> if (expanded && c.pop.kind == "charge") Mode.EXPANDED else Mode.COMPACT
+            is Content.Torch -> Mode.COMPACT
             else -> if (expanded) Mode.EXPANDED else Mode.COMPACT
         }
     }
@@ -291,6 +303,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Timer -> "t:" + c.timer.key + ":" + (c.timer.anchor == 0L) + ":" + c.timer.actions.size
             is Content.Transfer -> "d:" + c.transfer.key
             is Content.Nav -> "g:" + c.nav.key
+            is Content.Torch -> "f:" + c.cameraId
         }
     }
 
@@ -308,6 +321,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         navSub = null
         clockText = null
         batteryText = null
+        chargePct = null
+        chargeBar = null
+        chargeInfo = null
     }
 
     private fun refresh() {
@@ -346,6 +362,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     is Content.Timer -> compactTimer()
                     is Content.Transfer -> compactTransfer(c.transfer)
                     is Content.Nav -> compactNav(c.nav)
+                    is Content.Torch -> compactTorch().also { glowColor = Colors.YELLOW; glow = 0.6f }
                     else -> Sides(null, null)
                 }
                 val w = compactWidthFor(sides)
@@ -367,6 +384,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         is Content.Timer -> buildExpandedTimer(c.timer, w.toInt(), top)
                         is Content.Transfer -> buildExpandedTransfer(c.transfer, w.toInt(), top)
                         is Content.Nav -> buildExpandedNav(c.nav, w.toInt(), top)
+                        is Content.Popup -> buildCharge(w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.6f }
                         else -> View(context)
                     }
                 }
@@ -449,7 +467,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val show = bubble != null && mode == Mode.COMPACT
         val before = t(7)
         springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
-        springs[8].to(if (show) compactH() else compactH() * 0.4f, k * 0.8f, 0.85f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.8f, 0.85f)
         if (before != t(7)) {
             updateTouchArea()
             startFrames()
@@ -471,8 +489,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (springs[6].value == 0f) springs[6].snap(anchorY())
         startW[0] = v(0)
         startW[1] = v(1)
-        springs[0].to(w, k * 1.15f, zeta)
-        springs[1].to(h, k, zeta)
+        // Opening: width leads height. Closing: height leads width. Both read as one organic motion.
+        springs[0].to(w, if (grow) k * 1.15f else k, zeta)
+        springs[1].to(h, if (grow) k else k * 1.2f, zeta)
         springs[2].to(r, k, zeta)
         springs[3].to(a, k * 1.8f, 0.95f)
         springs[4].to(glass, k, 1f)
@@ -481,7 +500,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[9].to(edge, k, 1f)
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
-        springs[8].to(if (show) compactH() else compactH() * 0.4f, k * 0.8f, 0.85f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.8f, 0.85f)
         updateTouchArea()
 
         if (scale <= 0f || !isAttachedToWindow) {
@@ -610,7 +629,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         bubblePaint.alpha = (255 * ba).toInt()
         canvas.drawCircle(bx, by, d / 2f, bubblePaint)
 
-        val inner = d / 2f - dpf(5f)
+        val inner = d / 2f - if (b.small) dpf(4f) else dpf(5f)
         val img = b.image
         if (img != null) {
             if (bubbleShaderFor !== img) {
@@ -828,9 +847,32 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return row
     }
 
+    /** Bell with the waiting count, sized like the app tag so the camera row stays balanced. */
+    private fun bellChip(): View? {
+        val n = IslandStore.notifCount
+        if (n <= 0) return null
+        val chip = hRow()
+        chip.setPadding(dp(8), dp(3), dp(9), dp(3))
+        chip.background = GradientDrawable().apply {
+            setColor(Color.argb(38, 255, 255, 255))
+            cornerRadius = dpf(11f)
+        }
+        chip.addView(sized(icon(R.drawable.ic_bell, Color.WHITE), dp(12)))
+        chip.addView(spaced(text(11.5f, Color.WHITE, true).apply { text = if (n > 99) "99+" else n.toString() }, 4))
+        chip.setOnClickListener {
+            haptic()
+            expanded = false
+            openPanel()
+        }
+        return chip
+    }
+
     // =====================================================================
     // Compact content
     // =====================================================================
+
+    private fun compactTorch(): Sides =
+        Sides(icon(R.drawable.ic_flashlight, Colors.YELLOW), text(12.5f, Colors.YELLOW, true).apply { text = "On" }, dp(16))
 
     private fun compactMusic(info: MusicInfo): Sides {
         val art = roundImage(info.art, dpf(11f), info.accent, R.drawable.ic_note)
@@ -912,25 +954,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             still = lowPower
         }
         wave = wv
-        val right = hRow()
-        if (IslandStore.notifCount > 0) {
-            val bell = hRow()
-            bell.setPadding(dp(8), dp(4), dp(9), dp(4))
-            bell.background = GradientDrawable().apply {
-                setColor(Color.argb(40, 255, 255, 255))
-                cornerRadius = dpf(12f)
-            }
-            bell.addView(sized(icon(R.drawable.ic_bell, Color.WHITE), dp(13)))
-            bell.addView(spaced(text(11.5f, Color.WHITE, true).apply { text = IslandStore.notifCount.toString() }, 3))
-            bell.setOnClickListener {
-                haptic()
-                expanded = false
-                openPanel()
-            }
-            right.addView(bell)
-        }
-        right.addView(sized(wv, dp(13), dp(14)).apply { (layoutParams as LinearLayout.LayoutParams).marginStart = dp(10) })
-        col.addView(cameraRow(appTag(info.appIcon, info.appName.ifEmpty { "Now playing" }, info.accent), right, w, top))
+        col.addView(cameraRow(appTag(info.appIcon, info.appName.ifEmpty { "Now playing" }, info.accent), bellChip(), w, top))
 
         val b = body()
         val row = hRow()
@@ -949,6 +973,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             setPadding(0, dp(4), 0, 0)
         })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(wv, LinearLayout.LayoutParams(dp(13), dp(14)).apply { marginEnd = dp(14) })
         val play = ImageView(context).apply {
             setImageResource(if (info.playing) R.drawable.ic_pause else R.drawable.ic_play)
             setColorFilter(Color.BLACK)
@@ -1234,6 +1259,69 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         b.addView(row)
         col.addView(b)
         return col
+    }
+
+    // ----- Charging card -----
+    private var chargePct: TextView? = null
+    private var chargeBar: ProgressLine? = null
+    private var chargeInfo: TextView? = null
+
+    /** Tap the charging pop: big percentage, power, time to full, temperature. */
+    private fun buildCharge(w: Int, top: Float): View {
+        val col = card()
+        val tag = hRow(sized(icon(R.drawable.ic_bolt, Colors.GREEN), dp(14)), spaced(text(12f, white70, true).apply { text = "Charging" }, 6))
+        col.addView(cameraRow(tag, null, w, top))
+        val b = body()
+        val pct = text(46f, Colors.GREEN, false).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) }
+        chargePct = pct
+        b.addView(pct)
+        val bar = ProgressLine(context).apply { color = Colors.GREEN }
+        chargeBar = bar
+        b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)).apply { topMargin = dp(4) })
+        val info = text(13.5f, white70, false).apply {
+            maxLines = 2
+            setPadding(0, dp(8), 0, 0)
+        }
+        chargeInfo = info
+        b.addView(info)
+        col.addView(b)
+        updateCharge()
+        return col
+    }
+
+    private fun updateCharge() {
+        val pctView = chargePct ?: return
+        val bm = context.getSystemService(BatteryManager::class.java) ?: return
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        pctView.text = "$pct%"
+        chargeBar?.fraction = pct / 100f
+        val sticky = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        val plug = sticky?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        val mv = sticky?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+        val temp = (sticky?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+        var ma = abs(bm.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
+        if (ma > 20_000L) ma /= 1000L // most phones report microamps
+        val watts = ma * mv / 1_000_000f
+        val how = when (plug) {
+            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Wireless"
+            BatteryManager.BATTERY_PLUGGED_USB -> "USB"
+            else -> if (watts >= 10f) "Fast charging" else "Charging"
+        }
+        val parts = mutableListOf(how)
+        if (watts in 0.5f..120f) parts += "%.1f W".format(watts)
+        if (temp > 0f) parts += "%.0f°C".format(temp)
+        val left = bm.computeChargeTimeRemaining()
+        val full = when {
+            pct >= 100 -> "Fully charged"
+            left > 0 -> "Full in " + duration(left)
+            else -> ""
+        }
+        chargeInfo?.text = parts.joinToString("  ·  ") + if (full.isNotEmpty()) "\n$full" else ""
+    }
+
+    private fun duration(ms: Long): String {
+        val m = (ms / 60_000L).toInt()
+        return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
     }
 
     /**
@@ -1527,7 +1615,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 mode == Mode.IDLE -> openPanel()
                 mode == Mode.PANEL -> {}
                 content is Content.Note -> openCurrent()
+                content is Content.Popup && (content as Content.Popup).pop.kind == "charge" && mode == Mode.COMPACT -> {
+                    IslandStore.holdPop(10_000L)
+                    expanded = true
+                    refresh()
+                }
                 content is Content.Popup -> IslandStore.dismissPop()
+                content is Content.Torch -> host.torchOff()
                 canExpand(content) -> if (mode == Mode.COMPACT) {
                     expanded = true
                     refresh()
