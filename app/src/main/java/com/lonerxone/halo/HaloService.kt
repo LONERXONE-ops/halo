@@ -137,7 +137,12 @@ class HaloService : AccessibilityService(), IslandView.Host {
             y = 0
         }
         v.setOnApplyWindowInsetsListener { _, insets ->
-            val fs = !insets.isVisible(WindowInsets.Type.statusBars())
+            // Only call it fullscreen when the status bar exists for this window
+            // but is currently collapsed. Overlays that get no status bar insets
+            // at all are never treated as fullscreen.
+            val max = insets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
+            val now = insets.getInsets(WindowInsets.Type.statusBars()).top
+            val fs = max > 0 && now == 0
             if (fs != fullscreen) {
                 fullscreen = fs
                 v.post { push() }
@@ -161,6 +166,16 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.sizeScale = p.getInt(Prefs.SCALE, 100) / 100f
     }
 
+    /** One line for the test button, so problems are visible without a PC. */
+    fun diagnostics(): String {
+        val v = island
+        val attached = v?.isAttachedToWindow == true
+        val n = v?.geometry?.notch
+        val notch = if (n == null) "none" else "${n.width()}x${n.height()}"
+        return "overlay: ${if (attached) "on" else "OFF"}, notch: $notch, " +
+            "fullscreen: $fullscreen, locked: $locked, size: ${lp?.width}x${lp?.height}"
+    }
+
     /** Called by the settings screen after a change. */
     fun reloadPrefs() {
         val v = island ?: return
@@ -172,8 +187,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private fun push() {
         val v = island ?: return
         val p = Prefs.get(this)
-        val hide = locked || landscape || (fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true))
         val pop = IslandStore.pop
+        // Short pops still show over fullscreen apps; only lock and landscape hide them.
+        val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && pop == null
+        val hide = locked || landscape || hideFs
         val music = IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }
         val content = when {
             pop != null -> IslandView.Content.Popup(pop)

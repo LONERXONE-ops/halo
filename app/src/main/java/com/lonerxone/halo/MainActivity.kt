@@ -120,10 +120,16 @@ class MainActivity : Activity() {
         val test = Button(this).apply {
             text = "Test the island"
             setOnClickListener {
-                if (HaloService.instance == null) {
-                    Toast.makeText(this@MainActivity, "Turn on the accessibility service first", Toast.LENGTH_SHORT).show()
+                val svc = HaloService.instance
+                if (svc == null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Island service isn't running. Turn Halo off and on again in Accessibility.",
+                        Toast.LENGTH_LONG,
+                    ).show()
                 } else {
                     IslandStore.showPop("Halo", "Ready", Colors.BLUE, R.drawable.ic_check, 2_500L)
+                    Toast.makeText(this@MainActivity, "Sent · " + svc.diagnostics(), Toast.LENGTH_LONG).show()
                 }
             }
         }
