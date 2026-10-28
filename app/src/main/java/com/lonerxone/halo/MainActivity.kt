@@ -31,12 +31,11 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Settings, styled after Smart Island: soft gradient background, glass cards
- * with a hairline border, lavender accent. Switches are the phone's own.
+ * Settings: a calm home screen with an island preview, and a few grouped
+ * pages behind it (One UI style). Always black. Switches are the phone's own.
  */
 class MainActivity : Activity() {
 
-    private var night = false
     private var bgTop = 0
     private var bgBottom = 0
     private var cardFill = 0
@@ -85,19 +84,47 @@ class MainActivity : Activity() {
     }
 
     // =====================================================================
-    // Layout
+    // Pages
     // =====================================================================
+
+    private enum class Page(val title: String) {
+        HOME("Halo"),
+        ISLAND("On the island"),
+        LOOK("Look & feel"),
+        CAMERA("Camera fit"),
+        SETUP("Permissions"),
+        UPDATES("Updates"),
+        ABOUT("About"),
+    }
+
+    private var page = Page.HOME
+    private var shownPage: Page? = null
+    private var scroll: ScrollView? = null
+
+    private fun go(p: Page) {
+        page = p
+        render()
+    }
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (page != Page.HOME) {
+            go(Page.HOME)
+        } else {
+            super.onBackPressed()
+        }
+    }
 
     private fun render() {
         // Always black: the look Halo started with, refined.
-        night = true
         bgTop = Color.BLACK
         bgBottom = Color.BLACK
-        cardFill = Color.rgb(18, 18, 20)
-        cardStroke = Color.argb(22, 255, 255, 255)
+        cardFill = Color.rgb(17, 17, 19)
+        cardStroke = Color.argb(16, 255, 255, 255)
         text1 = Color.rgb(245, 245, 247)
-        text2 = Color.rgb(150, 150, 158)
-        divider = Color.argb(18, 255, 255, 255)
+        text2 = Color.rgb(142, 142, 150)
+        divider = Color.argb(14, 255, 255, 255)
         accent = Colors.BLUE
 
         window.decorView.setBackgroundColor(bgBottom)
@@ -108,183 +135,322 @@ class MainActivity : Activity() {
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, dp(14), dp(28))
+            setPadding(dp(16), 0, dp(16), dp(32))
+        }
+        liveView = null
+        when (page) {
+            Page.HOME -> homePage(col)
+            Page.ISLAND -> islandPage(col)
+            Page.LOOK -> lookPage(col)
+            Page.CAMERA -> cameraPage(col)
+            Page.SETUP -> setupPage(col)
+            Page.UPDATES -> updatesPage(col)
+            Page.ABOUT -> aboutPage(col)
         }
 
-        // Header
-        val header = LinearLayout(this).apply {
+        // Same page re-rendered (a status change): keep the scroll position.
+        val samePage = shownPage == page
+        val keepY = if (samePage) scroll?.scrollY ?: 0 else 0
+        val sv = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            setBackgroundColor(bgBottom)
+            addView(col)
+            setOnApplyWindowInsetsListener { v, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                v.setPadding(0, bars.top, 0, bars.bottom)
+                insets
+            }
+        }
+        setContentView(sv)
+        scroll = sv
+        if (samePage) {
+            sv.post { sv.scrollTo(0, keepY) }
+        } else {
+            // A soft slide between pages.
+            val dir = if (page == Page.HOME) -1 else 1
+            col.alpha = 0f
+            col.translationX = dp(28) * dir.toFloat()
+            col.animate().alpha(1f).translationX(0f).setDuration(260)
+                .setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start()
+        }
+        shownPage = page
+    }
+
+    /** Big One UI style title; sub-pages get a round back button above it. */
+    private fun pageHeader(col: LinearLayout, title: String, subtitle: String?) {
+        val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM
-            setPadding(dp(10), 0, dp(10), dp(22))
+            setPadding(dp(6), dp(if (page == Page.HOME) 64 else 14), dp(6), dp(20))
         }
-        header.addView(label("Halo", 40f, text1, true))
-        header.addView(label("Dynamic island for Android", 14f, text2, false).apply { setPadding(0, dp(2), 0, 0) })
+        if (page != Page.HOME) {
+            val back = android.widget.ImageView(this).apply {
+                setImageResource(R.drawable.ic_back)
+                imageTintList = ColorStateList.valueOf(text1)
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(cardFill)
+                }
+                contentDescription = "Back"
+                isClickable = true
+                setOnClickListener { go(Page.HOME) }
+            }
+            box.addView(back, LinearLayout.LayoutParams(dp(42), dp(42)).apply { bottomMargin = dp(34) })
+        }
+        box.addView(label(title, if (page == Page.HOME) 38f else 30f, text1, true))
+        if (subtitle != null) box.addView(label(subtitle, 14f, text2, false).apply { setPadding(0, dp(4), 0, 0) })
+        col.addView(box)
+    }
+
+    private fun gap(col: LinearLayout, h: Int = 12) {
+        col.addView(View(this), LinearLayout.LayoutParams(1, dp(h)))
+    }
+
+    // ---------------------------------------------------------------------
+
+    private fun homePage(col: LinearLayout) {
+        pageHeader(col, "Halo", "Dynamic island for Android")
+        col.addView(heroCard())
+        gap(col)
+
+        // Only nag when something actually needs doing.
+        val missing = setupMissing()
+        if (missing > 0) {
+            col.addView(card().apply {
+                addView(iconRow(R.drawable.ic_shield, Colors.ORANGE, "Finish setup", "$missing ${if (missing == 1) "permission needs" else "permissions need"} your OK") { go(Page.SETUP) })
+            })
+            gap(col)
+        }
+        val rel = latest
+        if (rel != null && rel.build > currentBuild()) {
+            col.addView(card().apply {
+                addView(iconRow(R.drawable.ic_update, Colors.LAVENDER, "${rel.tag} is out", "Tap to download and install") { go(Page.UPDATES) })
+            })
+            gap(col)
+        }
+
+        col.addView(group(
+            iconRow(R.drawable.ic_bell, Colors.BLUE, "On the island", "Music, messages, calls and more") { go(Page.ISLAND) },
+            iconRow(R.drawable.ic_apps, Colors.GREEN, "Choose apps", "Which apps can pop up") {
+                startActivity(Intent(this, AppsActivity::class.java))
+            },
+        ))
+        gap(col)
+        col.addView(group(
+            iconRow(R.drawable.ic_palette, Colors.PINK, "Look & feel", "Size, glass, position, haptics") { go(Page.LOOK) },
+            iconRow(R.drawable.ic_camera, Colors.ORANGE, "Camera fit", "Sit the circle right on your lens") { go(Page.CAMERA) },
+        ))
+        gap(col)
+        col.addView(group(
+            iconRow(R.drawable.ic_shield, Colors.GREEN, "Permissions", if (missing == 0) "All set" else "$missing to go") { go(Page.SETUP) },
+            iconRow(R.drawable.ic_update, Colors.LAVENDER, "Updates", "v${version()} · $updateStatus") { go(Page.UPDATES) },
+            iconRow(R.drawable.ic_info, Color.rgb(110, 110, 118), "About", "Creator, privacy, diagnostics") { go(Page.ABOUT) },
+        ))
+        credit(col)
+    }
+
+    /** A little preview of the island itself, with the service state and a test button. */
+    private fun heroCard(): View {
         val running = HaloService.instance != null
-        header.addView(chip(if (running) "● Active" else "○ Not running", if (running) Colors.GREEN else text2).apply {
-            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
-        })
-        col.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.24f).toInt()))
+        val c = card().apply { setPadding(dp(20), dp(26), dp(20), dp(20)) }
 
-        // Live status
-        col.addView(sectionTitle("Live status"))
-        val live = card()
-        val liveText = label(liveStatus(), 12.5f, text1, false).apply {
-            typeface = Typeface.MONOSPACE
-            setTextIsSelectable(true)
-            setLineSpacing(0f, 1.25f)
-            setPadding(dp(20), dp(14), dp(18), dp(14))
+        // The pill, drawn at real size.
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(14), 0)
+            background = GradientDrawable().apply {
+                setColor(Color.BLACK)
+                setStroke(dp(1), Color.argb(26, 255, 255, 255))
+                cornerRadius = dp(17).toFloat()
+            }
         }
-        live.addView(liveText)
-        col.addView(live)
-        liveView = liveText
-
-        // Updates
-        col.addView(sectionTitle("Updates"))
-        col.addView(updatesCard())
-
-        // Setup
-        col.addView(sectionTitle("Setup"))
-        val setup = card()
-        setup.addView(statusRow("Accessibility service", "Draws the island over the camera", accessibilityOn()) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        })
-        setup.addView(line())
-        setup.addView(statusRow("Notification access", "Music, messages, calls, timers", listenerOn()) {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        })
-        setup.addView(line())
-        setup.addView(statusRow("Battery: unrestricted", "Stops the system closing Halo", batteryOk()) {
-            try {
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-            } catch (_: Exception) {
-                openAppInfo()
+        val dotColor = if (running) Colors.GREEN else Color.rgb(90, 90, 96)
+        val dot = android.widget.ImageView(this).apply {
+            setImageResource(if (running) R.drawable.ic_check else R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(Color.BLACK)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(dotColor)
             }
-        })
-        setup.addView(line())
-        setup.addView(statusRow("Calls, Bluetooth & alerts", "Phone state, end call, earbuds", runtimeOk()) {
-            val missing = RUNTIME_PERMS.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-            if (missing.isEmpty()) openAppInfo() else requestPermissions(missing.toTypedArray(), 7)
-        })
-        setup.addView(line())
-        setup.addView(statusRow("Do Not Disturb access", "Shows silent and DND changes", dndOk()) {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-        })
-        setup.addView(line())
-        setup.addView(statusRow("Install updates", "Lets Halo update itself", packageManager.canRequestPackageInstalls()) {
-            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-        })
-        col.addView(setup)
+        }
+        pill.addView(dot, LinearLayout.LayoutParams(dp(22), dp(22)))
+        pill.addView(View(this), LinearLayout.LayoutParams(dp(28), 1))
+        pill.addView(label(if (running) "Active" else "Off", 13.5f, if (running) Colors.GREEN else text2, true))
+        val pillWrap = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)))
+        }
+        c.addView(pillWrap)
 
-        // What shows
-        col.addView(sectionTitle("On the island"))
-        val shows = card()
-        shows.addView(switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC))
-        shows.addView(line())
-        shows.addView(switchRow("Messages", "WhatsApp, SMS and app alerts", Prefs.NOTIFS))
-        shows.addView(line())
-        shows.addView(switchRow("Calls", "Caller, timer, end-call button", Prefs.CALLS))
-        shows.addView(line())
-        shows.addView(switchRow("Timers & stopwatch", "Countdown from the Clock app", Prefs.TIMERS))
-        shows.addView(line())
-        shows.addView(switchRow("Downloads & installs", "Progress ring for files and apps", Prefs.TRANSFERS))
-        shows.addView(line())
-        shows.addView(switchRow("Navigation", "Next turn from Google Maps", Prefs.NAV))
-        shows.addView(line())
-        shows.addView(switchRow("Charging", "Pop when you plug in", Prefs.CHARGING))
-        shows.addView(line())
-        shows.addView(switchRow("System pops", "Low battery, full, silent, earbuds, DND", Prefs.SYSTEM_POPS))
-        shows.addView(line())
-        shows.addView(switchRow("Connections & modes", "Wi-Fi, airplane mode, power saving", Prefs.CONNECTIVITY))
-        shows.addView(line())
-        shows.addView(switchRow("Flashlight", "Stays on the island while it's on; tap to turn off", Prefs.TORCH))
-        shows.addView(line())
-        shows.addView(navRow("Choose apps", "Pick which apps can pop up") {
-            startActivity(Intent(this, AppsActivity::class.java))
+        c.addView(label(if (running) "The island is running" else "The island is off", 18f, text1, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(18), 0, 0)
         })
-        col.addView(shows)
-
-        // Look
-        col.addView(sectionTitle("Look & feel"))
-        val look = card()
-        look.addView(switchRow("Camera circle", "Hidden on the camera; tap it for notifications", Prefs.IDLE))
-        look.addView(line())
-        look.addView(switchRow("Album art background", "Blurred cover behind the player", Prefs.ART_BACKDROP))
-        look.addView(line())
-        look.addView(sliderRow("Island size", Prefs.SCALE, 100, 80, 130, "%"))
-        look.addView(line())
-        look.addView(sliderRow("Glass strength", Prefs.GLASS, 0, 0, 100, "%"))
-        look.addView(line())
-        look.addView(sliderRow("Move left / right", Prefs.OFFSET_X, 0, -60, 60, "dp"))
-        look.addView(line())
-        look.addView(sliderRow("Move up / down", Prefs.OFFSET_Y, 0, -10, 60, "dp"))
-        look.addView(line())
-        look.addView(switchRowDefault("Hide message text", "Show \"New message\" instead", Prefs.HIDE_TEXT, false))
-        look.addView(line())
-        look.addView(switchRow("Hide in fullscreen", "Videos, games and reels", Prefs.HIDE_FULLSCREEN))
-        look.addView(line())
-        look.addView(switchRow("Haptics", "Light tick on taps", Prefs.HAPTICS))
-        look.addView(line())
-        look.addView(switchRowDefault("Low-power mode", "No blur, still bars, slower updates", Prefs.LOW_POWER, false))
-        col.addView(look)
-
-        // Camera fit: works out where the front camera is on any phone.
-        col.addView(sectionTitle("Camera fit"))
-        val cam = card()
-        val svcNow = HaloService.instance
-        cam.addView(infoRow("Detected", svcNow?.cameraHow?.replaceFirstChar { it.uppercase() } ?: "Turn on the island service to detect the camera"))
-        cam.addView(line())
-        cam.addView(navRow("Find my camera again", "Re-detects and outlines the camera circle in blue") {
+        c.addView(label(
+            if (running) "Play a song or get a message to see it work." else "Turn on Halo in Accessibility to start it.",
+            13f, text2, false,
+        ).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(4), dp(10), dp(18))
+        })
+        c.addView(actionButton(if (running) "Test the island" else "Turn it on") {
             val svc = HaloService.instance
             if (svc == null) {
-                Toast.makeText(this, "Island service isn't running", Toast.LENGTH_SHORT).show()
-            } else {
-                svc.redetectCamera()
-                render()
-            }
-        })
-        cam.addView(line())
-        cam.addView(sliderRow("Nudge left / right", Prefs.CAM_X, 0, -40, 40, "dp", camera = true))
-        cam.addView(line())
-        cam.addView(sliderRow("Nudge up / down", Prefs.CAM_Y, 0, -20, 20, "dp", camera = true))
-        cam.addView(line())
-        cam.addView(sliderRow("Circle size", Prefs.CAM_SIZE, 0, -10, 20, "dp", camera = true))
-        col.addView(cam)
-        col.addView(label("Halo finds the camera by itself. If the circle doesn't sit exactly on the lens, nudge it here; the blue outline shows where it is while you drag.", 12.5f, text2, false).apply {
-            setPadding(dp(8), dp(8), dp(8), 0)
-        })
-
-        col.addView(actionButton("Test the island") {
-            val svc = HaloService.instance
-            if (svc == null) {
-                Toast.makeText(this, "Island service isn't running. Turn Halo off and on in Accessibility.", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             } else {
                 IslandStore.showPop("Halo", "Ready", Colors.BLUE, R.drawable.ic_check, 2_500L)
-                Toast.makeText(this, "Sent · " + svc.diagnostics(), Toast.LENGTH_LONG).show()
             }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(18) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        return c
+    }
 
-        // About
-        col.addView(sectionTitle("About"))
-        val about = card()
-        about.addView(infoRow("Creator", "LONERXONE"))
-        about.addView(line())
-        about.addView(infoRow("Works on", "Android 11 and newer. Tuned for Samsung One UI, where it feels most at home."))
-        about.addView(line())
-        about.addView(infoRow("Privacy", "Halo never reads your screen. Everything stays on your phone, except the update check with GitHub."))
-        about.addView(line())
-        about.addView(infoRow("Thanks", "Ideas from Smart Island, Island and Islandify, open-source islands worth a look. Halo's code is its own."))
-        col.addView(about)
+    private fun islandPage(col: LinearLayout) {
+        pageHeader(col, "On the island", "Pick what Halo shows")
+        col.addView(sectionTitle("Live activities"))
+        col.addView(group(
+            switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC),
+            switchRow("Calls", "Caller, timer, end-call button", Prefs.CALLS),
+            switchRow("Timers & stopwatch", "Countdown from the Clock app", Prefs.TIMERS),
+            switchRow("Downloads & installs", "Progress ring for files and apps", Prefs.TRANSFERS),
+            switchRow("Navigation", "Next turn from Google Maps", Prefs.NAV),
+            switchRow("Flashlight", "Stays on the island while it's on", Prefs.TORCH),
+        ))
+        col.addView(sectionTitle("Alerts"))
+        col.addView(group(
+            switchRow("Messages", "WhatsApp, SMS and app alerts", Prefs.NOTIFS),
+            switchRowDefault("Hide message text", "Show \"New message\" instead", Prefs.HIDE_TEXT, false),
+            switchRow("Charging", "Pop when you plug in", Prefs.CHARGING),
+            switchRow("System pops", "Low battery, full, silent, earbuds, DND", Prefs.SYSTEM_POPS),
+            switchRow("Connections & modes", "Wi-Fi, airplane mode, power saving", Prefs.CONNECTIVITY),
+        ))
+        gap(col, 16)
+        col.addView(group(
+            iconRow(R.drawable.ic_apps, Colors.GREEN, "Choose apps", "Which apps can pop up") {
+                startActivity(Intent(this, AppsActivity::class.java))
+            },
+        ))
+    }
 
-        // Credit
+    private fun lookPage(col: LinearLayout) {
+        pageHeader(col, "Look & feel", "Make it yours")
+        col.addView(sectionTitle("Island"))
+        col.addView(group(
+            switchRow("Camera circle", "Rests on the camera; tap it for notifications", Prefs.IDLE),
+            sliderRow("Size", Prefs.SCALE, 100, 80, 130, "%"),
+            sliderRow("Glass", Prefs.GLASS, 0, 0, 100, "%"),
+            switchRow("Album art background", "Blurred cover behind the player", Prefs.ART_BACKDROP),
+        ))
+        col.addView(sectionTitle("Position"))
+        col.addView(group(
+            sliderRow("Left / right", Prefs.OFFSET_X, 0, -60, 60, "dp"),
+            sliderRow("Up / down", Prefs.OFFSET_Y, 0, -10, 60, "dp"),
+        ))
+        col.addView(sectionTitle("Behaviour"))
+        col.addView(group(
+            switchRow("Hide in fullscreen", "Videos, games and reels", Prefs.HIDE_FULLSCREEN),
+            switchRow("Haptics", "Light tick on taps", Prefs.HAPTICS),
+            switchRowDefault("Low-power mode", "No blur, still bars, slower updates", Prefs.LOW_POWER, false),
+        ))
+    }
+
+    private fun cameraPage(col: LinearLayout) {
+        pageHeader(col, "Camera fit", "Halo finds your camera by itself")
+        val svc = HaloService.instance
+        col.addView(group(
+            infoRow("Detected", svc?.cameraHow?.replaceFirstChar { it.uppercase() } ?: "Turn on the island to detect the camera"),
+            iconRow(R.drawable.ic_camera, Colors.ORANGE, "Find my camera again", "Re-detects and outlines the circle in blue") {
+                val s = HaloService.instance
+                if (s == null) {
+                    Toast.makeText(this, "The island isn't running", Toast.LENGTH_SHORT).show()
+                } else {
+                    s.redetectCamera()
+                    render()
+                }
+            },
+        ))
+        col.addView(sectionTitle("Fine-tune"))
+        col.addView(group(
+            sliderRow("Nudge left / right", Prefs.CAM_X, 0, -40, 40, "dp", camera = true),
+            sliderRow("Nudge up / down", Prefs.CAM_Y, 0, -20, 20, "dp", camera = true),
+            sliderRow("Circle size", Prefs.CAM_SIZE, 0, -10, 20, "dp", camera = true),
+        ))
+        col.addView(footnote("While you drag, a blue outline shows where the circle sits. Leave everything at 0 if it already covers the lens."))
+    }
+
+    private fun setupPage(col: LinearLayout) {
+        pageHeader(col, "Permissions", "What Halo needs to work")
+        col.addView(group(
+            statusRow("Accessibility service", "Draws the island over the camera", accessibilityOn()) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            statusRow("Notification access", "Music, messages, calls, timers", listenerOn()) {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            },
+            statusRow("Battery: unrestricted", "Stops the system closing Halo", batteryOk()) {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                } catch (_: Exception) {
+                    openAppInfo()
+                }
+            },
+            statusRow("Calls, Bluetooth & alerts", "Phone state, end call, earbuds", runtimeOk()) {
+                val missing = RUNTIME_PERMS.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+                if (missing.isEmpty()) openAppInfo() else requestPermissions(missing.toTypedArray(), 7)
+            },
+            statusRow("Do Not Disturb access", "Shows silent and DND changes", dndOk()) {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+            },
+            statusRow("Install updates", "Lets Halo update itself", packageManager.canRequestPackageInstalls()) {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            },
+        ))
+        col.addView(footnote("Tap any row to open the right system screen. Everything stays on your phone."))
+    }
+
+    private fun updatesPage(col: LinearLayout) {
+        pageHeader(col, "Updates", "Straight from GitHub")
+        col.addView(updatesCard())
+    }
+
+    private fun aboutPage(col: LinearLayout) {
+        pageHeader(col, "About", null)
+        col.addView(group(
+            infoRow("Creator", "LONERXONE"),
+            infoRow("Works on", "Android 11 and newer. Tuned for Samsung One UI, where it feels most at home."),
+            infoRow("Privacy", "Halo never reads your screen. Everything stays on your phone, except the update check with GitHub."),
+            infoRow("Thanks", "Ideas from Smart Island, Island and Islandify, open-source islands worth a look. Halo's code is its own."),
+        ))
+
+        col.addView(sectionTitle("Diagnostics"))
+        val live = card()
+        val liveText = label(liveStatus(), 12f, text2, false).apply {
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setLineSpacing(0f, 1.3f)
+            setPadding(dp(20), dp(16), dp(18), dp(16))
+        }
+        live.addView(liveText)
+        liveView = liveText
+        col.addView(live)
+        val svc = HaloService.instance
+        if (svc != null) col.addView(footnote(svc.diagnostics()))
+        credit(col)
+    }
+
+    private fun credit(col: LinearLayout) {
         val credit = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(30), 0, dp(10))
+            setPadding(0, dp(36), 0, dp(6))
         }
-        credit.addView(label("Made by LONERXONE", 15f, text1, true).apply { gravity = Gravity.CENTER })
-        credit.addView(label("Halo v${version()} · open source", 12.5f, text2, false).apply {
+        credit.addView(label("Made by LONERXONE", 14f, text1, true).apply { gravity = Gravity.CENTER })
+        credit.addView(label("Halo v${version()} · open source", 12f, text2, false).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(4), 0, dp(12))
+            setPadding(0, dp(3), 0, dp(12))
         })
         credit.addView(chip("github.com/LONERXONE-ops/halo", accent).apply {
             isClickable = true
@@ -296,19 +462,11 @@ class MainActivity : Activity() {
             }
         })
         col.addView(credit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(bgTop, bgBottom))
-            addView(col)
-            setOnApplyWindowInsetsListener { v, insets ->
-                val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                v.setPadding(0, bars.top, 0, bars.bottom)
-                insets
-            }
-        }
-        setContentView(scroll)
     }
+
+    private fun setupMissing(): Int = listOf(
+        accessibilityOn(), listenerOn(), batteryOk(), runtimeOk(), dndOk(), packageManager.canRequestPackageInstalls(),
+    ).count { !it }
 
     private fun updatesCard(): View {
         val c = card()
@@ -482,14 +640,50 @@ class MainActivity : Activity() {
             setPadding(dp(18), 0, dp(18), 0)
             background = GradientDrawable().apply {
                 setColor(accent)
-                cornerRadius = dp(18).toFloat()
+                cornerRadius = dp(24).toFloat()
             }
             isClickable = true
             setOnClickListener { onClick() }
         }
 
     private fun sectionTitle(t: String): View = label(t, 13f, text2, true).apply {
-        setPadding(dp(18), dp(22), dp(18), dp(8))
+        setPadding(dp(20), dp(22), dp(20), dp(8))
+    }
+
+    private fun footnote(t: String): View = label(t, 12.5f, text2, false).apply {
+        setLineSpacing(0f, 1.2f)
+        setPadding(dp(20), dp(10), dp(20), 0)
+    }
+
+    /** One rounded card holding [rows], with hairlines between them. */
+    private fun group(vararg rows: View): LinearLayout {
+        val c = card()
+        rows.forEachIndexed { i, r ->
+            if (i > 0) c.addView(line())
+            c.addView(r)
+        }
+        return c
+    }
+
+    /** Row with a coloured icon tile, like One UI's settings list. */
+    private fun iconRow(icon: Int, tint: Int, title: String, summary: String, onClick: () -> Unit): View {
+        val row = rowBase(title, summary)
+        val tile = android.widget.ImageView(this).apply {
+            setImageResource(icon)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            background = GradientDrawable().apply {
+                setColor(tint)
+                cornerRadius = dp(11).toFloat()
+            }
+        }
+        row.addView(tile, 0, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(16) })
+        row.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_chevron)
+            imageTintList = ColorStateList.valueOf(Color.argb(110, 255, 255, 255))
+        }, LinearLayout.LayoutParams(dp(20), dp(20)))
+        row.setOnClickListener { onClick() }
+        return row
     }
 
     private fun card(): LinearLayout = LinearLayout(this).apply {
@@ -497,9 +691,9 @@ class MainActivity : Activity() {
         background = GradientDrawable().apply {
             setColor(cardFill)
             setStroke(dp(1), cardStroke)
-            cornerRadius = dp(26).toFloat()
+            cornerRadius = dp(24).toFloat()
         }
-        setPadding(0, dp(4), 0, dp(4))
+        setPadding(0, dp(2), 0, dp(2))
     }
 
     private fun line(): View = View(this).apply {
@@ -536,7 +730,10 @@ class MainActivity : Activity() {
 
     private fun navRow(title: String, summary: String, onClick: () -> Unit): View {
         val row = rowBase(title, summary)
-        row.addView(label("›", 22f, text2, false))
+        row.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_chevron)
+            imageTintList = ColorStateList.valueOf(Color.argb(110, 255, 255, 255))
+        }, LinearLayout.LayoutParams(dp(20), dp(20)))
         row.setOnClickListener { onClick() }
         return row
     }
