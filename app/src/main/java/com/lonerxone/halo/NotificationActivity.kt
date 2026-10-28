@@ -100,11 +100,8 @@ class NotificationActivity : Activity() {
         val app = listener.appName(sbn.packageName)
         val title = listener.richOf(sbn, false).title.ifEmpty { app }
         val icon = listener.iconBitmap(n.getLargeIcon()) ?: listener.appIcon(sbn.packageName)
-        val accent = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) {
-            HaloNotificationListener.brighten(n.color)
-        } else {
-            Colors.BLUE
-        }
+        // Halo's palette: white on black, whatever colour the app uses.
+        val accent = Colors.INK
         val replyAction = n.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
         val readAction = n.actions?.firstOrNull { a ->
             val t = a.title?.toString()?.lowercase().orEmpty()
@@ -208,7 +205,7 @@ class NotificationActivity : Activity() {
             }
             val send = ImageView(this).apply {
                 setImageResource(R.drawable.ic_send)
-                setColorFilter(Color.WHITE)
+                setColorFilter(Color.BLACK)
                 val pad = dp(11)
                 setPadding(pad, pad, pad, pad)
                 background = GradientDrawable().apply {
@@ -271,11 +268,17 @@ class NotificationActivity : Activity() {
             gravity = Gravity.END
         }
         fun action(textLabel: String, onClick: () -> Unit) {
-            actions.addView(Button(this).apply {
-                text = textLabel
-                isAllCaps = false
+            // First button is the main one: white with black text; the rest graphite.
+            val primary = actions.childCount == 0
+            actions.addView(label(textLabel, 14f, if (primary) Color.BLACK else text1, true).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    setColor(if (primary) Colors.INK else Colors.GRAPHITE)
+                    cornerRadius = dp(22).toFloat()
+                }
+                isClickable = true
                 setOnClickListener { onClick() }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply {
                 marginStart = dp(4)
                 marginEnd = dp(4)
             })
@@ -320,14 +323,14 @@ class NotificationActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(9), dp(14), dp(10))
             background = GradientDrawable().apply {
-                setColor(if (mine) Colors.BLUE else bubbleColor)
+                setColor(if (mine) Colors.INK else bubbleColor)
                 cornerRadius = dp(18).toFloat()
             }
         }
         if (!sender.isNullOrEmpty() && !mine) {
             box.addView(label(sender, 12f, text2, true).apply { setPadding(0, 0, 0, dp(2)) })
         }
-        box.addView(label(text, 15f, if (mine) Color.WHITE else text1, false))
+        box.addView(label(text, 15f, if (mine) Color.BLACK else text1, false))
         val wrap = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = if (mine) Gravity.END else Gravity.START

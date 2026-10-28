@@ -86,7 +86,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 Intent.ACTION_AIRPLANE_MODE_CHANGED -> {
                     if (connectivityOn()) {
                         val on = intent.getBooleanExtra("state", false)
-                        IslandStore.showPop("Airplane mode", if (on) "On" else "Off", Colors.ORANGE, R.drawable.ic_airplane, 2_200L)
+                        IslandStore.showPop("Airplane mode", if (on) "On" else "Off", Colors.INK, R.drawable.ic_airplane, 2_200L)
                     }
                     return
                 }
@@ -323,8 +323,32 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.offsetY = p.getInt(Prefs.OFFSET_Y, 0) * d
         v.glassStrength = p.getInt(Prefs.GLASS, 0) / 100f
         v.artBackdrop = p.getBoolean(Prefs.ART_BACKDROP, true)
+        v.picDim = p.getInt(Prefs.PIC_DIM, 45).coerceIn(0, 90) / 100f
+        val ip = loadPic(p, Prefs.ISLAND_PIC)
+        if (ip !== v.islandPic) v.islandPic = ip
+        val pp = loadPic(p, Prefs.PANEL_PIC)
+        if (pp !== v.panelPic) v.panelPic = pp
         v.lowPower = p.getBoolean(Prefs.LOW_POWER, false) ||
             getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+    }
+
+    private val picCache = HashMap<String, Pair<Long, android.graphics.Bitmap>>()
+
+    /** Decodes a saved picture once per change (the pref holds a timestamp). */
+    private fun loadPic(p: android.content.SharedPreferences, key: String): android.graphics.Bitmap? {
+        val stamp = p.getLong(key, 0L)
+        if (stamp == 0L) {
+            picCache.remove(key)
+            return null
+        }
+        picCache[key]?.let { if (it.first == stamp) return it.second }
+        val f = Prefs.picFile(this, key)
+        if (!f.exists()) return null
+        return try {
+            android.graphics.BitmapFactory.decodeFile(f.absolutePath)?.also { picCache[key] = stamp to it }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /** Called by the settings screen after a change. */
@@ -359,8 +383,13 @@ class HaloService : AccessibilityService(), IslandView.Host {
             IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }?.let { add(IslandView.Content.Music(it)) }
             IslandStore.nav?.takeIf { p.getBoolean(Prefs.NAV, true) }?.let { add(IslandView.Content.Nav(it)) }
             IslandStore.transfer?.takeIf { p.getBoolean(Prefs.TRANSFERS, true) }?.let { add(IslandView.Content.Transfer(it)) }
-            IslandStore.torch?.takeIf { p.getBoolean(Prefs.TORCH, true) }?.let { add(IslandView.Content.Torch(it)) }
+            // The flashlight shows for a moment, then the island settles back into the
+            // camera; it stays one tap away as a chip in the notification center.
+            val torchAge = android.os.SystemClock.uptimeMillis() - IslandStore.torchSince
+            IslandStore.torch?.takeIf { p.getBoolean(Prefs.TORCH, true) && torchAge < SETTLE_MS }?.let { add(IslandView.Content.Torch(it)) }
         }
+        this.main.removeCallbacks(settle)
+        if (IslandStore.torch != null && torchAge() < SETTLE_MS) this.main.postDelayed(settle, SETTLE_MS - torchAge() + 50L)
         val main: IslandView.Content
         val second: IslandView.Content?
         when {
@@ -404,10 +433,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private fun bubbleFor(c: IslandView.Content): IslandView.Bubble? = when (c) {
         is IslandView.Content.Music -> IslandView.Bubble("m", c.info.art ?: c.info.appIcon, R.drawable.ic_note, c.info.accent, -1f) { openMusicApp(c.info) }
         is IslandView.Content.Call -> IslandView.Bubble("c", null, R.drawable.ic_call, Colors.GREEN, -1f) { send(c.call.contentIntent) }
-        is IslandView.Content.Timer -> IslandView.Bubble("t", null, R.drawable.ic_timer, Colors.ORANGE, -1f) { send(c.timer.contentIntent) }
-        is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.BLUE, max(0f, c.transfer.progress)) { send(c.transfer.contentIntent) }
+        is IslandView.Content.Timer -> IslandView.Bubble("t", null, R.drawable.ic_timer, Colors.INK, -1f) { send(c.timer.contentIntent) }
+        is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.INK, max(0f, c.transfer.progress)) { send(c.transfer.contentIntent) }
         is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f) { send(c.nav.contentIntent) }
-        is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.YELLOW, -1f) { torchOff() }
+        is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.INK, -1f) { torchOff() }
         else -> null
     }
 
@@ -430,8 +459,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         lastBattery = pct
         if (prev < 0 || !popsOn()) return
         when {
-            !plugged && prev > 15 && pct <= 15 -> IslandStore.showPop("Low battery", "$pct%", Colors.ORANGE, R.drawable.ic_battery_low, 3_500L)
-            !plugged && prev > 5 && pct <= 5 -> IslandStore.showPop("Battery", "$pct%", Colors.RED, R.drawable.ic_battery_low, 4_000L)
+            !plugged && prev > 15 && pct <= 15 -> IslandStore.showPop("Low battery", "$pct%", Colors.INK, R.drawable.ic_battery_low, 3_500L)
+            !plugged && prev > 5 && pct <= 5 -> IslandStore.showPop("Battery", "$pct%", Colors.INK, R.drawable.ic_battery_low, 4_000L)
             plugged && prev < 100 && pct >= 100 -> IslandStore.showPop("Charged", "100%", Colors.GREEN, R.drawable.ic_battery_full, 3_000L)
         }
     }
@@ -439,9 +468,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private fun onRinger(i: Intent) {
         if (!popsOn()) return
         when (i.getIntExtra(AudioManager.EXTRA_RINGER_MODE, -1)) {
-            AudioManager.RINGER_MODE_SILENT -> IslandStore.showPop("Silent", "On", Colors.RED, R.drawable.ic_bell_off, 2_000L)
-            AudioManager.RINGER_MODE_VIBRATE -> IslandStore.showPop("Vibrate", "On", Colors.PURPLE, R.drawable.ic_vibrate, 2_000L)
-            AudioManager.RINGER_MODE_NORMAL -> IslandStore.showPop("Ring", "On", Colors.BLUE, R.drawable.ic_bell, 2_000L)
+            AudioManager.RINGER_MODE_SILENT -> IslandStore.showPop("Silent", "On", Colors.INK, R.drawable.ic_bell_off, 2_000L)
+            AudioManager.RINGER_MODE_VIBRATE -> IslandStore.showPop("Vibrate", "On", Colors.INK, R.drawable.ic_vibrate, 2_000L)
+            AudioManager.RINGER_MODE_NORMAL -> IslandStore.showPop("Ring", "On", Colors.INK, R.drawable.ic_bell, 2_000L)
         }
     }
 
@@ -471,7 +500,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         lastBt = now
         lastBudsName = info
         if (dndOn()) return
-        IslandStore.showPop("Connected", info.take(18), Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+        IslandStore.showPop("Connected", info.take(18), Colors.INK, R.drawable.ic_headphones, 3_000L)
     }
 
     /** Do Not Disturb is on: background news (Wi-Fi, earbuds) waits; things you just did still show. */
@@ -498,6 +527,63 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
     }
 
+    private val settle = Runnable { push() }
+
+    private fun torchAge() = android.os.SystemClock.uptimeMillis() - IslandStore.torchSince
+
+    // ----- Quick toggles in the notification center -----
+
+    override fun quickStates(): List<Quick> = buildList {
+        if (IslandStore.torch != null) add(Quick("torch", R.drawable.ic_flashlight, "Flashlight"))
+        if (dndOn()) add(Quick("dnd", R.drawable.ic_moon, "Do Not Disturb"))
+        when (ringerMode()) {
+            AudioManager.RINGER_MODE_SILENT -> add(Quick("ring", R.drawable.ic_bell_off, "Silent"))
+            AudioManager.RINGER_MODE_VIBRATE -> add(Quick("ring", R.drawable.ic_vibrate, "Vibrate"))
+        }
+        if (getSystemService(PowerManager::class.java)?.isPowerSaveMode == true) add(Quick("saver", R.drawable.ic_leaf, "Power saving"))
+        if (airplaneOn()) add(Quick("airplane", R.drawable.ic_airplane, "Airplane"))
+    }
+
+    override fun quickAction(id: String) {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        when (id) {
+            "torch" -> torchOff()
+            "dnd" -> if (nm.isNotificationPolicyAccessGranted) {
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+            } else {
+                openSettings(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+            }
+            "ring" -> try {
+                (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode = AudioManager.RINGER_MODE_NORMAL
+            } catch (_: SecurityException) {
+                openSettings(android.provider.Settings.ACTION_SOUND_SETTINGS)
+            }
+            // Android doesn't let apps flip these two; open the right page instead.
+            "saver" -> openSettings(android.provider.Settings.ACTION_BATTERY_SAVER_SETTINGS)
+            "airplane" -> openSettings(android.provider.Settings.ACTION_AIRPLANE_MODE_SETTINGS)
+        }
+        main.postDelayed({ push() }, 350L)
+    }
+
+    private fun ringerMode(): Int = try {
+        (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
+    } catch (_: Exception) {
+        AudioManager.RINGER_MODE_NORMAL
+    }
+
+    private fun airplaneOn(): Boolean = try {
+        android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun openSettings(action: String) {
+        try {
+            startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+        }
+    }
+
     override fun torchOff() {
         val id = IslandStore.torch ?: return
         try {
@@ -515,7 +601,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             // The callback fires straight away for the current network; that is not news.
             if (now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn() || dndOn()) return
             lastWifi = now
-            IslandStore.showPop("Wi-Fi", "Connected", Colors.BLUE, R.drawable.ic_wifi, 2_200L)
+            IslandStore.showPop("Wi-Fi", "Connected", Colors.INK, R.drawable.ic_wifi, 2_200L)
         }
     }
 
@@ -538,7 +624,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (level !in 0..100) return
         if (System.currentTimeMillis() - lastBt > 20_000L || dndOn()) return
         val name = lastBudsName ?: return
-        IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.ORANGE else Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+        IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.INK else Colors.INK, R.drawable.ic_headphones, 3_000L)
         lastBudsName = null
     }
 
@@ -546,7 +632,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (!popsOn()) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
         val on = nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
-        IslandStore.showPop("Do Not Disturb", if (on) "On" else "Off", Colors.PURPLE, R.drawable.ic_moon, 2_000L)
+        IslandStore.showPop("Do Not Disturb", if (on) "On" else "Off", Colors.INK, R.drawable.ic_moon, 2_000L)
     }
 
     private fun onCharging() {
@@ -678,6 +764,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     companion object {
         var instance: HaloService? = null
+        /** How long a flashlight pill stays before settling back into the camera. */
+        private const val SETTLE_MS = 12_000L
             private set
 
         private const val ACTION_BT_BATTERY = "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"

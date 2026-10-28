@@ -81,6 +81,9 @@ class AppsActivity : Activity() {
                 setPadding(dp(14), 0, dp(8), 0)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             val sw = Switch(this).apply {
+                val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+                thumbTintList = android.content.res.ColorStateList(states, intArrayOf(Color.WHITE, Color.rgb(170, 170, 176)))
+                trackTintList = android.content.res.ColorStateList(states, intArrayOf(Color.rgb(120, 120, 128), Color.rgb(58, 58, 62)))
                 isChecked = pkg !in blocked
                 setOnCheckedChangeListener { _, on ->
                     if (on) blocked.remove(pkg) else blocked.add(pkg)

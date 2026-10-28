@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="120" alt="Halo logo">
+  <img src="docs/logo.png" width="160" alt="Halo logo: the island with an angel's halo">
 </p>
 
 <h1 align="center">Halo</h1>
@@ -17,7 +17,7 @@
 **[⬇ Get the latest APK](https://github.com/LONERXONE-ops/halo/releases/latest)**
 
 1. Download `Halo-x.y.z.apk` from **Assets** and open it. Allow your browser to install unknown apps if asked.
-2. Open **Halo** and follow **Setup**. Every row should turn green.
+2. Open **Halo** and go to **Permissions**. Every row should say **On**.
 3. After that you never need the browser again: **Halo → Updates → Download & install** fetches new versions from this page.
 
 > **A switch is greyed out?** Android blocks sideloaded apps from accessibility and notification
@@ -29,17 +29,19 @@
 |---|---|
 | **Camera circle** | At rest, Halo is a black circle sitting exactly on your camera, so you don't see it. Tap the camera to open it. |
 | **Camera fit** | Finds the front camera on any phone: centred punch-holes, corner punch-holes, waterdrop and wide notches. Corner cameras keep the circle on the lens while the pill opens in the middle; phones with no cutout get an invisible tap zone at the top. Fine-tune it in Settings → Camera fit. |
-| **Notification center** | Tap the camera (or the bell beside the pill): date and time beside the lens, battery up top, a mini music player, then your notifications. Scroll, tap one to read it, or Clear all. |
+| **Notification center** | Tap the camera (or the bell beside the pill): date and time beside the lens, then a row of chips (battery, plus anything that's on: flashlight, Do Not Disturb, silent, power saving) that you tap to switch off, a mini music player, then your notifications. Scroll, swipe to dismiss, tap to read, or Clear all. |
 | **Reply sheet** | Opening a notification shows the whole chat (WhatsApp, Telegram, SMS…) with a reply box, plus Open, Mark as read and Dismiss. |
 | **Music** | Cover on the left, bouncing bars on the right. Tap for the full player: blurred cover behind, big play button, a seek bar you can drag. Swipe sideways to skip. |
-| **Messages** | Drawn like a chat: contact or group photo with the app badge, who said what in groups, unread count, image previews, and Reply / Mark as read right on the banner. Banking and OTP apps are off by default. |
+| **Messages** | Chats get the contact or group photo with the app badge, who said what in groups, unread count and image previews; every other app gets its own icon as a tile and up to three lines of text. Reply / Mark as read (or Open / Dismiss) right on the banner. Follows Do Not Disturb and lock screen privacy. Banking and OTP apps are off by default. |
 | **Calls** | Caller and a live timer; tap for end call (and answer while ringing). |
 | **Timers** | Countdown or stopwatch from the Clock app, with its Pause / Cancel buttons. |
 | **Downloads** | A progress ring for downloads, uploads and app installs, and a "Done" pop at the end. |
 | **Navigation** | Next turn and distance from Google Maps. |
 | **Split bubble** | Two things at once (say a timer while music plays): the second one sits in a circle beside the pill. With only one, a small bell sits there instead and opens the notification center. |
 | **Charging** | A pop when you plug in; tap it for the charging card: big percentage, wattage, time to full and temperature. |
-| **Flashlight** | Stays on the island while the torch is on. Tap it to switch it off. |
+| **Flashlight** | Shows on the island for a few seconds, then settles back into the camera. Tap the camera: a Flashlight chip switches it off. |
+| **Pictures** | Put your own picture inside the island (wide) and behind the notification center (tall), with a dimming slider so text stays readable. |
+| **Look** | White and grey on black, everywhere. Only charging stays green, and the answer / hang-up buttons keep their colours. |
 | **Little pops** | Fully charged, low battery, silent / vibrate / ring, earbuds connected (with their battery), Do Not Disturb, Wi-Fi, airplane mode, power saving. |
 
 Touch anywhere else on the screen and an open island retracts. Apps that fire lots of alerts in a row get a short cooldown so they can't flood the island.

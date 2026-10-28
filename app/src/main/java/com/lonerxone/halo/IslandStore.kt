@@ -57,6 +57,9 @@ data class Pop(
  * A notification split into the parts a message needs, so it can be drawn like
  * a chat (photo, group, who said it, image) instead of a generic box.
  */
+/** Something switched on that the notification center can switch off (flashlight, DND, silent…). */
+data class Quick(val id: String, val icon: Int, val label: String)
+
 data class Rich(
     /** Conversation or sender name, without "(12 messages)" noise. */
     val title: String,
@@ -178,9 +181,14 @@ object IslandStore {
     var torch: String? = null
         private set
 
+    /** When the flashlight came on; after a short while the island settles back to the camera. */
+    var torchSince = 0L
+        private set
+
     fun setTorch(id: String?) {
         if (id == torch) return
         torch = id
+        torchSince = if (id != null) android.os.SystemClock.uptimeMillis() else 0L
         dispatch()
     }
 
@@ -318,6 +326,13 @@ object Prefs {
     const val CAM_X = "cam_x"
     const val CAM_Y = "cam_y"
     const val CAM_SIZE = "cam_size"
+    /** A picture inside the island (landscape) and behind the notification center (portrait). */
+    const val ISLAND_PIC = "island_pic"
+    const val PANEL_PIC = "panel_pic"
+    /** How dark the pictures are made so text stays readable, 0..90 %. */
+    const val PIC_DIM = "pic_dim"
+
+    fun picFile(c: Context, key: String): java.io.File = java.io.File(c.filesDir, "$key.jpg")
 
     /** Banking and OTP apps stay off the island unless the user turns them on. */
     val DEFAULT_BLOCKED = setOf(
@@ -335,7 +350,20 @@ object Prefs {
     fun blocked(c: Context): Set<String> = get(c).getStringSet(BLOCKED, null) ?: DEFAULT_BLOCKED
 }
 
+/**
+ * Halo's palette: white and greys everywhere. Green is kept for charging and
+ * answering a call, red for hanging up; the old colours below remain only for
+ * the few places that need them.
+ */
 object Colors {
+    /** Main tone: icons, values, bars, rings. */
+    const val INK = 0xFFFFFFFF.toInt()
+    /** Secondary tone: values beside an icon, captions. */
+    const val SILVER = 0xFFC9C9CE.toInt()
+    const val GREY = 0xFF8E8E93.toInt()
+    /** Chips and placeholders on black. */
+    const val GRAPHITE = 0xFF2A2A2D.toInt()
+    const val CARD = 0xFF161618.toInt()
     const val ACCENT_DEFAULT = 0xFFFF6B9A.toInt()
     const val GREEN = 0xFF34C759.toInt()
     const val RED = 0xFFFF453A.toInt()

@@ -92,6 +92,7 @@ class MainActivity : Activity() {
         ISLAND("On the island"),
         LOOK("Look & feel"),
         CAMERA("Camera fit"),
+        PICTURES("Pictures"),
         SETUP("Permissions"),
         UPDATES("Updates"),
         ABOUT("About"),
@@ -125,7 +126,8 @@ class MainActivity : Activity() {
         text1 = Color.rgb(245, 245, 247)
         text2 = Color.rgb(142, 142, 150)
         divider = Color.argb(14, 255, 255, 255)
-        accent = Colors.BLUE
+        // Halo's palette: white and greys on black.
+        accent = Colors.INK
 
         window.decorView.setBackgroundColor(bgBottom)
         window.insetsController?.setSystemBarsAppearance(
@@ -143,6 +145,7 @@ class MainActivity : Activity() {
             Page.ISLAND -> islandPage(col)
             Page.LOOK -> lookPage(col)
             Page.CAMERA -> cameraPage(col)
+            Page.PICTURES -> picturesPage(col)
             Page.SETUP -> setupPage(col)
             Page.UPDATES -> updatesPage(col)
             Page.ABOUT -> aboutPage(col)
@@ -199,7 +202,17 @@ class MainActivity : Activity() {
             }
             box.addView(back, LinearLayout.LayoutParams(dp(42), dp(42)).apply { bottomMargin = dp(34) })
         }
-        box.addView(label(title, if (page == Page.HOME) 38f else 30f, text1, true))
+        if (page == Page.HOME) {
+            // The brand: the halo logo, glowing on black.
+            box.gravity = Gravity.CENTER_HORIZONTAL
+            box.setPadding(dp(6), dp(30), dp(6), dp(22))
+            box.addView(android.widget.ImageView(this).apply { setImageResource(R.drawable.logo_halo) }, LinearLayout.LayoutParams(dp(112), dp(112)))
+            box.addView(label(title, 34f, text1, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) })
+            if (subtitle != null) box.addView(label(subtitle, 14f, text2, false).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) })
+            col.addView(box)
+            return
+        }
+        box.addView(label(title, 30f, text1, true))
         if (subtitle != null) box.addView(label(subtitle, 14f, text2, false).apply { setPadding(0, dp(4), 0, 0) })
         col.addView(box)
     }
@@ -219,34 +232,35 @@ class MainActivity : Activity() {
         val missing = setupMissing()
         if (missing > 0) {
             col.addView(card().apply {
-                addView(iconRow(R.drawable.ic_shield, Colors.ORANGE, "Finish setup", "$missing ${if (missing == 1) "permission needs" else "permissions need"} your OK") { go(Page.SETUP) })
+                addView(iconRow(R.drawable.ic_shield, Colors.INK, "Finish setup", "$missing ${if (missing == 1) "permission needs" else "permissions need"} your OK") { go(Page.SETUP) })
             })
             gap(col)
         }
         val rel = latest
         if (rel != null && rel.build > currentBuild()) {
             col.addView(card().apply {
-                addView(iconRow(R.drawable.ic_update, Colors.LAVENDER, "${rel.tag} is out", "Tap to download and install") { go(Page.UPDATES) })
+                addView(iconRow(R.drawable.ic_update, Colors.INK, "${rel.tag} is out", "Tap to download and install") { go(Page.UPDATES) })
             })
             gap(col)
         }
 
         col.addView(group(
-            iconRow(R.drawable.ic_bell, Colors.BLUE, "On the island", "Music, messages, calls and more") { go(Page.ISLAND) },
-            iconRow(R.drawable.ic_apps, Colors.GREEN, "Choose apps", "Which apps can pop up") {
+            iconRow(R.drawable.ic_bell, Colors.GRAPHITE, "On the island", "Music, messages, calls and more") { go(Page.ISLAND) },
+            iconRow(R.drawable.ic_apps, Colors.GRAPHITE, "Choose apps", "Which apps can pop up") {
                 startActivity(Intent(this, AppsActivity::class.java))
             },
         ))
         gap(col)
         col.addView(group(
-            iconRow(R.drawable.ic_palette, Colors.PINK, "Look & feel", "Size, glass, position, haptics") { go(Page.LOOK) },
-            iconRow(R.drawable.ic_camera, Colors.ORANGE, "Camera fit", "Sit the circle right on your lens") { go(Page.CAMERA) },
+            iconRow(R.drawable.ic_palette, Colors.GRAPHITE, "Look & feel", "Size, glass, position, haptics") { go(Page.LOOK) },
+            iconRow(R.drawable.ic_image, Colors.GRAPHITE, "Pictures", "Your own picture in the island") { go(Page.PICTURES) },
+            iconRow(R.drawable.ic_camera, Colors.GRAPHITE, "Camera fit", "Sit the circle right on your lens") { go(Page.CAMERA) },
         ))
         gap(col)
         col.addView(group(
-            iconRow(R.drawable.ic_shield, Colors.GREEN, "Permissions", if (missing == 0) "All set" else "$missing to go") { go(Page.SETUP) },
-            iconRow(R.drawable.ic_update, Colors.LAVENDER, "Updates", "v${version()} · $updateStatus") { go(Page.UPDATES) },
-            iconRow(R.drawable.ic_info, Color.rgb(110, 110, 118), "About", "Creator, privacy, diagnostics") { go(Page.ABOUT) },
+            iconRow(R.drawable.ic_shield, Colors.GRAPHITE, "Permissions", if (missing == 0) "All set" else "$missing to go") { go(Page.SETUP) },
+            iconRow(R.drawable.ic_update, Colors.GRAPHITE, "Updates", "v${version()} · $updateStatus") { go(Page.UPDATES) },
+            iconRow(R.drawable.ic_info, Colors.GRAPHITE, "About", "Creator, privacy, diagnostics") { go(Page.ABOUT) },
         ))
         credit(col)
     }
@@ -267,7 +281,7 @@ class MainActivity : Activity() {
                 cornerRadius = dp(17).toFloat()
             }
         }
-        val dotColor = if (running) Colors.GREEN else Color.rgb(90, 90, 96)
+        val dotColor = if (running) Colors.INK else Color.rgb(90, 90, 96)
         val dot = android.widget.ImageView(this).apply {
             setImageResource(if (running) R.drawable.ic_check else R.drawable.ic_close)
             imageTintList = ColorStateList.valueOf(Color.BLACK)
@@ -279,7 +293,7 @@ class MainActivity : Activity() {
         }
         pill.addView(dot, LinearLayout.LayoutParams(dp(22), dp(22)))
         pill.addView(View(this), LinearLayout.LayoutParams(dp(28), 1))
-        pill.addView(label(if (running) "Active" else "Off", 13.5f, if (running) Colors.GREEN else text2, true))
+        pill.addView(label(if (running) "Active" else "Off", 13.5f, if (running) text1 else text2, true))
         val pillWrap = LinearLayout(this).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)))
@@ -302,7 +316,7 @@ class MainActivity : Activity() {
             if (svc == null) {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             } else {
-                IslandStore.showPop("Halo", "Ready", Colors.BLUE, R.drawable.ic_check, 2_500L)
+                IslandStore.showPop("Halo", "Ready", Colors.INK, R.drawable.ic_check, 2_500L)
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         return c
@@ -329,7 +343,7 @@ class MainActivity : Activity() {
         ))
         gap(col, 16)
         col.addView(group(
-            iconRow(R.drawable.ic_apps, Colors.GREEN, "Choose apps", "Which apps can pop up") {
+            iconRow(R.drawable.ic_apps, Colors.GRAPHITE, "Choose apps", "Which apps can pop up") {
                 startActivity(Intent(this, AppsActivity::class.java))
             },
         ))
@@ -357,12 +371,151 @@ class MainActivity : Activity() {
         ))
     }
 
+    // ---------------------------------------------------------------------
+    // Pictures
+    // ---------------------------------------------------------------------
+
+    private fun picturesPage(col: LinearLayout) {
+        pageHeader(col, "Pictures", "Make the island yours")
+        col.addView(sectionTitle("Island"))
+        col.addView(pictureCard(Prefs.ISLAND_PIC, "Fills the island when it opens. Wide (landscape) pictures work best.", landscape = true))
+        col.addView(sectionTitle("Notification center"))
+        col.addView(pictureCard(Prefs.PANEL_PIC, "Sits behind your notifications. Tall (portrait) pictures work best.", landscape = false))
+        col.addView(sectionTitle("Readability"))
+        col.addView(group(sliderRow("Dim pictures", Prefs.PIC_DIM, 45, 0, 90, "%")))
+        col.addView(footnote("The camera circle always stays pure black, so it keeps hiding the lens."))
+    }
+
+    private fun pictureCard(key: String, hint: String, landscape: Boolean): View {
+        val c = card().apply { setPadding(dp(18), dp(18), dp(18), dp(16)) }
+        val file = Prefs.picFile(this, key)
+        val has = Prefs.get(this).getLong(key, 0L) != 0L && file.exists()
+        // Preview in the real shape: a wide pill, or a tall card.
+        val pw = if (landscape) dp(260) else dp(150)
+        val ph = if (landscape) dp(76) else dp(230)
+        val preview = android.widget.ImageView(this).apply {
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setRoundRect(0, 0, v.width, v.height, if (landscape) v.height / 2f else dp(26).toFloat())
+                }
+            }
+            clipToOutline = true
+            background = GradientDrawable().apply {
+                setColor(Color.BLACK)
+                setStroke(dp(1), Color.argb(30, 255, 255, 255))
+                cornerRadius = if (landscape) ph / 2f else dp(26).toFloat()
+            }
+            if (has) {
+                try {
+                    setImageBitmap(android.graphics.BitmapFactory.decodeFile(file.absolutePath))
+                    setColorFilter(Color.argb((255 * Prefs.get(this@MainActivity).getInt(Prefs.PIC_DIM, 45) / 100f).toInt(), 0, 0, 0), android.graphics.PorterDuff.Mode.SRC_ATOP)
+                } catch (_: Throwable) {
+                }
+            } else {
+                setImageResource(R.drawable.ic_image)
+                imageTintList = ColorStateList.valueOf(Color.rgb(80, 80, 86))
+                scaleType = android.widget.ImageView.ScaleType.CENTER
+            }
+        }
+        val wrap = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(preview, LinearLayout.LayoutParams(pw, ph))
+        }
+        c.addView(wrap)
+        c.addView(label(hint, 13f, text2, false).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(6), dp(14), dp(6), dp(14))
+        })
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        buttons.addView(actionButton(if (has) "Change" else "Choose a picture") { pickPicture(key) }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        if (has) {
+            buttons.addView(label("Remove", 14f, text1, true).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    setColor(Colors.GRAPHITE)
+                    cornerRadius = dp(24).toFloat()
+                }
+                isClickable = true
+                setOnClickListener {
+                    Prefs.get(this@MainActivity).edit().remove(key).apply()
+                    file.delete()
+                    HaloService.instance?.reloadPrefs()
+                    render()
+                }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(10) })
+        }
+        c.addView(buttons)
+        return c
+    }
+
+    private var pickingKey: String? = null
+
+    private fun pickPicture(key: String) {
+        pickingKey = key
+        val intent = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).setType("image/*")
+        } else {
+            Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQ_PICTURE)
+        } catch (_: Exception) {
+            try {
+                @Suppress("DEPRECATION")
+                startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("image/*"), REQ_PICTURE)
+            } catch (_: Exception) {
+                Toast.makeText(this, "No photo picker found", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PICTURE || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val key = pickingKey ?: return
+        // Decode off the main thread, shrink to at most 1600 px, save as JPEG.
+        Thread {
+            val ok = try {
+                val src = android.graphics.ImageDecoder.createSource(contentResolver, uri)
+                val bmp = android.graphics.ImageDecoder.decodeBitmap(src) { dec, info, _ ->
+                    dec.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+                    val longest = maxOf(info.size.width, info.size.height)
+                    if (longest > 1600) {
+                        val f = 1600f / longest
+                        dec.setTargetSize((info.size.width * f).toInt(), (info.size.height * f).toInt())
+                    }
+                }
+                Prefs.picFile(this, key).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }
+                Prefs.get(this).edit().putLong(key, System.currentTimeMillis()).apply()
+                true
+            } catch (_: Throwable) {
+                false
+            }
+            runOnUiThread {
+                if (ok) {
+                    HaloService.instance?.reloadPrefs()
+                    if (key == Prefs.ISLAND_PIC) {
+                        IslandStore.showPop("Picture", "Set", Colors.INK, R.drawable.ic_image, 2_500L)
+                    }
+                } else {
+                    Toast.makeText(this, "Couldn't open that picture", Toast.LENGTH_SHORT).show()
+                }
+                render()
+            }
+        }.start()
+    }
+
     private fun cameraPage(col: LinearLayout) {
         pageHeader(col, "Camera fit", "Halo finds your camera by itself")
         val svc = HaloService.instance
         col.addView(group(
             infoRow("Detected", svc?.cameraHow?.replaceFirstChar { it.uppercase() } ?: "Turn on the island to detect the camera"),
-            iconRow(R.drawable.ic_camera, Colors.ORANGE, "Find my camera again", "Re-detects and outlines the circle in blue") {
+            iconRow(R.drawable.ic_camera, Colors.GRAPHITE, "Find my camera again", "Re-detects and outlines the circle in white") {
                 val s = HaloService.instance
                 if (s == null) {
                     Toast.makeText(this, "The island isn't running", Toast.LENGTH_SHORT).show()
@@ -378,7 +531,7 @@ class MainActivity : Activity() {
             sliderRow("Nudge up / down", Prefs.CAM_Y, 0, -20, 20, "dp", camera = true),
             sliderRow("Circle size", Prefs.CAM_SIZE, 0, -10, 20, "dp", camera = true),
         ))
-        col.addView(footnote("While you drag, a blue outline shows where the circle sits. Leave everything at 0 if it already covers the lens."))
+        col.addView(footnote("While you drag, a white outline shows where the circle sits. Leave everything at 0 if it already covers the lens."))
     }
 
     private fun setupPage(col: LinearLayout) {
@@ -536,7 +689,7 @@ class MainActivity : Activity() {
                     val newer = result.release.build > currentBuild()
                     updateStatus = if (newer) "${result.release.tag} available" else "You're up to date"
                     if (newer && HaloService.instance != null) {
-                        IslandStore.showPop("Update", result.release.tag, Colors.LAVENDER, R.drawable.ic_update, 3_000L)
+                        IslandStore.showPop("Update", result.release.tag, Colors.INK, R.drawable.ic_update, 3_000L)
                     }
                 }
                 is Updater.Check.NotPublic -> updateStatus = "Make the GitHub repo public to update here"
@@ -635,7 +788,7 @@ class MainActivity : Activity() {
     }
 
     private fun actionButton(t: String, onClick: () -> Unit): TextView =
-        label(t, 14f, Color.WHITE, true).apply {
+        label(t, 14f, Color.BLACK, true).apply {
             gravity = Gravity.CENTER
             setPadding(dp(18), 0, dp(18), 0)
             background = GradientDrawable().apply {
@@ -670,7 +823,7 @@ class MainActivity : Activity() {
         val row = rowBase(title, summary)
         val tile = android.widget.ImageView(this).apply {
             setImageResource(icon)
-            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            imageTintList = ColorStateList.valueOf(if (tint == Colors.INK) Color.BLACK else Color.WHITE)
             setPadding(dp(7), dp(7), dp(7), dp(7))
             background = GradientDrawable().apply {
                 setColor(tint)
@@ -723,7 +876,7 @@ class MainActivity : Activity() {
 
     private fun statusRow(title: String, summary: String, ok: Boolean, onClick: () -> Unit): View {
         val row = rowBase(title, summary)
-        row.addView(chip(if (ok) "On" else "Off", if (ok) Colors.GREEN else Colors.RED))
+        row.addView(chip(if (ok) "On" else "Off", if (ok) Colors.INK else Colors.GREY))
         row.setOnClickListener { onClick() }
         return row
     }
@@ -747,6 +900,9 @@ class MainActivity : Activity() {
         val row = rowBase(title, summary)
         val prefs = Prefs.get(this)
         val sw = Switch(this).apply {
+            val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+            thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, Color.rgb(170, 170, 176)))
+            trackTintList = ColorStateList(states, intArrayOf(Color.rgb(120, 120, 128), Color.rgb(58, 58, 62)))
             isChecked = prefs.getBoolean(key, def)
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().putBoolean(key, checked).apply()
@@ -797,6 +953,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val REQ_PICTURE = 41
         private val RUNTIME_PERMS = listOf(
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ANSWER_PHONE_CALLS,

@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Halo: the island with an angel's halo. Black line, white fill, soft glow. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8"
-        android:pathData="M41,39h26a15,15 0 0 1 0,30h-26a15,15 0 0 1 0,-30z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M42,45h24a9,9 0 0 1 0,18h-24a9,9 0 0 1 0,-18z" />
+    <group android:scaleX="0.20645" android:scaleY="0.20645" android:translateX="0.529" android:translateY="3.006">
+        <group android:rotation="-7" android:pivotX="256" android:pivotY="148">
+            <path android:strokeColor="#FFFFFFFF" android:strokeWidth="22" android:strokeAlpha="1" android:pathData="M138,148 a118,36 0 1,0 236,0 a118,36 0 1,0 -236,0" />
+        </group>
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="18" android:strokeAlpha="1" android:pathData="M210,226 h92 a82,82 0 0 1 0,164 h-92 a82,82 0 0 1 0,-164z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="12" android:strokeLineCap="round" android:pathData="M196,296 l26,26 M222,296 l-26,26" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="12" android:strokeLineCap="round" android:pathData="M282,322 q24,-32 48,0" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="9" android:strokeLineCap="round" android:pathData="M150,288 q14,6 18,22" />
+    </group>
 </vector>
