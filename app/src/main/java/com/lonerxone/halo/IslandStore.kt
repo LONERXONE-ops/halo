@@ -22,6 +22,8 @@ data class MusicInfo(
     val positionMs: Long,
     val positionUpdatedAt: Long,
     val speed: Float,
+    val appName: String = "",
+    val appIcon: Bitmap? = null,
 ) {
     /**
      * Same song means the island updates in place instead of rebuilding.
@@ -76,6 +78,39 @@ data class CallInfo(
     val hangUp: PendingIntent?,
 )
 
+/** A running or paused timer / stopwatch from the clock app. */
+data class TimerInfo(
+    val key: String,
+    val label: String,
+    /** Wall-clock end (countdown) or start (stopwatch); 0 when paused. */
+    val anchor: Long,
+    val countDown: Boolean,
+    /** Shown when paused (the clock app's own text). */
+    val pausedText: String,
+    val contentIntent: PendingIntent?,
+    val actions: List<Pair<String, PendingIntent>>,
+)
+
+/** A download, upload or install with a progress bar. */
+data class TransferInfo(
+    val key: String,
+    val title: String,
+    val appName: String,
+    val icon: Bitmap?,
+    /** 0..1, or -1 when the app does not say how far along it is. */
+    val progress: Float,
+    val contentIntent: PendingIntent?,
+)
+
+/** Turn-by-turn navigation from Google Maps. */
+data class NavInfo(
+    val key: String,
+    val primary: String,
+    val secondary: String,
+    val arrow: Bitmap?,
+    val contentIntent: PendingIntent?,
+)
+
 /** One row in the notification panel that opens from the camera circle. */
 data class PanelItem(
     val key: String,
@@ -107,6 +142,12 @@ object IslandStore {
     var notif: NotifInfo? = null
         private set
     var call: CallInfo? = null
+        private set
+    var timer: TimerInfo? = null
+        private set
+    var transfer: TransferInfo? = null
+        private set
+    var nav: NavInfo? = null
         private set
 
     private val listeners = LinkedHashSet<() -> Unit>()
@@ -141,6 +182,21 @@ object IslandStore {
 
     fun setCall(c: CallInfo?) {
         call = c
+        dispatch()
+    }
+
+    fun setTimer(t: TimerInfo?) {
+        timer = t
+        dispatch()
+    }
+
+    fun setTransfer(t: TransferInfo?) {
+        transfer = t
+        dispatch()
+    }
+
+    fun setNav(n: NavInfo?) {
+        nav = n
         dispatch()
     }
 
@@ -197,6 +253,15 @@ object Prefs {
     const val HAPTICS = "haptics"
     const val SCALE = "scale"
     const val BLOCKED = "blocked_apps"
+    const val TIMERS = "timers"
+    const val TRANSFERS = "transfers"
+    const val NAV = "nav"
+    const val SYSTEM_POPS = "system_pops"
+    const val OFFSET_X = "offset_x"
+    const val OFFSET_Y = "offset_y"
+    const val GLASS = "glass"
+    const val ART_BACKDROP = "art_backdrop"
+    const val LOW_POWER = "low_power"
 
     /** Banking and OTP apps stay off the island unless the user turns them on. */
     val DEFAULT_BLOCKED = setOf(
@@ -215,8 +280,12 @@ object Prefs {
 }
 
 object Colors {
-    const val ACCENT_DEFAULT = 0xFF8AB4FF.toInt()
+    const val ACCENT_DEFAULT = 0xFFFF6B9A.toInt()
     const val GREEN = 0xFF34C759.toInt()
     const val RED = 0xFFFF453A.toInt()
     const val BLUE = 0xFF3E91FF.toInt()
+    const val PINK = 0xFFFF6B9A.toInt()
+    const val ORANGE = 0xFFFF9F0A.toInt()
+    const val PURPLE = 0xFFAF8CFF.toInt()
+    const val LAVENDER = 0xFFB9C3FF.toInt()
 }

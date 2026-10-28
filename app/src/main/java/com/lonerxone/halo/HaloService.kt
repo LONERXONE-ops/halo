@@ -4,6 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.KeyguardManager
+import android.app.NotificationManager
+import android.bluetooth.BluetoothDevice
+import android.media.AudioManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -22,6 +25,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import kotlin.math.max
 
 /**
  * Hosts the island as trusted accessibility overlays, so it can sit on top of
@@ -54,6 +58,22 @@ class HaloService : AccessibilityService(), IslandView.Host {
             when (intent.action) {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
                 Intent.ACTION_SCREEN_OFF -> locked = true
+                Intent.ACTION_BATTERY_CHANGED -> {
+                    onBattery(intent)
+                    return
+                }
+                AudioManager.RINGER_MODE_CHANGED_ACTION -> {
+                    if (!isInitialStickyBroadcast) onRinger(intent)
+                    return
+                }
+                BluetoothDevice.ACTION_ACL_CONNECTED -> {
+                    onBluetooth(intent)
+                    return
+                }
+                NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED -> {
+                    onDnd()
+                    return
+                }
                 else -> locked = keyguard().isKeyguardLocked
             }
             push()
@@ -73,6 +93,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_USER_PRESENT)
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
@@ -219,6 +243,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private inner class TouchProxy(ctx: Context) : View(ctx) {
         override fun onTouchEvent(event: MotionEvent): Boolean {
             val target = island ?: return false
+            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                // A touch somewhere else on the screen (it still reaches that app): retract.
+                target.onOutsideTouch()
+                return false
+            }
             val p = touchLp ?: return false
             val ev = MotionEvent.obtain(event)
             ev.offsetLocation(p.x.toFloat(), p.y.toFloat())
@@ -237,6 +266,12 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.idleEnabled = p.getBoolean(Prefs.IDLE, true)
         v.hapticsEnabled = p.getBoolean(Prefs.HAPTICS, true)
         v.sizeScale = p.getInt(Prefs.SCALE, 100) / 100f
+        val d = resources.displayMetrics.density
+        v.offsetX = p.getInt(Prefs.OFFSET_X, 0) * d
+        v.offsetY = p.getInt(Prefs.OFFSET_Y, 0) * d
+        v.glassStrength = p.getInt(Prefs.GLASS, 20) / 100f
+        v.artBackdrop = p.getBoolean(Prefs.ART_BACKDROP, true)
+        v.lowPower = p.getBoolean(Prefs.LOW_POWER, false)
     }
 
     /** Called by the settings screen after a change. */
@@ -259,28 +294,114 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private fun push() {
         val v = island ?: return
         val p = Prefs.get(this)
-        val pop = IslandStore.pop
-        val call = IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }
         val note = IslandStore.notif
-        val music = IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }
-        // Priority: calls, then message banners, then system pops, then music.
-        val content = when {
-            call != null -> IslandView.Content.Call(call)
-            note != null -> IslandView.Content.Note(note)
-            pop != null -> IslandView.Content.Popup(pop)
-            music != null -> IslandView.Content.Music(music)
-            else -> IslandView.Content.None
+        val pop = IslandStore.pop
+
+        // Live activities, most important first. The first takes the pill; the
+        // second sits in the round bubble beside it (like the iPhone split).
+        val live = buildList<IslandView.Content> {
+            IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }?.let { add(IslandView.Content.Call(it)) }
+            IslandStore.timer?.takeIf { p.getBoolean(Prefs.TIMERS, true) }?.let { add(IslandView.Content.Timer(it)) }
+            IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }?.let { add(IslandView.Content.Music(it)) }
+            IslandStore.nav?.takeIf { p.getBoolean(Prefs.NAV, true) }?.let { add(IslandView.Content.Nav(it)) }
+            IslandStore.transfer?.takeIf { p.getBoolean(Prefs.TRANSFERS, true) }?.let { add(IslandView.Content.Transfer(it)) }
         }
-        val alert = content is IslandView.Content.Call || content is IslandView.Content.Note || content is IslandView.Content.Popup
+        val main: IslandView.Content
+        val second: IslandView.Content?
+        when {
+            note != null -> {
+                main = IslandView.Content.Note(note)
+                second = null
+            }
+            pop != null -> {
+                main = IslandView.Content.Popup(pop)
+                second = live.firstOrNull()
+            }
+            else -> {
+                main = live.firstOrNull() ?: IslandView.Content.None
+                second = live.getOrNull(1)
+            }
+        }
+
+        val alert = main is IslandView.Content.Call || main is IslandView.Content.Note || main is IslandView.Content.Popup
         val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
         val hide = locked || landscape || hideFs
-        v.setState(content, hide)
+        v.setState(main, second?.let { bubbleFor(it) }, hide)
         val reasons = buildList {
             if (locked) add("locked")
             if (landscape) add("landscape")
             if (hideFs) add("fullscreen")
         }
         Debug.island = "on · ${v.mode.name.lowercase()}" + if (reasons.isEmpty()) "" else " · hidden: ${reasons.joinToString()}"
+    }
+
+    private fun bubbleFor(c: IslandView.Content): IslandView.Bubble? = when (c) {
+        is IslandView.Content.Music -> IslandView.Bubble("m", c.info.art ?: c.info.appIcon, R.drawable.ic_note, c.info.accent, -1f) { openMusicApp(c.info) }
+        is IslandView.Content.Call -> IslandView.Bubble("c", null, R.drawable.ic_call, Colors.GREEN, -1f) { send(c.call.contentIntent) }
+        is IslandView.Content.Timer -> IslandView.Bubble("t", null, R.drawable.ic_timer, Colors.ORANGE, -1f) { send(c.timer.contentIntent) }
+        is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.BLUE, max(0f, c.transfer.progress)) { send(c.transfer.contentIntent) }
+        is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f) { send(c.nav.contentIntent) }
+        else -> null
+    }
+
+    // ---------------------------------------------------------------------
+    // System pops: low battery, full, ringer, Bluetooth, Do Not Disturb
+    // ---------------------------------------------------------------------
+
+    private var lastBattery = -1
+    private var lastBt = 0L
+
+    private fun popsOn() = Prefs.get(this).getBoolean(Prefs.SYSTEM_POPS, true)
+
+    private fun onBattery(i: Intent) {
+        val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+        if (level < 0) return
+        val pct = level * 100 / scale
+        val plugged = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+        val prev = lastBattery
+        lastBattery = pct
+        if (prev < 0 || !popsOn()) return
+        when {
+            !plugged && prev > 15 && pct <= 15 -> IslandStore.showPop("Low battery", "$pct%", Colors.ORANGE, R.drawable.ic_battery_low, 3_500L)
+            !plugged && prev > 5 && pct <= 5 -> IslandStore.showPop("Battery", "$pct%", Colors.RED, R.drawable.ic_battery_low, 4_000L)
+            plugged && prev < 100 && pct >= 100 -> IslandStore.showPop("Charged", "100%", Colors.GREEN, R.drawable.ic_battery_full, 3_000L)
+        }
+    }
+
+    private fun onRinger(i: Intent) {
+        if (!popsOn()) return
+        when (i.getIntExtra(AudioManager.EXTRA_RINGER_MODE, -1)) {
+            AudioManager.RINGER_MODE_SILENT -> IslandStore.showPop("Silent", "On", Colors.RED, R.drawable.ic_bell_off, 2_000L)
+            AudioManager.RINGER_MODE_VIBRATE -> IslandStore.showPop("Vibrate", "On", Colors.PURPLE, R.drawable.ic_vibrate, 2_000L)
+            AudioManager.RINGER_MODE_NORMAL -> IslandStore.showPop("Ring", "On", Colors.BLUE, R.drawable.ic_bell, 2_000L)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun onBluetooth(i: Intent) {
+        if (!popsOn()) return
+        val now = System.currentTimeMillis()
+        if (now - lastBt < 4_000L) return
+        lastBt = now
+        val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+        } else {
+            i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+        }
+        val name = try {
+            device?.name
+        } catch (_: SecurityException) {
+            null
+        } ?: "Device"
+        IslandStore.showPop("Connected", name.take(14), Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+    }
+
+    private fun onDnd() {
+        if (!popsOn()) return
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        val on = nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+        IslandStore.showPop("Do Not Disturb", if (on) "On" else "Off", Colors.PURPLE, R.drawable.ic_moon, 2_000L)
     }
 
     private fun onCharging() {
@@ -395,6 +516,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         private const val DRAW_FLAGS = COMMON or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        private const val TOUCH_FLAGS = COMMON or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        private const val TOUCH_FLAGS = COMMON or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
     }
 }

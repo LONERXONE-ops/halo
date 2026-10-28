@@ -116,6 +116,7 @@ class HaloNotificationListener : NotificationListenerService() {
                 handleCall(sbn)
                 return
             }
+            if (handleOngoing(sbn)) return
             handleMessage(sbn)
         } catch (e: Exception) {
             Debug.lastNotification = "error: ${e.javaClass.simpleName}"
@@ -127,6 +128,9 @@ class HaloNotificationListener : NotificationListenerService() {
         shown.remove(sbn.key)
         if (IslandStore.call?.key == sbn.key) IslandStore.setCall(null)
         if (IslandStore.notif?.key == sbn.key) IslandStore.dismissNotif()
+        if (IslandStore.timer?.key == sbn.key) IslandStore.setTimer(null)
+        if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
+        if (IslandStore.transfer?.key == sbn.key) IslandStore.setTransfer(null)
     }
 
     private fun component() = ComponentName(this, HaloNotificationListener::class.java)
@@ -239,6 +243,8 @@ class HaloNotificationListener : NotificationListenerService() {
             positionMs = state?.position ?: 0L,
             positionUpdatedAt = state?.lastPositionUpdateTime ?: 0L,
             speed = state?.playbackSpeed ?: 1f,
+            appName = appName(c.packageName),
+            appIcon = appIcon(c.packageName),
         )
         Debug.nowPlaying = "$title (${if (playing) "playing" else "paused"}, ${c.packageName})"
 
@@ -295,6 +301,91 @@ class HaloNotificationListener : NotificationListenerService() {
             ),
         )
         Debug.lastNotification = "call: ${name.ifEmpty { "unknown" }} (${if (ringing) "ringing" else "active"})"
+    }
+
+    // =====================================================================
+    // Timers, downloads, navigation (ongoing notifications)
+    // =====================================================================
+
+    private fun isClockApp(pkg: String) =
+        pkg == "com.sec.android.app.clockpackage" || pkg == "com.google.android.deskclock" || pkg.contains("clock", true)
+
+    /** Returns true when the notification was an ongoing activity the island now shows. */
+    private fun handleOngoing(sbn: StatusBarNotification): Boolean {
+        val n = sbn.notification
+        val ex = n.extras ?: Bundle()
+        val pkg = sbn.packageName
+        val prefs = Prefs.get(this)
+        val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
+        val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+
+        // Navigation
+        if (pkg == "com.google.android.apps.maps" && sbn.isOngoing) {
+            if (!prefs.getBoolean(Prefs.NAV, true)) return true
+            IslandStore.setNav(
+                NavInfo(
+                    key = sbn.key,
+                    primary = title.ifEmpty { text },
+                    secondary = if (title.isEmpty()) "" else text,
+                    arrow = iconBitmap(n.getLargeIcon()),
+                    contentIntent = n.contentIntent,
+                ),
+            )
+            Debug.lastNotification = "Maps — navigation: ${title.take(24)}"
+            return true
+        }
+
+        // Timers and stopwatches
+        if (isClockApp(pkg) && sbn.isOngoing && n.category != Notification.CATEGORY_ALARM) {
+            if (!prefs.getBoolean(Prefs.TIMERS, true)) return true
+            val chrono = ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false)
+            val down = ex.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false)
+            val actions = n.actions?.mapNotNull { a ->
+                val t = a.title?.toString() ?: return@mapNotNull null
+                val pi = a.actionIntent ?: return@mapNotNull null
+                t to pi
+            } ?: emptyList()
+            IslandStore.setTimer(
+                TimerInfo(
+                    key = sbn.key,
+                    label = title.ifEmpty { if (down) "Timer" else "Stopwatch" },
+                    anchor = if (chrono) n.`when` else 0L,
+                    countDown = down,
+                    pausedText = text.ifEmpty { "Paused" },
+                    contentIntent = n.contentIntent,
+                    actions = actions.take(3),
+                ),
+            )
+            Debug.lastNotification = "Clock — ${title.ifEmpty { "timer" }}"
+            return true
+        }
+
+        // Downloads, uploads and installs
+        val max = ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        val prog = ex.getInt(Notification.EXTRA_PROGRESS, 0)
+        val indeterminate = ex.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
+        val hasBar = max > 0 || (indeterminate && n.category == Notification.CATEGORY_PROGRESS)
+        if (hasBar && sbn.isOngoing) {
+            if (!prefs.getBoolean(Prefs.TRANSFERS, true)) return true
+            IslandStore.setTransfer(
+                TransferInfo(
+                    key = sbn.key,
+                    title = title.ifEmpty { text.ifEmpty { "Downloading" } },
+                    appName = appName(pkg),
+                    icon = appIcon(pkg),
+                    progress = if (max > 0) (prog.toFloat() / max).coerceIn(0f, 1f) else -1f,
+                    contentIntent = n.contentIntent,
+                ),
+            )
+            return true
+        }
+        // A transfer that just finished turns into a normal notification.
+        if (IslandStore.transfer?.key == sbn.key) {
+            IslandStore.setTransfer(null)
+            IslandStore.showPop("Done", title.ifEmpty { "Finished" }.take(18), Colors.GREEN, R.drawable.ic_check, 2_500L)
+            return true
+        }
+        return false
     }
 
     // =====================================================================
@@ -443,10 +534,14 @@ class HaloNotificationListener : NotificationListenerService() {
         pkg.substringAfterLast('.')
     }
 
-    fun appIcon(pkg: String): Bitmap? = try {
-        drawableToBitmap(packageManager.getApplicationIcon(pkg))
-    } catch (_: Exception) {
-        null
+    private val iconCache = HashMap<String, Bitmap?>()
+
+    fun appIcon(pkg: String): Bitmap? = iconCache.getOrPut(pkg) {
+        try {
+            drawableToBitmap(packageManager.getApplicationIcon(pkg))
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun iconBitmap(icon: Icon?): Bitmap? {
