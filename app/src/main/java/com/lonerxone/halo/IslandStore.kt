@@ -331,6 +331,8 @@ object Prefs {
     const val PANEL_PIC = "panel_pic"
     /** How dark the pictures are made so text stays readable, 0..90 %. */
     const val PIC_DIM = "pic_dim"
+    /** Music bars follow the real sound (needs the microphone permission for Android's visualizer). */
+    const val BEAT = "beat"
 
     fun picFile(c: Context, key: String): java.io.File = java.io.File(c.filesDir, "$key.jpg")
 

@@ -110,6 +110,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     var glassStrength = 0f
     var artBackdrop = true
     var lowPower = false
+    /** Battery saver is on: update clocks less often. */
+    var saver = false
     /** The user's pictures: one fills the island, one sits behind the notification center. */
     var islandPic: Bitmap? = null
         set(value) {
@@ -214,7 +216,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 refresh()
                 return
             }
-            if (needsTicker()) postDelayed(this, if (lowPower) 1000L else 500L)
+            if (needsTicker()) postDelayed(this, if (lowPower || saver) 1000L else 500L)
         }
     }
 
@@ -410,6 +412,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         glow = 0f
         // Clear BEFORE building: the builders below fill these in for the new content.
         clearRefs()
+        if (content !is Content.Music || m == Mode.PANEL) Beat.ensure(context, false)
 
         when (m) {
             Mode.HIDDEN -> {
@@ -486,6 +489,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val info = c.info
                 wave?.playing = info.playing
                 wave?.color = Colors.INK
+                Beat.ensure(context, info.playing && !lowPower)
                 if (info.art != null) artImage?.let { img ->
                     img.background = null
                     img.clearColorFilter()
@@ -1001,6 +1005,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         Sides(icon(R.drawable.ic_flashlight, Colors.INK), text(12.5f, Colors.SILVER, true).apply { text = "On" }, dp(16))
 
     private fun compactMusic(info: MusicInfo): Sides {
+        Beat.ensure(context, info.playing && !lowPower)
         val art = roundImage(info.art, dpf(11f), info.accent, R.drawable.ic_note)
         artImage = art
         val w = WaveformView(context).apply {
@@ -1060,16 +1065,23 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Media card: blurred cover behind, app beside the camera, big round play button, draggable seek bar. */
     private fun buildExpandedMusic(info: MusicInfo, w: Int, top: Float): View {
+        Beat.ensure(context, info.playing && !lowPower)
         val root = FrameLayout(context)
         if (artBackdrop && info.art != null && !lowPower) {
             root.addView(ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setImageBitmap(BitmapFx.blur(info.art) ?: info.art)
             }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            // The cover's own colour washes down into black, so each song tints the card.
+            val c = info.accent
             root.addView(View(context).apply {
                 background = GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(Color.argb(170, 0, 0, 0), Color.argb(225, 0, 0, 0)),
+                    intArrayOf(
+                        Color.argb(120, Color.red(c) / 3, Color.green(c) / 3, Color.blue(c) / 3),
+                        Color.argb(165, 0, 0, 0),
+                        Color.argb(225, 0, 0, 0),
+                    ),
                 )
             }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
@@ -1635,10 +1647,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(11), dp(8), dp(11))
-            background = GradientDrawable().apply {
-                setColor(Color.argb(235, 30, 30, 32))
-                cornerRadius = dpf(22f)
-            }
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(
+                    Color.argb(240, 18 + Color.red(m.accent) / 4, 18 + Color.green(m.accent) / 4, 18 + Color.blue(m.accent) / 4),
+                    Color.argb(235, 30, 30, 32),
+                ),
+            ).apply { cornerRadius = dpf(22f) }
             setOnClickListener {
                 haptic()
                 panelOpen = false

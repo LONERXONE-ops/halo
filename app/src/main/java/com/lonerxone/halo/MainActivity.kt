@@ -327,6 +327,7 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Live activities"))
         col.addView(group(
             switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC),
+            switchRowDefault("Bars follow the beat", "The music bars move with the real sound", Prefs.BEAT, false),
             switchRow("Calls", "Caller, timer, end-call button", Prefs.CALLS),
             switchRow("Timers & stopwatch", "Countdown from the Clock app", Prefs.TIMERS),
             switchRow("Downloads & installs", "Progress ring for files and apps", Prefs.TRANSFERS),
@@ -753,6 +754,10 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_BEAT && !Beat.allowed(this)) {
+            Prefs.get(this).edit().putBoolean(Prefs.BEAT, false).apply()
+        }
+        HaloService.instance?.reloadPrefs()
         render()
     }
 
@@ -907,6 +912,10 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().putBoolean(key, checked).apply()
                 HaloService.instance?.reloadPrefs()
+                if (key == Prefs.BEAT && checked && !Beat.allowed(this@MainActivity)) {
+                    Toast.makeText(this@MainActivity, "Android calls this the microphone. Halo only reads the music playing, never records.", Toast.LENGTH_LONG).show()
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_BEAT)
+                }
             }
         }
         row.addView(sw)
@@ -954,6 +963,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQ_PICTURE = 41
+        private const val REQ_BEAT = 42
         private val RUNTIME_PERMS = listOf(
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ANSWER_PHONE_CALLS,

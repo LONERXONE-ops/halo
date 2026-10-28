@@ -23,6 +23,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Ringer and Do Not Disturb state for the silent-mode pop -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- "Bars follow the beat": Android's audio visualizer is gated behind these.
+         Halo reads the phone's sound output only; it never records the microphone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <queries>
         <intent>

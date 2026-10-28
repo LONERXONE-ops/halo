@@ -192,6 +192,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         drawLp = null
         touch = null
         touchLp = null
+        Beat.stop()
         if (instance === this) instance = null
         Debug.island = "not running"
     }
@@ -328,8 +329,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (ip !== v.islandPic) v.islandPic = ip
         val pp = loadPic(p, Prefs.PANEL_PIC)
         if (pp !== v.panelPic) v.panelPic = pp
-        v.lowPower = p.getBoolean(Prefs.LOW_POWER, false) ||
-            getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+        // Only Halo's own switch turns the effects off. Battery saver just slows
+        // the clock updates; the bars and the cover backdrop stay.
+        v.lowPower = p.getBoolean(Prefs.LOW_POWER, false)
+        v.saver = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
     }
 
     private val picCache = HashMap<String, Pair<Long, android.graphics.Bitmap>>()

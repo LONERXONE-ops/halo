@@ -22,6 +22,7 @@ class WaveformView(context: Context) : View(context) {
     private val lows = floatArrayOf(0.3f, 0.5f, 0.2f)
     private val highs = floatArrayOf(0.9f, 1.0f, 0.7f)
     private val periods = floatArrayOf(0.70f, 0.86f, 1.02f)
+    private val shown = floatArrayOf(0.3f, 0.5f, 0.2f)
 
     var color: Int = Color.WHITE
         set(value) {
@@ -46,18 +47,27 @@ class WaveformView(context: Context) : View(context) {
         val r = bw * 0.35f
         val t = SystemClock.uptimeMillis() / 1000f
         for (i in 0 until n) {
-            val f = if (playing && !still) {
-                val ph = 0.5f - 0.5f * sin((t / periods[i]) * 6.2832f + i * 1.3f)
-                lows[i] + (highs[i] - lows[i]) * ph
+            val target = if (playing && !still) {
+                if (Beat.fresh()) {
+                    // Real sound: bass, mids, highs (middle bar is the bass, like a meter).
+                    val lv = Beat.levels[intArrayOf(1, 0, 2)[i]]
+                    0.18f + 0.82f * lv
+                } else {
+                    val ph = 0.5f - 0.5f * sin((t / periods[i]) * 6.2832f + i * 1.3f)
+                    lows[i] + (highs[i] - lows[i]) * ph
+                }
             } else {
                 lows[i]
             }
+            shown[i] += (target - shown[i]) * 0.4f
+            val f = shown[i]
             val h = max(bw, height * f)
             val x = i * (bw + gap)
             bar.set(x, (height - h) / 2f, x + bw, (height + h) / 2f)
             canvas.drawRoundRect(bar, r, r, paint)
         }
-        if (playing && !still && isShown) postInvalidateOnAnimation()
+        val settling = (0 until n).any { kotlin.math.abs(shown[it] - lows[it]) > 0.01f }
+        if ((playing && !still || settling) && isShown) postInvalidateOnAnimation()
     }
 }
 
