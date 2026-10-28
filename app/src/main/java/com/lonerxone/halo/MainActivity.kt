@@ -351,6 +351,58 @@ class MainActivity : Activity() {
 
         col.addView(sectionTitle("Pop-ups"))
         col.addView(takeoverCard())
+        col.addView(sectionTitle("Apps that still show Android's banner"))
+        col.addView(popChannelsCard())
+    }
+
+    /**
+     * Samsung's One UI ignores Android's global pop-up switch, so banners are
+     * turned off per app instead: each row opens that app's notification
+     * category, where "Pop up" can be switched off. Notifications still sound
+     * and still show on the island.
+     */
+    private fun popChannelsCard(): View {
+        val listener = HaloNotificationListener.instance
+        val list = listener?.poppingChannels().orEmpty()
+        if (list.isEmpty()) {
+            return group(infoRow(
+                if (listener == null) "Notification access is off" else "None right now",
+                if (listener == null) "Turn on notification access in Permissions first." else
+                    "When an app shows Android's banner on top of the island, it appears here. Tap it to turn that banner off.",
+            ))
+        }
+        val rows = list.take(12).map { pc ->
+            val row = rowBase(pc.appName, "${pc.channelName} · tap, then turn off \"Pop up\"")
+            val icon = listener?.appIcon(pc.packageName)
+            if (icon != null) {
+                row.addView(android.widget.ImageView(this).apply {
+                    setImageBitmap(icon)
+                    outlineProvider = object : android.view.ViewOutlineProvider() {
+                        override fun getOutline(v: View, o: android.graphics.Outline) {
+                            o.setRoundRect(0, 0, v.width, v.height, dp(9).toFloat())
+                        }
+                    }
+                    clipToOutline = true
+                }, 0, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(16) })
+            }
+            row.addView(android.widget.ImageView(this).apply {
+                setImageResource(R.drawable.ic_chevron)
+                imageTintList = ColorStateList.valueOf(Color.argb(110, 255, 255, 255))
+            }, LinearLayout.LayoutParams(dp(20), dp(20)))
+            row.setOnClickListener {
+                try {
+                    startActivity(
+                        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, pc.packageName)
+                            .putExtra(Settings.EXTRA_CHANNEL_ID, pc.channelId),
+                    )
+                } catch (_: Exception) {
+                    startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, pc.packageName))
+                }
+            }
+            row
+        }
+        return group(*rows.toTypedArray())
     }
 
     /**
@@ -378,7 +430,7 @@ class MainActivity : Activity() {
             }
             row.addView(sw)
             row.setOnClickListener { sw.toggle() }
-            return group(row, infoRow("Good to know", "If the island stops (or you turn Halo off in Accessibility), Android's banners come straight back. Turn this off before uninstalling Halo."))
+            return group(row, infoRow("Good to know", "Samsung phones ignore this switch for most apps, so use the list below to turn banners off app by app. If the island stops, Android's banners come straight back. Turn this off before uninstalling Halo."))
         }
         // Not unlocked yet: one-time setup.
         val c = card().apply { setPadding(dp(20), dp(16), dp(20), dp(18)) }

@@ -111,6 +111,7 @@ class HaloNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         refreshCount()
+        notePopChannel(sbn)
         try {
             val token = mediaToken(sbn.notification)
             if (token != null) {
@@ -564,6 +565,52 @@ class HaloNotificationListener : NotificationListenerService() {
         android.provider.Settings.Secure.getInt(contentResolver, name, if (def) 1 else 0) != 0
     } catch (_: Exception) {
         def
+    }
+
+    // ----- Channels that still pop up (for "Halo handles pop-ups") -----
+
+    private val popChannels = LinkedHashMap<String, PopChannel>()
+
+    /**
+     * Remembers app channels that use Android's banner (importance High).
+     * One UI ignores the global heads-up switch, so the settings screen lists
+     * these and opens each channel's page, where "Pop up" can be turned off.
+     */
+    private fun notePopChannel(sbn: StatusBarNotification) {
+        if (sbn.packageName == packageName || sbn.isOngoing) return
+        val r = rankingOf(sbn) ?: return
+        val ch = r.channel ?: return
+        val k = sbn.packageName + "/" + ch.id
+        if (ch.importance >= NotificationManager.IMPORTANCE_HIGH) {
+            if (k !in popChannels) {
+                popChannels[k] = PopChannel(sbn.packageName, appName(sbn.packageName), ch.id, ch.name?.toString().orEmpty().ifEmpty { ch.id })
+                if (popChannels.size > 30) popChannels.remove(popChannels.keys.first())
+            }
+        } else {
+            popChannels.remove(k)
+        }
+    }
+
+    /** Channels that still show Android's banner, newest apps first. */
+    fun poppingChannels(): List<PopChannel> {
+        try {
+            activeNotifications?.forEach { notePopChannel(it) }
+        } catch (_: Exception) {
+        }
+        // Re-check what we remember: the user may have turned some off already.
+        return popChannels.values.reversed().filter { pc ->
+            val live = try {
+                currentRanking?.let { rk ->
+                    rk.orderedKeys.asSequence().mapNotNull { key ->
+                        val r = Ranking()
+                        if (rk.getRanking(key, r) && r.channel?.id == pc.channelId && key.contains(pc.packageName)) r.channel else null
+                    }.firstOrNull()
+                }
+            } catch (_: Exception) {
+                null
+            }
+            live == null || live.importance >= NotificationManager.IMPORTANCE_HIGH
+        }
     }
 
     /** Parsed notifications, so opening the notification center doesn't decode every photo again. */

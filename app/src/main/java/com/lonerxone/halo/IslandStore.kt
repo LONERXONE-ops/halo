@@ -139,6 +139,9 @@ data class NavInfo(
 )
 
 /** One row in the notification panel that opens from the camera circle. */
+/** An app's notification channel that still uses Android's pop-up banner (importance High). */
+data class PopChannel(val packageName: String, val appName: String, val channelId: String, val channelName: String)
+
 data class PanelItem(
     val key: String,
     val packageName: String,
