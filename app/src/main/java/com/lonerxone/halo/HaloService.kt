@@ -264,7 +264,14 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
         touch = TouchProxy(this)
         touchLp = baseParams(1, 1, TOUCH_FLAGS).apply { title = "Halo touch" }
-        v.post { push() }
+        v.post {
+            // Now the window has insets: if the display didn't report a camera, try again.
+            if (v.geometry.notch == null) {
+                v.geometry = geometry()
+                v.rebuild()
+            }
+            push()
+        }
     }
 
     private fun removeTouch() {
@@ -318,6 +325,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
     fun reloadPrefs() {
         val v = island ?: return
         applyPrefs(v)
+        v.geometry = geometry()
         v.rebuild()
         push()
     }
@@ -327,7 +335,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val v = island
         val attached = v?.isAttachedToWindow == true
         val n = v?.geometry?.notch
-        val notch = if (n == null) "none" else "${n.width()}x${n.height()} at ${n.centerX()},${n.centerY()}"
+        val notch = if (n == null) "none ($cameraHow)" else "${n.width()}x${n.height()} at ${n.centerX()},${n.centerY()}"
         return "overlay: ${if (attached) "on" else "OFF"}, notch: $notch, fullscreen: $fullscreen, locked: $locked"
     }
 
@@ -545,18 +553,44 @@ class HaloService : AccessibilityService(), IslandView.Host {
             }
         } catch (_: Throwable) {
         }
-        val notch = try {
-            getSystemService(DisplayManager::class.java)
-                ?.getDisplay(Display.DEFAULT_DISPLAY)
-                ?.cutout
-                ?.boundingRectTop
-                ?.takeIf { !it.isEmpty }
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        val sb = if (id > 0) resources.getDimensionPixelSize(id) else (24 * dm.density).toInt()
+        // The display's cutout first; if a phone reports nothing there, ask the
+        // overlay window's insets (some skins only fill one of the two).
+        val fromDisplay = try {
+            getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.cutout
         } catch (_: Throwable) {
             null
         }
-        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
-        val sb = if (id > 0) resources.getDimensionPixelSize(id) else (24 * dm.density).toInt()
+        val cut = fromDisplay ?: try {
+            island?.rootWindowInsets?.displayCutout
+        } catch (_: Throwable) {
+            null
+        }
+        val found = CameraFinder.find(cut, screenW, screenH, sb, dm.density)
+        cameraHow = found.how
+        // The user's fine-tuning from Settings → Camera fit.
+        val p = Prefs.get(this)
+        val nx = (p.getInt(Prefs.CAM_X, 0) * dm.density).toInt()
+        val ny = (p.getInt(Prefs.CAM_Y, 0) * dm.density).toInt()
+        val grow = (p.getInt(Prefs.CAM_SIZE, 0) * dm.density / 2f).toInt()
+        val notch = found.rect?.let { r ->
+            Rect(r.left + nx - grow, r.top + ny - grow, r.right + nx + grow, r.bottom + ny + grow).takeIf { it.width() > 0 && it.height() > 0 }
+        }
         return IslandView.Geometry(notch, screenW, screenH, sb)
+    }
+
+    /** How the camera was found, for the Camera fit card. */
+    var cameraHow: String = "not checked yet"
+        private set
+
+    /** Re-reads the cutout and replays a visible outline on the camera circle. */
+    fun redetectCamera(preview: Boolean = true) {
+        val v = island ?: return
+        v.geometry = geometry()
+        v.rebuild()
+        push()
+        if (preview) v.previewCamera()
     }
 
     // ---------------------------------------------------------------------

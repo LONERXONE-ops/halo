@@ -315,6 +315,9 @@ object Prefs {
     const val LOW_POWER = "low_power"
     const val TORCH = "torch"
     const val CONNECTIVITY = "connectivity"
+    const val CAM_X = "cam_x"
+    const val CAM_Y = "cam_y"
+    const val CAM_SIZE = "cam_size"
 
     /** Banking and OTP apps stay off the island unless the user turns them on. */
     val DEFAULT_BLOCKED = setOf(

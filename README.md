@@ -28,6 +28,7 @@
 | | |
 |---|---|
 | **Camera circle** | At rest, Halo is a black circle sitting exactly on your camera, so you don't see it. Tap the camera to open it. |
+| **Camera fit** | Finds the front camera on any phone: centred punch-holes, corner punch-holes, waterdrop and wide notches. Corner cameras keep the circle on the lens while the pill opens in the middle; phones with no cutout get an invisible tap zone at the top. Fine-tune it in Settings → Camera fit. |
 | **Notification center** | Tap the camera (or the bell beside the pill): date and time beside the lens, battery up top, a mini music player, then your notifications. Scroll, tap one to read it, or Clear all. |
 | **Reply sheet** | Opening a notification shows the whole chat (WhatsApp, Telegram, SMS…) with a reply box, plus Open, Mark as read and Dismiss. |
 | **Music** | Cover on the left, bouncing bars on the right. Tap for the full player: blurred cover behind, big play button, a seek bar you can drag. Swipe sideways to skip. |

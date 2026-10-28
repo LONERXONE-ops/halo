@@ -121,7 +121,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     // ---------- springs ----------
     // 0 w, 1 h, 2 radius, 3 alpha, 4 glass, 5 shadow, 6 centre y, 7 bubble alpha, 8 bubble size, 9 edge
-    private val springs = Array(10) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8)) 0.4f else 0.002f) }
+    // 10 = the x the pill is centred on (before it is kept on screen).
+    private val springs = Array(11) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8, 10)) 0.4f else 0.002f) }
     private fun v(i: Int) = springs[i].value
     private fun t(i: Int) = springs[i].target
     private val startW = FloatArray(2)
@@ -243,11 +244,55 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun notchW(): Int = geometry.notch?.width() ?: 0
     private fun notchH(): Int = geometry.notch?.height() ?: 0
     private fun anchorY(): Float = geometry.notch?.exactCenterY() ?: (geometry.statusBarH / 2f)
-    private fun cx(): Float = if (mode == Mode.IDLE || mode == Mode.HIDDEN) notchCx() else notchCx() + offsetX
+
+    /**
+     * True when the camera is near the middle of the top edge, so the pill can
+     * wrap around it. A punch-hole in a corner (or far off-centre) can't be
+     * wrapped: the pill then sits in the middle and the circle stays on the lens.
+     */
+    private fun wraps(): Boolean {
+        val n = geometry.notch ?: return false
+        return kotlin.math.abs(n.exactCenterX() - geometry.screenW / 2f) <= geometry.screenW * 0.12f
+    }
+
+    /** Camera width the pill has to make room for (0 when it doesn't wrap the camera). */
+    private fun wrapW(): Int = if (wraps()) notchW() else 0
+
+    private fun idleLike(m: Mode) = m == Mode.IDLE || m == Mode.HIDDEN
+
+    /** Where a pill in mode [m] wants its centre, before it is kept on screen. */
+    private fun anchorXFor(m: Mode): Float = when {
+        idleLike(m) -> notchCx()
+        wraps() -> notchCx() + offsetX
+        else -> geometry.screenW / 2f + offsetX
+    }
+
+    /** Space the round bubble takes to the right of the pill. */
+    private fun bubbleExtra(): Float =
+        if (bubble != null && mode == Mode.COMPACT) (if (bubble?.small == true) dpf(5f) else dpf(6f)) + bubbleD() else 0f
+
+    /** Keeps a [w]-wide pill (and its bubble) fully on screen, 8dp from the edges. */
+    private fun clampCx(anchor: Float, w: Float): Float {
+        val m = if (idleLike(mode)) 0f else dpf(8f)
+        val extra = bubbleExtra()
+        val lo = m + w / 2f
+        val hi = geometry.screenW - m - w / 2f - extra
+        return if (lo > hi) (geometry.screenW - extra) / 2f else anchor.coerceIn(lo, hi)
+    }
+
+    /** Camera outline preview from Settings → Camera fit. */
+    private var previewUntil = 0L
+    private fun previewing() = android.os.SystemClock.uptimeMillis() < previewUntil
+
+    fun previewCamera() {
+        previewUntil = android.os.SystemClock.uptimeMillis() + 4_000L
+        rebuild()
+        postDelayed({ rebuild() }, 4_100L)
+    }
 
     private fun idleD(): Float = if (geometry.notch != null) max(min(notchW(), notchH()).toFloat(), dpf(20f)) else dpf(22f)
     private fun compactH(): Float = dpf(34f) * sizeScale
-    private fun baseCompactW(): Float = max(dpf(123f) * sizeScale, notchW() + dpf(86f))
+    private fun baseCompactW(): Float = max(dpf(123f) * sizeScale, wrapW() + dpf(86f))
     private fun expandedW(): Float = min(dpf(372f), geometry.screenW - dpf(16f)) * min(sizeScale, 1.05f)
     private fun panelMaxH(): Float = geometry.screenH * 0.62f
     private fun gapTop(): Float = dpf(6f)
@@ -257,16 +302,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         else -> max(anchorY(), gapTop() + h / 2f) + offsetY
     }
 
-    private fun pillRect(w: Float, h: Float, cy: Float, out: RectF) {
-        val l = cx() - w / 2f
+    private fun pillRect(w: Float, h: Float, cy: Float, out: RectF, anchor: Float = v(10)) {
+        val l = clampCx(anchor, w) - w / 2f
         out.set(l, cy - h / 2f, l + w, cy + h / 2f)
     }
 
     /** The bell is a small companion; a second activity gets a full pill-height circle. */
     private fun bubbleD(): Float = if (bubble?.small == true) dpf(26f) * sizeScale else compactH()
 
-    private fun bubbleCenterX(pillW: Float, d: Float): Float =
-        cx() + pillW / 2f + (if (bubble?.small == true) dpf(5f) else dpf(6f)) + d / 2f
+    private fun bubbleCenterX(pillW: Float, d: Float, anchor: Float = v(10)): Float =
+        clampCx(anchor, pillW) + pillW / 2f + (if (bubble?.small == true) dpf(5f) else dpf(6f)) + d / 2f
 
     // =====================================================================
     // State machine
@@ -285,7 +330,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (c is Content.Call && c.call.ringing) return Mode.EXPANDED
         if (panelOpen) return Mode.PANEL
         return when (c) {
-            is Content.None -> if (idleEnabled) Mode.IDLE else Mode.HIDDEN
+            is Content.None -> if (idleEnabled || previewing()) Mode.IDLE else Mode.HIDDEN
             is Content.Note -> Mode.EXPANDED
             is Content.Popup -> if (expanded && c.pop.kind == "charge") Mode.EXPANDED else Mode.COMPACT
             is Content.Torch -> Mode.COMPACT
@@ -352,7 +397,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             Mode.IDLE -> {
                 swapContent(null, 0, 0, 0f, 0f)
                 val d = idleD()
-                animateTo(d, d, d / 2f, 1f, 0f, 0f, 0f, cyFor(m, d), grow = false)
+                // No camera to hide behind (bezel phones): keep the tap zone, draw nothing.
+                val a = if (geometry.notch == null && !previewing()) 0f else 1f
+                animateTo(d, d, d / 2f, a, 0f, 0f, 0f, cyFor(m, d), grow = false)
             }
             Mode.COMPACT -> {
                 val h = compactH()
@@ -488,6 +535,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         zeta = if (grow) 0.8f else 0.92f
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
+        if (springs[10].value == 0f) springs[10].snap(notchCx())
         startW[0] = v(0)
         startW[1] = v(1)
         // Opening: width leads height. Closing: height leads width. Both read as one organic motion.
@@ -498,6 +546,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[4].to(glass, k, 1f)
         springs[5].to(shadow, k * 0.8f, 1f)
         springs[6].to(cy, k, zeta)
+        springs[10].to(anchorXFor(mode), k, zeta)
         springs[9].to(edge, k, 1f)
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
@@ -556,14 +605,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private val touchRect = RectF()
 
     private fun updateTouchArea() {
-        if (mode == Mode.HIDDEN || t(3) <= 0f) {
+        if (mode == Mode.HIDDEN || (t(3) <= 0f && mode != Mode.IDLE)) {
             host.setTouchArea(null)
             return
         }
-        pillRect(t(0), t(1), t(6), touchRect)
+        pillRect(t(0), t(1), t(6), touchRect, t(10))
         if (t(7) > 0.5f) {
             val d = t(8)
-            touchRect.right = bubbleCenterX(t(0), d) + d / 2f
+            touchRect.right = bubbleCenterX(t(0), d, t(10)) + d / 2f
         }
         val extra = if (mode == Mode.IDLE) dpf(10f) else dpf(2f)
         host.setTouchArea(
@@ -617,7 +666,18 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             canvas.drawRoundRect(rect, r - inset, r - inset, glowPaint)
         }
 
+        if (mode == Mode.IDLE && previewing()) {
+            previewPaint.color = Colors.BLUE
+            val inset = previewPaint.strokeWidth / 2f
+            canvas.drawCircle(rect.centerX(), rect.centerY(), min(rect.width(), rect.height()) / 2f + inset, previewPaint)
+        }
+
         drawBubble(canvas, w, a)
+    }
+
+    private val previewPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * resources.displayMetrics.density
     }
 
     private fun drawBubble(canvas: Canvas, pillW: Float, a: Float) {
@@ -692,7 +752,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
         val lp = LayoutParams(w, h, Gravity.TOP or Gravity.START).apply {
-            leftMargin = ((notchCx() + offsetX) - w / 2f).toInt()
+            leftMargin = (clampCx(anchorXFor(mode), w.toFloat()) - w / 2f).toInt()
             topMargin = (cy - h / 2f).toInt()
         }
         addView(s, lp)
@@ -785,7 +845,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
     private fun compactWidthFor(s: Sides): Float {
         val side = max(widthOf(s.left, s.leftSize) + dp(8) + dp(10), widthOf(s.right, s.rightW) + dp(12) + dp(10))
-        return min(max(baseCompactW(), notchW() + 2f * side), expandedW())
+        return min(max(baseCompactW(), wrapW() + 2f * side), expandedW())
     }
 
     /**
@@ -797,15 +857,28 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val n = geometry.notch
         val centre = if (n != null) max(n.exactCenterY() - top, dpf(12f)) else dpf(14f)
         val h = max((centre * 2f).toInt(), dp(26))
-        val sideMax = ((w - notchW()) / 2 - dp(26)).coerceAtLeast(dp(60))
+        var startM = dp(18)
+        var endM = dp(18)
+        var sideMax = ((w - wrapW()) / 2 - dp(26)).coerceAtLeast(dp(60))
+        if (n != null && !wraps()) {
+            // A camera off to one side: push that side's content past the lens.
+            val cardLeft = clampCx(anchorXFor(Mode.EXPANDED), w.toFloat()) - w / 2f
+            val camL = n.left - cardLeft
+            val camR = n.right - cardLeft
+            if (camR > 0 && camL < w) {
+                if (n.exactCenterX() - cardLeft < w / 2f) startM = max(startM, (camR + dpf(10f)).toInt())
+                else endM = max(endM, (w - camL + dpf(10f)).toInt())
+            }
+            sideMax = (w / 2 - max(startM, endM) - dp(8)).coerceAtLeast(dp(60))
+        }
         val row = FrameLayout(context)
         if (left != null) {
             if (left is TextView) left.maxWidth = sideMax
-            row.addView(left, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(18) })
+            row.addView(left, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = startM })
         }
         if (right != null) {
             if (right is TextView) right.maxWidth = sideMax
-            row.addView(right, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(18) })
+            row.addView(right, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = endM })
         }
         row.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h)
         return row

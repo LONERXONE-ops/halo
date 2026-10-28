@@ -227,6 +227,32 @@ class MainActivity : Activity() {
         look.addView(switchRowDefault("Low-power mode", "No blur, still bars, slower updates", Prefs.LOW_POWER, false))
         col.addView(look)
 
+        // Camera fit: works out where the front camera is on any phone.
+        col.addView(sectionTitle("Camera fit"))
+        val cam = card()
+        val svcNow = HaloService.instance
+        cam.addView(infoRow("Detected", svcNow?.cameraHow?.replaceFirstChar { it.uppercase() } ?: "Turn on the island service to detect the camera"))
+        cam.addView(line())
+        cam.addView(navRow("Find my camera again", "Re-detects and outlines the camera circle in blue") {
+            val svc = HaloService.instance
+            if (svc == null) {
+                Toast.makeText(this, "Island service isn't running", Toast.LENGTH_SHORT).show()
+            } else {
+                svc.redetectCamera()
+                render()
+            }
+        })
+        cam.addView(line())
+        cam.addView(sliderRow("Nudge left / right", Prefs.CAM_X, 0, -40, 40, "dp", camera = true))
+        cam.addView(line())
+        cam.addView(sliderRow("Nudge up / down", Prefs.CAM_Y, 0, -20, 20, "dp", camera = true))
+        cam.addView(line())
+        cam.addView(sliderRow("Circle size", Prefs.CAM_SIZE, 0, -10, 20, "dp", camera = true))
+        col.addView(cam)
+        col.addView(label("Halo finds the camera by itself. If the circle doesn't sit exactly on the lens, nudge it here; the blue outline shows where it is while you drag.", 12.5f, text2, false).apply {
+            setPadding(dp(8), dp(8), dp(8), 0)
+        })
+
         col.addView(actionButton("Test the island") {
             val svc = HaloService.instance
             if (svc == null) {
@@ -535,7 +561,7 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun sliderRow(title: String, key: String, def: Int, min: Int, max: Int, unit: String): View {
+    private fun sliderRow(title: String, key: String, def: Int, min: Int, max: Int, unit: String, camera: Boolean = false): View {
         val prefs = Prefs.get(this)
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -560,7 +586,7 @@ class MainActivity : Activity() {
                     v.text = "${p + min}$unit"
                     if (fromUser) {
                         prefs.edit().putInt(key, p + min).apply()
-                        HaloService.instance?.reloadPrefs()
+                        if (camera) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
                     }
                 }
 
