@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.Notification
 import android.app.RemoteInput
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Typeface
@@ -79,11 +78,12 @@ class NotificationActivity : Activity() {
             finish()
             return
         }
-        night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        cardColor = if (night) Color.rgb(23, 23, 23) else Color.rgb(252, 252, 252)
-        bubbleColor = if (night) Color.rgb(44, 44, 48) else Color.rgb(238, 238, 242)
-        text1 = if (night) Color.rgb(250, 250, 250) else Color.rgb(1, 1, 1)
-        text2 = if (night) Color.rgb(158, 158, 158) else Color.rgb(115, 115, 115)
+        // Same black as the island.
+        night = true
+        cardColor = Color.rgb(14, 14, 16)
+        bubbleColor = Color.rgb(36, 36, 40)
+        text1 = Color.rgb(245, 245, 247)
+        text2 = Color.rgb(150, 150, 158)
         setContentView(build(sbn, listener!!))
     }
 

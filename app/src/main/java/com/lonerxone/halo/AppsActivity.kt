@@ -2,7 +2,6 @@ package com.lonerxone.halo
 
 import android.app.Activity
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -24,11 +23,11 @@ class AppsActivity : Activity() {
     @Suppress("UseSwitchCompatOrMaterialCode")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        val text1 = if (night) Color.rgb(250, 250, 250) else Color.rgb(1, 1, 1)
-        val text2 = if (night) Color.rgb(158, 158, 158) else Color.rgb(115, 115, 115)
-        val bgTop = if (night) Color.rgb(44, 46, 58) else Color.rgb(233, 236, 245)
-        val bgBottom = if (night) Color.rgb(18, 18, 23) else Color.rgb(250, 250, 252)
+        val night = true
+        val text1 = Color.rgb(245, 245, 247)
+        val text2 = Color.rgb(150, 150, 158)
+        val bgTop = Color.BLACK
+        val bgBottom = Color.BLACK
 
         val prefs = Prefs.get(this)
         val blocked = Prefs.blocked(this).toMutableSet()
@@ -53,8 +52,8 @@ class AppsActivity : Activity() {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
-                setColor(if (night) Color.argb(22, 255, 255, 255) else Color.WHITE)
-                setStroke(dp(1), if (night) Color.argb(36, 255, 255, 255) else Color.argb(18, 0, 0, 0))
+                setColor(Color.rgb(18, 18, 20))
+                setStroke(dp(1), Color.argb(22, 255, 255, 255))
                 cornerRadius = dp(26).toFloat()
             }
             setPadding(0, dp(6), 0, dp(6))

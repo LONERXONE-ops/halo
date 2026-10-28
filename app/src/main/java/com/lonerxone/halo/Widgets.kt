@@ -61,30 +61,78 @@ class WaveformView(context: Context) : View(context) {
     }
 }
 
-/** Thin rounded track with a filled part, for song and download progress. */
+/**
+ * Thin rounded track with a filled part. When [onSeek] is set it can be dragged:
+ * the bar thickens, a thumb appears, and the position is sent on release.
+ */
+@android.annotation.SuppressLint("ClickableViewAccessibility")
 class ProgressLine(context: Context) : View(context) {
     private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(60, 255, 255, 255) }
     private val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val thumb = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val density = resources.displayMetrics.density
 
     var color: Int = Color.WHITE
         set(value) {
             field = value
             bar.color = value
+            thumb.color = value
             invalidate()
         }
 
     var fraction: Float = 0f
         set(value) {
+            if (dragging) return
             field = value.coerceIn(0f, 1f)
             invalidate()
         }
 
+    /** Called with 0..1 when the user lets go after dragging. */
+    var onSeek: ((Float) -> Unit)? = null
+
+    var dragging = false
+        private set
+
+    override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+        val seek = onSeek ?: return false
+        val f = (e.x / width.coerceAtLeast(1)).coerceIn(0f, 1f)
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                dragging = true
+                setDragFraction(f)
+            }
+            android.view.MotionEvent.ACTION_MOVE -> setDragFraction(f)
+            android.view.MotionEvent.ACTION_UP -> {
+                setDragFraction(f)
+                dragging = false
+                seek(f)
+                invalidate()
+            }
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                dragging = false
+                invalidate()
+            }
+        }
+        return true
+    }
+
+    private var dragValue = 0f
+
+    private fun setDragFraction(f: Float) {
+        dragValue = f
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
-        val h = height.toFloat()
-        val r = h / 2f
-        canvas.drawRoundRect(0f, 0f, width.toFloat(), h, r, r, track)
-        val w = width * fraction
-        if (w > 0.5f) canvas.drawRoundRect(0f, 0f, max(w, h), h, r, r, bar)
+        val shown = if (dragging) dragValue else fraction
+        val th = if (dragging) 6f * density else 4f * density
+        val top = (height - th) / 2f
+        val r = th / 2f
+        canvas.drawRoundRect(0f, top, width.toFloat(), top + th, r, r, track)
+        val w = width * shown
+        if (w > 0.5f) canvas.drawRoundRect(0f, top, max(w, th), top + th, r, r, bar)
+        if (dragging) canvas.drawCircle(w.coerceIn(r, width - r), height / 2f, 7f * density, thumb)
     }
 }
 

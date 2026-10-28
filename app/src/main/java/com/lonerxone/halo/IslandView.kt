@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
@@ -15,10 +14,13 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.os.BatteryManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextUtils
+import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.util.TypedValue
 import android.view.Choreographer
@@ -35,26 +37,28 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.util.Date
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sqrt
 
 /**
- * The island, drawn in a FIXED full-width overlay window (resizing an overlay
- * makes Android stretch the old frame, which caused flicker). Touches come from
- * a separate invisible window that follows the shape; see [HaloService].
+ * The island: a black shape that morphs between a hidden circle on the camera,
+ * a compact pill, and open cards.
  *
- * Proportions follow Smart Island: a 34dp-tall black pill floating just below
- * the top edge, about 123dp wide with content, 22dp round art on the left and
- * three slim bars on the right, springs at damping 0.8 / stiffness 400, and a
- * round "split" bubble to the right for a second live activity.
+ * - Drawn in a fixed full-width window (resizing overlays makes Android stretch
+ *   frames); touches come from a separate window that follows the shape.
+ * - Every visual channel is its own closed-form [Spring], so motion is exact at
+ *   any frame rate and keeps its velocity when interrupted.
+ * - Compact pills size themselves to their content, so nothing gets squeezed
+ *   against the camera.
+ * - Open cards use the space beside the camera (the "camera row") for small
+ *   details: time and battery, the app name, a timer.
  */
 @SuppressLint("ViewConstructor")
 class IslandView(context: Context, private val host: Host) : FrameLayout(context) {
 
     interface Host {
-        /** Where touches should be caught, in screen pixels; null when nothing is touchable. */
         fun setTouchArea(area: Rect?)
         fun openMusicApp(info: MusicInfo)
         fun send(intent: PendingIntent?)
@@ -93,8 +97,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     var sizeScale = 1f
     var offsetX = 0f
     var offsetY = 0f
-    /** 0 = solid black cards, 1 = most see-through glass. */
-    var glassStrength = 0.2f
+    /** 0 = pure black (default), 1 = most see-through. */
+    var glassStrength = 0f
     var artBackdrop = true
     var lowPower = false
     var geometry: Geometry = Geometry(null, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels, dp(24))
@@ -110,14 +114,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var builtKey: String? = null
 
     // ---------- springs ----------
-    // 0 w, 1 h, 2 radius, 3 alpha, 4 glass, 5 shadow, 6 centre y, 7 bubble alpha, 8 bubble size
-    private val n = 9
-    private val cur = FloatArray(n)
-    private val vel = FloatArray(n)
-    private val target = FloatArray(n)
-    private val from = FloatArray(n)
-    private val stiff = FloatArray(n)
-    private var damping = 0.8f
+    // 0 w, 1 h, 2 radius, 3 alpha, 4 glass, 5 shadow, 6 centre y, 7 bubble alpha, 8 bubble size, 9 edge
+    private val springs = Array(10) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8)) 0.4f else 0.002f) }
+    private fun v(i: Int) = springs[i].value
+    private fun t(i: Int) = springs[i].target
+    private val startW = FloatArray(2)
     private var animating = false
     private var lastFrameNanos = 0L
     private val frameCallback = Choreographer.FrameCallback { onFrame(it) }
@@ -125,8 +126,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // ---------- drawing ----------
     private val rect = RectF()
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpf(1f)
     }
@@ -139,13 +139,17 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private val bubbleRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
+        strokeWidth = dpf(2.2f)
     }
     private val bubbleRect = RectF()
     private val matrix = Matrix()
+    private val iconCache = HashMap<Int, Drawable?>()
+    private var bubbleShaderFor: Bitmap? = null
+    private var bubbleShader: BitmapShader? = null
     private var glowColor = 0
     private var glow = 0f
 
-    // ---------- content ----------
+    // ---------- live content references (cleared before every build) ----------
     private var slot: FrameLayout? = null
     private var revealed = true
     private var wave: WaveformView? = null
@@ -159,18 +163,21 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var timerText: TextView? = null
     private var navText: TextView? = null
     private var navSub: TextView? = null
+    private var clockText: TextView? = null
+    private var batteryText: TextView? = null
     private var lastTouch = 0L
 
     private val ticker = object : Runnable {
         override fun run() {
             updateProgress()
             updateTimer()
+            updateClock()
             val idleFor = SystemClock.uptimeMillis() - lastTouch
             if (mode == Mode.PANEL && idleFor > 15_000L) {
                 closePanel()
                 return
             }
-            if (mode == Mode.EXPANDED && expanded && idleFor > 6_000L) {
+            if (mode == Mode.EXPANDED && expanded && idleFor > 7_000L && progress?.dragging != true) {
                 expanded = false
                 refresh()
                 return
@@ -200,7 +207,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         refresh()
     }
 
-    /** Rebuild from scratch, e.g. after rotation or a settings change. */
     fun rebuild() {
         builtKey = null
         refresh()
@@ -211,7 +217,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         when {
             mode == Mode.PANEL -> closePanel()
             content is Content.Note -> IslandStore.dismissNotif()
-            mode == Mode.EXPANDED && expanded -> {
+            mode == Mode.EXPANDED && expanded && progress?.dragging != true -> {
                 expanded = false
                 refresh()
             }
@@ -229,17 +235,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun notchW(): Int = geometry.notch?.width() ?: 0
     private fun notchH(): Int = geometry.notch?.height() ?: 0
     private fun anchorY(): Float = geometry.notch?.exactCenterY() ?: (geometry.statusBarH / 2f)
-    private fun cx(): Float = if (mode == Mode.IDLE) notchCx() else notchCx() + offsetX
+    private fun cx(): Float = if (mode == Mode.IDLE || mode == Mode.HIDDEN) notchCx() else notchCx() + offsetX
 
-    /** The idle circle sits exactly on the camera, so it is invisible until touched. */
     private fun idleD(): Float = if (geometry.notch != null) max(min(notchW(), notchH()).toFloat(), dpf(20f)) else dpf(22f)
     private fun compactH(): Float = dpf(34f) * sizeScale
-    private fun compactW(): Float = max(dpf(123f) * sizeScale, notchW() + dpf(86f))
+    private fun baseCompactW(): Float = max(dpf(123f) * sizeScale, notchW() + dpf(86f))
     private fun expandedW(): Float = min(dpf(372f), geometry.screenW - dpf(16f)) * min(sizeScale, 1.05f)
-    private fun panelMaxH(): Float = geometry.screenH * 0.6f
+    private fun panelMaxH(): Float = geometry.screenH * 0.62f
     private fun gapTop(): Float = dpf(6f)
 
-    /** Centre line: on the camera when idle, otherwise floating just below the top edge. */
     private fun cyFor(m: Mode, h: Float): Float = when (m) {
         Mode.IDLE, Mode.HIDDEN -> anchorY()
         else -> max(anchorY(), gapTop() + h / 2f) + offsetY
@@ -289,12 +293,28 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
+    private fun clearRefs() {
+        wave = null
+        artImage = null
+        playButton = null
+        progress = null
+        ring = null
+        percentText = null
+        elapsedText = null
+        remainText = null
+        timerText = null
+        navText = null
+        navSub = null
+        clockText = null
+        batteryText = null
+    }
+
     private fun refresh() {
         val m = desiredMode()
         val key = m.name + "/" + contentKey(m)
         if (key == builtKey) {
             bindInPlace()
-            animateBubbleOnly()
+            bubbleOnly()
             return
         }
         val previous = mode
@@ -302,47 +322,50 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         builtKey = key
         removeCallbacks(ticker)
         glow = 0f
+        // Clear BEFORE building: the builders below fill these in for the new content.
+        clearRefs()
 
         when (m) {
             Mode.HIDDEN -> {
-                swapContent(null, 0, 0, 0f)
+                swapContent(null, 0, 0, 0f, 0f)
                 val d = idleD()
-                animateTo(d * 0.6f, d * 0.6f, d * 0.3f, 0f, 0f, 0f, cyFor(m, d), grow = false)
+                animateTo(d * 0.6f, d * 0.6f, d * 0.3f, 0f, 0f, 0f, 0f, cyFor(m, d), grow = false)
             }
             Mode.IDLE -> {
-                swapContent(null, 0, 0, 0f)
+                swapContent(null, 0, 0, 0f, 0f)
                 val d = idleD()
-                animateTo(d, d, d / 2f, 1f, 0f, 0f, cyFor(m, d), grow = false)
+                animateTo(d, d, d / 2f, 1f, 0f, 0f, 0f, cyFor(m, d), grow = false)
             }
             Mode.COMPACT -> {
-                val w = compactW()
                 val h = compactH()
-                val view = when (val c = content) {
-                    is Content.Music -> buildCompactMusic(c.info, h.toInt())
-                    is Content.Popup -> buildPop(c.pop).also { glowColor = c.pop.accent; glow = 1f }
-                    is Content.Call -> buildCompactCall(c.call).also { glowColor = Colors.GREEN; glow = 0.8f }
-                    is Content.Timer -> buildCompactTimer(c.timer)
-                    is Content.Transfer -> buildCompactTransfer(c.transfer, h.toInt())
-                    is Content.Nav -> buildCompactNav(c.nav)
-                    else -> null
+                val sides = when (val c = content) {
+                    is Content.Music -> compactMusic(c.info)
+                    is Content.Popup -> compactPop(c.pop).also { glowColor = c.pop.accent; glow = 1f }
+                    is Content.Call -> compactCall().also { glowColor = Colors.GREEN; glow = 0.8f }
+                    is Content.Timer -> compactTimer()
+                    is Content.Transfer -> compactTransfer(c.transfer)
+                    is Content.Nav -> compactNav(c.nav)
+                    else -> Sides(null, null)
                 }
-                swapContent(view, w.toInt(), h.toInt(), h / 2f, cyFor(m, h))
-                animateTo(w, h, h / 2f, 1f, 0f, 0f, cyFor(m, h), grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
+                val w = compactWidthFor(sides)
+                val cy = cyFor(m, h)
+                swapContent(sides.build(), w.toInt(), h.toInt(), h / 2f, cy)
+                animateTo(w, h, h / 2f, 1f, 0f, 0f, 0f, cy, grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
                 if (previous == Mode.EXPANDED || previous == Mode.PANEL || content is Content.Popup) haptic()
             }
             Mode.EXPANDED, Mode.PANEL -> {
                 val w = expandedW()
-                val topGuess = gapTop() + offsetY
+                val top = gapTop() + offsetY
                 val view = if (m == Mode.PANEL) {
-                    buildPanel(w.toInt(), topGuess)
+                    buildPanel(w.toInt(), top)
                 } else {
                     when (val c = content) {
-                        is Content.Music -> buildExpandedMusic(c.info, topGuess)
-                        is Content.Note -> buildNote(c.note, topGuess).also { glowColor = c.note.accent; glow = 0.6f }
-                        is Content.Call -> buildExpandedCall(c.call, topGuess).also { glowColor = Colors.GREEN; glow = 0.9f }
-                        is Content.Timer -> buildExpandedTimer(c.timer, topGuess)
-                        is Content.Transfer -> buildExpandedTransfer(c.transfer, topGuess)
-                        is Content.Nav -> buildExpandedNav(c.nav, topGuess)
+                        is Content.Music -> buildExpandedMusic(c.info, w.toInt(), top)
+                        is Content.Note -> buildNote(c.note, w.toInt(), top).also { glowColor = c.note.accent; glow = 0.5f }
+                        is Content.Call -> buildExpandedCall(c.call, w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.9f }
+                        is Content.Timer -> buildExpandedTimer(c.timer, w.toInt(), top)
+                        is Content.Transfer -> buildExpandedTransfer(c.transfer, w.toInt(), top)
+                        is Content.Nav -> buildExpandedNav(c.nav, w.toInt(), top)
                         else -> View(context)
                     }
                 }
@@ -354,7 +377,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val r = min(dpf(32f), h / 2f)
                 val cy = cyFor(m, h)
                 swapContent(view, w.toInt(), h.toInt(), r, cy)
-                animateTo(w, h, r, 1f, glassStrength, if (lowPower) 0f else 1f, cy, grow = true)
+                animateTo(w, h, r, 1f, glassStrength, if (lowPower) 0f else 1f, 1f, cy, grow = true)
                 lastTouch = SystemClock.uptimeMillis()
                 haptic()
             }
@@ -362,6 +385,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         Debug.island = "mode ${m.name.lowercase()}"
         updateProgress()
         updateTimer()
+        updateClock()
         if (needsTicker()) postDelayed(ticker, 500L)
     }
 
@@ -380,7 +404,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     img.setImageBitmap(info.art)
                 }
                 playButton?.setImageResource(if (info.playing) R.drawable.ic_pause else R.drawable.ic_play)
-                if (mode == Mode.EXPANDED) updateProgress()
+                updateProgress()
             }
             is Content.Transfer -> {
                 val p = c.transfer.progress
@@ -417,16 +441,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         1f
     }
 
-    private fun bubbleTargets() {
-        val showBubble = bubble != null && mode == Mode.COMPACT
-        target[7] = if (showBubble) 1f else 0f
-        target[8] = if (showBubble) compactH() else compactH() * 0.4f
-    }
+    private var k = 400f
+    private var zeta = 0.8f
 
-    private fun animateBubbleOnly() {
-        val before7 = target[7]
-        bubbleTargets()
-        if (before7 != target[7]) {
+    private fun bubbleOnly() {
+        val show = bubble != null && mode == Mode.COMPACT
+        val before = t(7)
+        springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
+        springs[8].to(if (show) compactH() else compactH() * 0.4f, k * 0.8f, 0.85f)
+        if (before != t(7)) {
             updateTouchArea()
             startFrames()
         } else {
@@ -434,46 +457,45 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
-    /** Springs: damping 0.8 growing, 0.9 settling closed, stiffness 400 (scaled by the system animation speed). */
-    private fun animateTo(w: Float, h: Float, r: Float, a: Float, glass: Float, shadow: Float, cy: Float, grow: Boolean) {
-        target[0] = w; target[1] = h; target[2] = r
-        target[3] = a; target[4] = glass; target[5] = shadow; target[6] = cy
-        bubbleTargets()
-        System.arraycopy(cur, 0, from, 0, n)
-        // First appearance: start from the camera instead of from nothing at the top-left.
-        if (from[6] == 0f) {
-            cur[6] = anchorY()
-            from[6] = cur[6]
-        }
+    /**
+     * Opening: damping 0.8 (a small, lively overshoot). Closing: 0.92 (settles
+     * without bounce). Stiffness 400, scaled by the system animation speed.
+     * Width leads height a little for the organic stretch.
+     */
+    private fun animateTo(w: Float, h: Float, r: Float, a: Float, glass: Float, shadow: Float, edge: Float, cy: Float, grow: Boolean) {
+        val scale = animScale()
+        k = if (scale <= 0f) 400f else 400f / (scale * scale)
+        zeta = if (grow) 0.8f else 0.92f
+        // First appearance grows out of the camera.
+        if (springs[6].value == 0f) springs[6].snap(anchorY())
+        startW[0] = v(0)
+        startW[1] = v(1)
+        springs[0].to(w, k * 1.15f, zeta)
+        springs[1].to(h, k, zeta)
+        springs[2].to(r, k, zeta)
+        springs[3].to(a, k * 1.8f, 0.95f)
+        springs[4].to(glass, k, 1f)
+        springs[5].to(shadow, k * 0.8f, 1f)
+        springs[6].to(cy, k, zeta)
+        springs[9].to(edge, k, 1f)
+        val show = bubble != null && mode == Mode.COMPACT
+        springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
+        springs[8].to(if (show) compactH() else compactH() * 0.4f, k * 0.8f, 0.85f)
         updateTouchArea()
 
-        val scale = animScale()
         if (scale <= 0f || !isAttachedToWindow) {
-            System.arraycopy(target, 0, cur, 0, n)
-            vel.fill(0f)
+            for (s in springs) s.snap(s.target)
             Choreographer.getInstance().removeFrameCallback(frameCallback)
             animating = false
             onSettled()
             invalidate()
             return
         }
-        val k = 400f / (scale * scale)
-        damping = if (grow) 0.8f else 0.9f
-        stiff[0] = k * 1.15f
-        stiff[1] = k
-        stiff[2] = k
-        stiff[3] = k * 1.8f
-        stiff[4] = k
-        stiff[5] = k * 0.8f
-        stiff[6] = k
-        stiff[7] = k * 0.8f
-        stiff[8] = k * 0.8f
         startFrames()
     }
 
     private fun startFrames() {
         if (!animating) {
-            if (stiff[0] == 0f) for (i in 0 until n) stiff[i] = 400f
             animating = true
             lastFrameNanos = 0L
             Choreographer.getInstance().postFrameCallback(frameCallback)
@@ -481,49 +503,28 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun onFrame(nanos: Long) {
-        val dt = if (lastFrameNanos == 0L) 1f / 60f else ((nanos - lastFrameNanos) / 1e9f).coerceIn(0f, 0.05f)
+        val dt = if (lastFrameNanos == 0L) 1f / 60f else (nanos - lastFrameNanos) / 1e9f
         lastFrameNanos = nanos
-        var left = dt
-        while (left > 0f) {
-            val step = min(left, 0.004f)
-            for (i in 0 until n) {
-                val k = stiff[i]
-                val c = 2f * damping * sqrt(k)
-                val acc = -k * (cur[i] - target[i]) - c * vel[i]
-                vel[i] += acc * step
-                cur[i] += vel[i] * step
-            }
-            left -= step
-        }
+        var moving = false
+        for (s in springs) if (s.step(dt)) moving = true
         if (!revealed && shapeProgress() >= 0.7f) reveal()
-        slot?.translationY = cur[6] - target[6]
-
-        var done = true
-        for (i in 0 until n) {
-            val tol = if (i <= 2 || i == 6 || i == 8) 0.5f else 0.003f
-            if (abs(cur[i] - target[i]) > tol || abs(vel[i]) > tol * 4f) {
-                done = false
-                break
-            }
-        }
-        if (done) {
-            System.arraycopy(target, 0, cur, 0, n)
-            vel.fill(0f)
+        slot?.translationY = v(6) - t(6)
+        if (moving) {
+            Choreographer.getInstance().postFrameCallback(frameCallback)
+        } else {
             animating = false
             lastFrameNanos = 0L
             slot?.translationY = 0f
             onSettled()
-        } else {
-            Choreographer.getInstance().postFrameCallback(frameCallback)
         }
         invalidate()
     }
 
     private fun shapeProgress(): Float {
-        val dw = target[0] - from[0]
-        val dh = target[1] - from[1]
-        val pw = if (abs(dw) < 1f) 1f else (cur[0] - from[0]) / dw
-        val ph = if (abs(dh) < 1f) 1f else (cur[1] - from[1]) / dh
+        val dw = t(0) - startW[0]
+        val dh = t(1) - startW[1]
+        val pw = if (abs(dw) < 1f) 1f else (v(0) - startW[0]) / dw
+        val ph = if (abs(dh) < 1f) 1f else (v(1) - startW[1]) / dh
         return min(pw, ph)
     }
 
@@ -533,16 +534,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private val touchRect = RectF()
 
-    /** The touch window follows the target shape (and the bubble); it draws nothing. */
     private fun updateTouchArea() {
-        if (mode == Mode.HIDDEN || target[3] <= 0f) {
+        if (mode == Mode.HIDDEN || t(3) <= 0f) {
             host.setTouchArea(null)
             return
         }
-        pillRect(target[0], target[1], target[6], touchRect)
-        if (target[7] > 0.5f) {
-            val d = target[8]
-            touchRect.right = bubbleCenterX(target[0], d) + d / 2f
+        pillRect(t(0), t(1), t(6), touchRect)
+        if (t(7) > 0.5f) {
+            val d = t(8)
+            touchRect.right = bubbleCenterX(t(0), d) + d / 2f
         }
         val extra = if (mode == Mode.IDLE) dpf(10f) else dpf(2f)
         host.setTouchArea(
@@ -556,45 +556,36 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     // =====================================================================
-    // Drawing
+    // Drawing (no allocations per frame)
     // =====================================================================
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val a = cur[3].coerceIn(0f, 1f)
-        if (a <= 0.01f || cur[0] < 1f || cur[1] < 1f) return
-        val w = cur[0]
-        val h = cur[1]
-        pillRect(w, h, cur[6], rect)
-        val r = min(max(cur[2], 0f), h / 2f)
-        val glass = cur[4].coerceIn(0f, 1f)
+        val a = v(3).coerceIn(0f, 1f)
+        if (a <= 0.01f || v(0) < 1f || v(1) < 1f) return
+        val w = v(0)
+        val h = v(1)
+        pillRect(w, h, v(6), rect)
+        val r = min(max(v(2), 0f), h / 2f)
+        val glass = v(4).coerceIn(0f, 1f)
 
-        val shadow = cur[5].coerceIn(0f, 1f)
+        val shadow = v(5).coerceIn(0f, 1f)
         if (shadow > 0.02f) {
-            fillPaint.setShadowLayer(dpf(20f), 0f, dpf(8f), Color.argb((140 * shadow * a).toInt(), 0, 0, 0))
+            fillPaint.setShadowLayer(dpf(22f), 0f, dpf(8f), Color.argb((150 * shadow * a).toInt(), 0, 0, 0))
         } else {
             fillPaint.clearShadowLayer()
         }
-        // Pure black (melts into the camera); open cards get a touch of glass if the user wants it.
-        val fillAlpha = 255 - (90 * glass).toInt()
-        fillPaint.color = Color.argb((fillAlpha * a).toInt(), (14 * glass).toInt(), (14 * glass).toInt(), (18 * glass).toInt())
+        val fillAlpha = 255 - (80 * glass).toInt()
+        fillPaint.color = Color.argb((fillAlpha * a).toInt(), (16 * glass).toInt(), (16 * glass).toInt(), (20 * glass).toInt())
         canvas.drawRoundRect(rect, r, r, fillPaint)
 
-        if (glass > 0.01f) {
-            sheenPaint.shader = LinearGradient(
-                0f, rect.top, 0f, rect.top + min(h, dpf(90f)),
-                Color.argb((26 * glass * a).toInt(), 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP,
-            )
-            canvas.drawRoundRect(rect, r, r, sheenPaint)
-            borderPaint.shader = LinearGradient(
-                0f, rect.top, 0f, rect.bottom,
-                Color.argb((70 * glass * a).toInt(), 255, 255, 255),
-                Color.argb((16 * glass * a).toInt(), 255, 255, 255),
-                Shader.TileMode.CLAMP,
-            )
-            val inset = borderPaint.strokeWidth / 2f
+        // A hairline on open cards so the black card reads against dark wallpapers.
+        val edge = v(9).coerceIn(0f, 1f)
+        if (edge > 0.02f) {
+            edgePaint.color = Color.argb((26 * edge * a).toInt(), 255, 255, 255)
+            val inset = edgePaint.strokeWidth / 2f
             rect.inset(inset, inset)
-            canvas.drawRoundRect(rect, r - inset, r - inset, borderPaint)
+            canvas.drawRoundRect(rect, r - inset, r - inset, edgePaint)
             rect.inset(-inset, -inset)
         }
 
@@ -610,18 +601,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun drawBubble(canvas: Canvas, pillW: Float, a: Float) {
         val b = bubble ?: return
-        val ba = (cur[7] * a).coerceIn(0f, 1f)
+        val ba = (v(7) * a).coerceIn(0f, 1f)
         if (ba <= 0.01f) return
-        val d = cur[8]
+        val d = v(8)
         val bx = bubbleCenterX(pillW, d)
-        val by = cur[6]
+        val by = v(6)
         bubblePaint.alpha = (255 * ba).toInt()
         canvas.drawCircle(bx, by, d / 2f, bubblePaint)
 
         val inner = d / 2f - dpf(5f)
-        if (b.image != null) {
-            val img = b.image
-            val shader = BitmapShader(img, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        val img = b.image
+        if (img != null) {
+            if (bubbleShaderFor !== img) {
+                bubbleShaderFor = img
+                bubbleShader = BitmapShader(img, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            }
+            val shader = bubbleShader ?: return
             val s = (inner * 2f) / min(img.width, img.height)
             matrix.reset()
             matrix.setScale(s, s)
@@ -631,7 +626,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             bubbleImagePaint.alpha = (255 * ba).toInt()
             canvas.drawCircle(bx, by, inner, bubbleImagePaint)
         } else if (b.icon != 0) {
-            val dr = context.getDrawable(b.icon)
+            val dr = iconCache.getOrPut(b.icon) { context.getDrawable(b.icon)?.mutate() }
             if (dr != null) {
                 val half = (inner * 0.8f).toInt()
                 dr.setBounds((bx - half).toInt(), (by - half).toInt(), (bx + half).toInt(), (by + half).toInt())
@@ -641,7 +636,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
         if (b.progress >= 0f) {
-            bubbleRing.strokeWidth = dpf(2.2f)
             bubbleRing.color = b.accent
             bubbleRing.alpha = (255 * ba).toInt()
             val rr = d / 2f - dpf(2f)
@@ -654,23 +648,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // Content swapping
     // =====================================================================
 
-    private fun swapContent(view: View?, w: Int, h: Int, radius: Float, cy: Float = 0f) {
+    private fun swapContent(view: View?, w: Int, h: Int, radius: Float, cy: Float) {
         slot?.let { old ->
             old.animate().cancel()
             old.animate().alpha(0f).scaleX(0.96f).scaleY(0.96f).setDuration(90L).withEndAction { removeView(old) }.start()
         }
         slot = null
-        wave = null
-        artImage = null
-        playButton = null
-        progress = null
-        ring = null
-        percentText = null
-        elapsedText = null
-        remainText = null
-        timerText = null
-        navText = null
-        navSub = null
         if (view == null) {
             revealed = true
             return
@@ -703,13 +686,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     // =====================================================================
-    // Small building blocks
+    // Building blocks
     // =====================================================================
+
+    private val white70 = Color.argb(178, 255, 255, 255)
+    private val white55 = Color.argb(140, 255, 255, 255)
 
     private fun text(sp: Float, color: Int, bold: Boolean): TextView = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
         setTextColor(color)
-        if (bold) setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+        if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         includeFontPadding = false
@@ -739,45 +725,114 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         setColorFilter(tint)
     }
 
-    /** Left / right slots of a compact pill (8dp and 12dp in, like Smart Island). */
-    private fun compactFrame(left: View?, right: View?, leftSize: Int = ViewGroup.LayoutParams.WRAP_CONTENT, rightW: Int = ViewGroup.LayoutParams.WRAP_CONTENT, rightH: Int = ViewGroup.LayoutParams.WRAP_CONTENT): View {
-        val root = FrameLayout(context)
-        if (left != null) {
-            root.addView(left, LayoutParams(leftSize, leftSize, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(8) })
-        }
-        if (right != null) {
-            root.addView(right, LayoutParams(rightW, rightH, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(12) })
-        }
-        return root
+    private fun hRow(vararg views: View): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        for (v in views) addView(v)
     }
 
-    /** Space above card content so nothing sits under the camera. */
-    private fun padTopFor(top: Float): Int {
-        val notchBottom = geometry.notch?.bottom?.toFloat() ?: 0f
-        return max(dp(16), (notchBottom - top + dpf(8f)).toInt())
+    private fun sized(v: View, w: Int, h: Int = w): View = v.apply {
+        layoutParams = LinearLayout.LayoutParams(w, h)
+    }
+
+    private fun spaced(v: TextView, start: Int): TextView = v.apply { setPadding(dp(start), 0, 0, 0) }
+
+    /** Content for a compact pill: one group left of the camera, one right. */
+    private inner class Sides(val left: View?, val right: View?, val leftSize: Int = -1, val rightW: Int = -1, val rightH: Int = -1) {
+        fun build(): View {
+            val root = FrameLayout(context)
+            if (left != null) {
+                val s = if (leftSize > 0) leftSize else ViewGroup.LayoutParams.WRAP_CONTENT
+                root.addView(left, LayoutParams(s, s, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(8) })
+            }
+            if (right != null) {
+                val w = if (rightW > 0) rightW else ViewGroup.LayoutParams.WRAP_CONTENT
+                val h = if (rightH > 0) rightH else ViewGroup.LayoutParams.WRAP_CONTENT
+                root.addView(right, LayoutParams(w, h, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(12) })
+            }
+            return root
+        }
+    }
+
+    private fun widthOf(v: View?, fixed: Int): Int {
+        if (v == null) return 0
+        if (fixed > 0) return fixed
+        v.measure(MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        return v.measuredWidth
+    }
+
+    /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
+    private fun compactWidthFor(s: Sides): Float {
+        val side = max(widthOf(s.left, s.leftSize) + dp(8) + dp(10), widthOf(s.right, s.rightW) + dp(12) + dp(10))
+        return min(max(baseCompactW(), notchW() + 2f * side), expandedW())
+    }
+
+    /**
+     * The strip beside the camera at the top of an open card: [left] and
+     * [right] sit vertically centred on the lens, so that space is used instead
+     * of left empty.
+     */
+    private fun cameraRow(left: View?, right: View?, w: Int, top: Float): View {
+        val n = geometry.notch
+        val centre = if (n != null) max(n.exactCenterY() - top, dpf(12f)) else dpf(14f)
+        val h = max((centre * 2f).toInt(), dp(26))
+        val sideMax = ((w - notchW()) / 2 - dp(26)).coerceAtLeast(dp(60))
+        val row = FrameLayout(context)
+        if (left != null) {
+            if (left is TextView) left.maxWidth = sideMax
+            row.addView(left, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(18) })
+        }
+        if (right != null) {
+            if (right is TextView) right.maxWidth = sideMax
+            row.addView(right, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(18) })
+        }
+        row.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h)
+        return row
+    }
+
+    private fun card(): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+
+    private fun body(): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(18), dp(10), dp(18), dp(18))
     }
 
     private fun pillButton(label: String, bg: Int, fg: Int, action: () -> Unit): TextView = text(13f, fg, true).apply {
         text = label
         gravity = Gravity.CENTER
-        setPadding(dp(16), dp(9), dp(16), dp(9))
+        setPadding(dp(18), dp(10), dp(18), dp(10))
         background = GradientDrawable().apply {
             setColor(bg)
             cornerRadius = dpf(20f)
         }
         setOnClickListener {
             haptic()
+            bounce(it)
             action()
         }
     }
 
+    private fun bounce(v: View) {
+        v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(70L).withEndAction {
+            v.animate().scaleX(1f).scaleY(1f).setDuration(140L).start()
+        }.start()
+    }
+
+    private fun appTag(icon: Bitmap?, name: String, accent: Int): View {
+        val row = hRow()
+        row.addView(sized(roundImage(icon, dpf(5f), accent, R.drawable.ic_note), dp(16)))
+        row.addView(spaced(text(12f, white70, true).apply { text = name; maxWidth = dp(110) }, 6))
+        return row
+    }
+
     // =====================================================================
-    // Compact builders
+    // Compact content
     // =====================================================================
 
-    private fun buildCompactMusic(info: MusicInfo, h: Int): View {
-        val artSize = dp(22)
-        val art = roundImage(info.art, artSize / 2f, info.accent, R.drawable.ic_note)
+    private fun compactMusic(info: MusicInfo): Sides {
+        val art = roundImage(info.art, dpf(11f), info.accent, R.drawable.ic_note)
         artImage = art
         val w = WaveformView(context).apply {
             color = info.accent
@@ -785,77 +840,59 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             still = lowPower
         }
         wave = w
-        return compactFrame(art, w, artSize, dp(13), dp(14))
+        return Sides(art, w, dp(22), dp(13), dp(14))
     }
 
-    private fun buildPop(pop: Pop): View {
-        val left = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        if (pop.icon != 0) left.addView(icon(pop.icon, pop.accent), LinearLayout.LayoutParams(dp(16), dp(16)))
-        left.addView(text(12f, Color.WHITE, true).apply {
-            text = pop.title
-            maxWidth = dp(70)
-            setPadding(dp(5), 0, 0, 0)
-        })
+    private fun compactPop(pop: Pop): Sides {
+        val left = hRow()
+        if (pop.icon != 0) left.addView(sized(icon(pop.icon, pop.accent), dp(16)))
+        left.addView(spaced(text(12.5f, Color.WHITE, true).apply { text = pop.title; maxWidth = dp(110) }, 6))
         val right = text(12.5f, pop.accent, true).apply {
             text = pop.value
-            maxWidth = dp(64)
+            maxWidth = dp(110)
         }
-        return compactFrame(left, right)
+        return Sides(left, right)
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun buildCompactCall(c: CallInfo): View {
+    private fun compactCall(): Sides {
         val t = text(12.5f, Colors.GREEN, true)
         timerText = t
-        return compactFrame(icon(R.drawable.ic_call, Colors.GREEN), t, dp(16))
+        return Sides(icon(R.drawable.ic_call, Colors.GREEN), t, dp(16))
     }
 
-    private fun buildCompactTimer(t: TimerInfo): View {
+    private fun compactTimer(): Sides {
         val tv = text(12.5f, Colors.ORANGE, true)
         timerText = tv
-        return compactFrame(icon(R.drawable.ic_timer, Colors.ORANGE), tv, dp(16))
+        return Sides(icon(R.drawable.ic_timer, Colors.ORANGE), tv, dp(16))
     }
 
-    private fun buildCompactTransfer(t: TransferInfo, h: Int): View {
+    private fun compactTransfer(t: TransferInfo): Sides {
         val r = ProgressRing(context).apply {
             color = Colors.BLUE
             progress = t.progress
         }
         ring = r
-        return compactFrame(roundImage(t.icon, dpf(11f), Colors.BLUE, R.drawable.ic_download), r, dp(22), dp(18), dp(18))
+        return Sides(roundImage(t.icon, dpf(11f), Colors.BLUE, R.drawable.ic_download), r, dp(22), dp(18), dp(18))
     }
 
-    private fun buildCompactNav(nv: NavInfo): View {
-        val arrow = if (nv.arrow != null) {
-            ImageView(context).apply { setImageBitmap(nv.arrow) }
-        } else {
-            icon(R.drawable.ic_nav, Colors.GREEN)
-        }
+    private fun compactNav(nv: NavInfo): Sides {
+        val arrow = if (nv.arrow != null) ImageView(context).apply { setImageBitmap(nv.arrow) } else icon(R.drawable.ic_nav, Colors.GREEN)
         val right = text(12.5f, Color.WHITE, true).apply {
             text = nv.primary
-            maxWidth = dp(70)
+            maxWidth = dp(110)
         }
         navText = right
-        return compactFrame(arrow, right, dp(20))
+        return Sides(arrow, right, dp(20))
     }
 
     // =====================================================================
-    // Expanded builders
+    // Open cards
     // =====================================================================
 
-    private fun cardColumn(top: Float): LinearLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), padTopFor(top), dp(16), dp(16))
-    }
-
-    /** Android-style media card: blurred cover behind, dark scrim, big round play button. */
-    private fun buildExpandedMusic(info: MusicInfo, top: Float): View {
+    /** Media card: blurred cover behind, app beside the camera, big round play button, draggable seek bar. */
+    private fun buildExpandedMusic(info: MusicInfo, w: Int, top: Float): View {
         val root = FrameLayout(context)
-        val useBackdrop = artBackdrop && info.art != null && !lowPower
-        if (useBackdrop) {
+        if (artBackdrop && info.art != null && !lowPower) {
             root.addView(ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 setImageBitmap(BitmapFx.blur(info.art) ?: info.art)
@@ -863,59 +900,44 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             root.addView(View(context).apply {
                 background = GradientDrawable(
                     GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(Color.argb(150, 0, 0, 0), Color.argb(215, 0, 0, 0)),
+                    intArrayOf(Color.argb(170, 0, 0, 0), Color.argb(225, 0, 0, 0)),
                 )
             }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
-        val col = cardColumn(top)
-
-        // App badge row
-        val badgeRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        badgeRow.addView(roundImage(info.appIcon, dpf(6f), info.accent, R.drawable.ic_note), LinearLayout.LayoutParams(dp(20), dp(20)))
-        badgeRow.addView(text(12f, Color.argb(190, 255, 255, 255), false).apply {
-            text = info.appName.ifEmpty { "Now playing" }
-            setPadding(dp(8), 0, 0, 0)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val w = WaveformView(context).apply {
+        val col = card()
+        val wv = WaveformView(context).apply {
             color = info.accent
             playing = info.playing
             still = lowPower
         }
-        badgeRow.addView(w, LinearLayout.LayoutParams(dp(13), dp(14)))
-        wave = w
-        col.addView(badgeRow)
+        wave = wv
+        col.addView(cameraRow(appTag(info.appIcon, info.appName.ifEmpty { "Now playing" }, info.accent), sized(wv, dp(13), dp(14)), w, top))
 
-        // Art, title, play
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val art = roundImage(info.art, dpf(12f), info.accent, R.drawable.ic_note)
+        val b = body()
+        val row = hRow()
+        val art = roundImage(info.art, dpf(14f), info.accent, R.drawable.ic_note)
         art.setOnClickListener { openCurrent() }
         artImage = art
-        row.addView(art, LinearLayout.LayoutParams(dp(48), dp(48)))
+        row.addView(art, LinearLayout.LayoutParams(dp(54), dp(54)))
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(12), 0)
+            setPadding(dp(14), 0, dp(12), 0)
             setOnClickListener { openCurrent() }
         }
-        texts.addView(text(16f, Color.WHITE, true).apply { text = info.title })
-        texts.addView(text(13f, Color.argb(178, 255, 255, 255), false).apply {
+        texts.addView(text(16.5f, Color.WHITE, true).apply { text = info.title })
+        texts.addView(text(13.5f, white70, false).apply {
             text = info.artist
-            setPadding(0, dp(3), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val play = ImageView(context).apply {
             setImageResource(if (info.playing) R.drawable.ic_pause else R.drawable.ic_play)
             setColorFilter(Color.BLACK)
-            val pad = dp(12)
+            val pad = dp(13)
             setPadding(pad, pad, pad, pad)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(info.accent)
+                setColor(Color.WHITE)
             }
             setOnClickListener {
                 haptic()
@@ -926,33 +948,37 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
         playButton = play
-        row.addView(play, LinearLayout.LayoutParams(dp(48), dp(48)))
-        col.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+        row.addView(play, LinearLayout.LayoutParams(dp(50), dp(50)))
+        b.addView(row)
 
-        // prev | seek | next
-        val seekRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+        val seekRow = hRow()
         seekRow.addView(iconButton(R.drawable.ic_prev) { currentMusic()?.controller?.transportControls?.skipToPrevious() })
         val mid = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        val bar = ProgressLine(context).apply { color = Color.WHITE }
-        mid.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)).apply { topMargin = dp(12) })
+        val bar = ProgressLine(context).apply {
+            color = Color.WHITE
+            onSeek = { f ->
+                haptic()
+                val m = currentMusic()
+                if (m != null && m.durationMs > 0) m.controller?.transportControls?.seekTo((f * m.durationMs).toLong())
+            }
+        }
+        mid.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(22)).apply { topMargin = dp(4) })
         progress = bar
         val times = FrameLayout(context)
-        val el = text(10f, Color.argb(160, 255, 255, 255), false)
-        val rem = text(10f, Color.argb(160, 255, 255, 255), false)
+        val el = text(10.5f, white55, false)
+        val rem = text(10.5f, white55, false)
         times.addView(el, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START))
         times.addView(rem, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END))
-        mid.addView(times, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
+        mid.addView(times)
         elapsedText = el
         remainText = rem
         seekRow.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(4)
-            marginEnd = dp(4)
+            marginStart = dp(6)
+            marginEnd = dp(6)
         })
         seekRow.addView(iconButton(R.drawable.ic_next) { currentMusic()?.controller?.transportControls?.skipToNext() })
-        col.addView(seekRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        b.addView(seekRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        col.addView(b)
 
         root.addView(col, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         return root
@@ -971,61 +997,47 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
-    private fun bounce(v: View) {
-        v.animate().scaleX(0.86f).scaleY(0.86f).setDuration(70L).withEndAction {
-            v.animate().scaleX(1f).scaleY(1f).setDuration(140L).start()
-        }.start()
-    }
-
-    private fun buildNote(nf: NotifInfo, top: Float): View {
-        val col = cardColumn(top)
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(roundImage(nf.icon, dpf(12f), nf.accent, R.drawable.ic_check), LinearLayout.LayoutParams(dp(42), dp(42)))
+    private fun buildNote(nf: NotifInfo, w: Int, top: Float): View {
+        val col = card()
+        col.addView(cameraRow(appTag(nf.icon, nf.appName, nf.accent), text(11.5f, white55, false).apply { text = "now" }, w, top))
+        val b = body()
+        val row = hRow()
+        row.addView(roundImage(nf.icon, dpf(13f), nf.accent, R.drawable.ic_check), LinearLayout.LayoutParams(dp(44), dp(44)))
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, 0, 0)
+            setPadding(dp(14), 0, 0, 0)
         }
-        val head = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        head.addView(text(15f, Color.WHITE, true).apply { text = nf.title }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(text(11f, Color.argb(140, 255, 255, 255), false).apply {
-            text = nf.appName
-            setPadding(dp(8), 0, 0, 0)
-        })
-        texts.addView(head)
-        texts.addView(text(13.5f, Color.argb(205, 255, 255, 255), false).apply {
+        texts.addView(text(15.5f, Color.WHITE, true).apply { text = nf.title })
+        texts.addView(text(14f, Color.argb(210, 255, 255, 255), false).apply {
             text = nf.text
             maxLines = 2
-            setPadding(0, dp(4), 0, 0)
+            setLineSpacing(0f, 1.1f)
+            setPadding(0, dp(5), 0, 0)
         })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        col.addView(row)
+        b.addView(row)
+        col.addView(b)
         return col
     }
 
-    private fun buildExpandedCall(c: CallInfo, top: Float): View {
-        val col = cardColumn(top)
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(roundImage(c.avatar, dpf(22f), Colors.GREEN, R.drawable.ic_call), LinearLayout.LayoutParams(dp(44), dp(44)))
+    private fun buildExpandedCall(c: CallInfo, w: Int, top: Float): View {
+        val col = card()
+        val tag = hRow(sized(icon(R.drawable.ic_call, Colors.GREEN), dp(14)), spaced(text(12f, white70, true).apply { text = "Phone" }, 6))
+        val timer = text(12.5f, Colors.GREEN, true)
+        timerText = timer
+        col.addView(cameraRow(tag, timer, w, top))
+        val b = body()
+        val row = hRow()
+        row.addView(roundImage(c.avatar, dpf(23f), Colors.GREEN, R.drawable.ic_call), LinearLayout.LayoutParams(dp(46), dp(46)))
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(8), 0)
+            setPadding(dp(14), 0, dp(8), 0)
         }
-        texts.addView(text(16f, Color.WHITE, true).apply { text = c.name })
-        val sub = text(12.5f, Color.argb(166, 255, 255, 255), false).apply {
-            text = if (c.ringing) "Incoming call" else c.detail
-            setPadding(0, dp(3), 0, 0)
-        }
-        texts.addView(sub)
-        if (!c.ringing) timerText = sub
+        texts.addView(text(17f, Color.WHITE, true).apply { text = c.name })
+        texts.addView(text(13f, white70, false).apply {
+            text = if (c.ringing) "Incoming call" else c.detail.ifEmpty { "On call" }
+            setPadding(0, dp(4), 0, 0)
+        })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (c.hangUp != null) row.addView(roundButton(R.drawable.ic_call_end, Colors.RED) { host.send(c.hangUp) })
         if (c.ringing && c.answer != null) {
@@ -1033,20 +1045,21 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 (layoutParams as LinearLayout.LayoutParams).marginStart = dp(12)
             })
         }
-        col.addView(row)
+        b.addView(row)
+        col.addView(b)
         return col
     }
 
     private fun roundButton(icon: Int, color: Int, action: () -> Unit): ImageView = ImageView(context).apply {
         setImageResource(icon)
         setColorFilter(Color.WHITE)
-        val pad = dp(10)
+        val pad = dp(11)
         setPadding(pad, pad, pad, pad)
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(color)
         }
-        layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
         setOnClickListener {
             haptic()
             bounce(it)
@@ -1054,81 +1067,64 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
-    private fun buildExpandedTimer(t: TimerInfo, top: Float): View {
-        val col = cardColumn(top)
-        val head = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        head.addView(icon(R.drawable.ic_timer, Colors.ORANGE), LinearLayout.LayoutParams(dp(18), dp(18)))
-        head.addView(text(13f, Color.argb(190, 255, 255, 255), false).apply {
-            text = t.label
-            setPadding(dp(8), 0, 0, 0)
-        })
-        col.addView(head)
-        val big = text(40f, Colors.ORANGE, false).apply {
+    private fun buildExpandedTimer(t: TimerInfo, w: Int, top: Float): View {
+        val col = card()
+        val tag = hRow(sized(icon(R.drawable.ic_timer, Colors.ORANGE), dp(14)), spaced(text(12f, white70, true).apply { text = t.label }, 6))
+        col.addView(cameraRow(tag, text(12f, white55, false).apply { text = if (t.countDown) "Timer" else "Stopwatch" }, w, top))
+        val b = body()
+        val big = text(44f, Colors.ORANGE, false).apply {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-            setPadding(0, dp(6), 0, dp(6))
+            setPadding(0, 0, 0, dp(10))
         }
         timerText = big
-        col.addView(big)
+        b.addView(big)
         if (t.actions.isNotEmpty()) {
             val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
             for ((label, pi) in t.actions) {
-                row.addView(pillButton(label, Color.argb(40, 255, 255, 255), Color.WHITE) { host.send(pi) },
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
+                row.addView(
+                    pillButton(label, Color.argb(42, 255, 255, 255), Color.WHITE) { host.send(pi) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(10) },
+                )
             }
-            col.addView(row)
+            b.addView(row)
         }
+        col.addView(b)
         return col
     }
 
-    private fun buildExpandedTransfer(t: TransferInfo, top: Float): View {
-        val col = cardColumn(top)
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        row.addView(roundImage(t.icon, dpf(10f), Colors.BLUE, R.drawable.ic_download), LinearLayout.LayoutParams(dp(40), dp(40)))
-        val texts = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), 0, dp(8), 0)
-        }
-        texts.addView(text(15f, Color.WHITE, true).apply { text = t.title })
-        texts.addView(text(12f, Color.argb(160, 255, 255, 255), false).apply {
-            text = t.appName
-            setPadding(0, dp(3), 0, 0)
-        })
-        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val pct = text(14f, Colors.BLUE, true).apply { text = if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else "" }
+    private fun buildExpandedTransfer(t: TransferInfo, w: Int, top: Float): View {
+        val col = card()
+        val pct = text(12.5f, Colors.BLUE, true).apply { text = if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else "" }
         percentText = pct
-        row.addView(pct)
-        col.addView(row)
+        col.addView(cameraRow(appTag(t.icon, t.appName, Colors.BLUE), pct, w, top))
+        val b = body()
+        b.addView(text(15.5f, Color.WHITE, true).apply { text = t.title })
         val bar = ProgressLine(context).apply {
             color = Colors.BLUE
             fraction = max(0f, t.progress)
         }
         progress = bar
-        col.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(5)).apply { topMargin = dp(14) })
+        b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)).apply { topMargin = dp(10) })
+        col.addView(b)
         return col
     }
 
-    private fun buildExpandedNav(nv: NavInfo, top: Float): View {
-        val col = cardColumn(top)
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
+    private fun buildExpandedNav(nv: NavInfo, w: Int, top: Float): View {
+        val col = card()
+        val tag = hRow(sized(icon(R.drawable.ic_nav, Colors.GREEN), dp(14)), spaced(text(12f, white70, true).apply { text = "Maps" }, 6))
+        col.addView(cameraRow(tag, null, w, top))
+        val b = body()
+        val row = hRow()
         val arrow = if (nv.arrow != null) ImageView(context).apply { setImageBitmap(nv.arrow) } else icon(R.drawable.ic_nav, Colors.GREEN)
-        row.addView(arrow, LinearLayout.LayoutParams(dp(44), dp(44)))
+        row.addView(arrow, LinearLayout.LayoutParams(dp(46), dp(46)))
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), 0, 0, 0)
         }
-        val main = text(19f, Color.WHITE, true).apply { text = nv.primary }
+        val main = text(20f, Color.WHITE, true).apply { text = nv.primary }
         navText = main
         texts.addView(main)
-        val sub = text(13f, Color.argb(178, 255, 255, 255), false).apply {
+        val sub = text(13.5f, white70, false).apply {
             text = nv.secondary
             maxLines = 2
             setPadding(0, dp(4), 0, 0)
@@ -1136,67 +1132,82 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         navSub = sub
         texts.addView(sub)
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        col.addView(row)
+        b.addView(row)
+        col.addView(b)
         return col
     }
 
+    /** Opened from the camera: time and battery beside the lens, then your notifications. */
     private fun buildPanel(w: Int, top: Float): View {
         val items = host.panelItems()
-        val col = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), padTopFor(top), dp(12), dp(12))
-        }
+        val col = card()
+
+        val clock = text(15f, Color.WHITE, true)
+        clockText = clock
+        val battery = hRow()
+        val batt = text(13f, Color.WHITE, true)
+        batteryText = batt
+        battery.addView(sized(icon(R.drawable.ic_battery_full, Color.WHITE).apply { tag = "batt" }, dp(15)))
+        battery.addView(spaced(batt, 4))
+        col.addView(cameraRow(clock, battery, w, top))
+
         val header = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(6), 0, 0, dp(4))
+            setPadding(dp(18), dp(6), dp(10), dp(2))
         }
-        header.addView(text(15f, Color.WHITE, true).apply { text = "Notifications" })
-        header.addView(text(13f, Color.argb(130, 255, 255, 255), false).apply {
+        header.addView(text(16f, Color.WHITE, true).apply { text = "Notifications" })
+        header.addView(text(13f, white55, false).apply {
             text = if (items.isEmpty()) "" else "  ${items.size}"
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_close)
             setColorFilter(Color.argb(200, 255, 255, 255))
-            val pad = dp(6)
+            val pad = dp(7)
             setPadding(pad, pad, pad, pad)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(34, 255, 255, 255))
+            }
             setOnClickListener {
                 haptic()
                 closePanel()
             }
-        }, LinearLayout.LayoutParams(dp(32), dp(32)))
+        }, LinearLayout.LayoutParams(dp(30), dp(30)))
         col.addView(header)
 
-        val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val list = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, dp(12), dp(12))
+        }
         if (items.isEmpty()) {
-            list.addView(text(13.5f, Color.argb(150, 255, 255, 255), false).apply {
+            list.addView(text(14f, white55, false).apply {
                 text = "You're all caught up"
                 gravity = Gravity.CENTER
-                setPadding(0, dp(18), 0, dp(18))
+                setPadding(0, dp(22), 0, dp(22))
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         for (item in items) list.addView(panelCard(item))
-        val inner = w - dp(24)
-        list.measure(MeasureSpec.makeMeasureSpec(inner, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
-        header.measure(MeasureSpec.makeMeasureSpec(inner, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
-        val room = (panelMaxH() - padTopFor(top) - dp(12) - header.measuredHeight).toInt()
+        list.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        col.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        val room = (panelMaxH() - col.measuredHeight).toInt()
         val scroll = ScrollView(context).apply {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             isFillViewport = true
             addView(list)
         }
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, max(room, dp(80)))))
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, max(room, dp(90)))))
         return col
     }
 
     private fun panelCard(item: PanelItem): View {
-        val card = LinearLayout(context).apply {
+        val cardView = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(11), dp(12), dp(11))
+            setPadding(dp(14), dp(13), dp(14), dp(13))
             background = GradientDrawable().apply {
-                setColor(Color.argb(28, 255, 255, 255))
+                setColor(Color.argb(24, 255, 255, 255))
                 cornerRadius = dpf(22f)
             }
             setOnClickListener {
@@ -1206,34 +1217,29 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 host.openDetail(item.key)
             }
         }
-        card.addView(roundImage(item.icon, dpf(10f), item.accent, R.drawable.ic_check), LinearLayout.LayoutParams(dp(38), dp(38)))
+        cardView.addView(roundImage(item.icon, dpf(11f), item.accent, R.drawable.ic_check), LinearLayout.LayoutParams(dp(40), dp(40)))
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(11), 0, 0, 0)
+            setPadding(dp(13), 0, 0, 0)
         }
-        val head = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        head.addView(text(14f, Color.WHITE, true).apply { text = item.title }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val head = hRow()
+        head.addView(text(14.5f, Color.WHITE, true).apply { text = item.title }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val ago = DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
-        head.addView(text(11f, Color.argb(130, 255, 255, 255), false).apply {
-            text = if (item.canReply) "$ago · Reply" else ago
-            setPadding(dp(8), 0, 0, 0)
-        })
+        head.addView(spaced(text(11f, white55, false).apply { text = ago }, 10))
         texts.addView(head)
-        texts.addView(text(12.5f, Color.argb(190, 255, 255, 255), false).apply {
+        texts.addView(text(13f, Color.argb(200, 255, 255, 255), false).apply {
             text = item.text
             maxLines = 2
-            setPadding(0, dp(3), 0, 0)
-        })
-        texts.addView(text(10.5f, Color.argb(110, 255, 255, 255), false).apply {
-            text = item.appName
+            setLineSpacing(0f, 1.1f)
             setPadding(0, dp(4), 0, 0)
         })
-        card.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        card.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
-        return card
+        texts.addView(text(11f, white55, false).apply {
+            text = if (item.canReply) "${item.appName}  ·  Tap to reply" else item.appName
+            setPadding(0, dp(6), 0, 0)
+        })
+        cardView.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        return cardView
     }
 
     // =====================================================================
@@ -1262,10 +1268,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun updateProgress() {
         val m = currentMusic() ?: return
-        if (mode != Mode.EXPANDED) return
+        val bar = progress ?: return
         val pos = m.currentPosition()
         val dur = m.durationMs
-        progress?.fraction = if (dur > 0) pos.toFloat() / dur else 0f
+        bar.fraction = if (dur > 0) pos.toFloat() / dur else 0f
         elapsedText?.text = fmt(pos)
         remainText?.text = if (dur > 0) "-" + fmt(max(0L, dur - pos)) else ""
     }
@@ -1290,6 +1296,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
+    private fun updateClock() {
+        clockText?.text = DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm", Date())
+        val bt = batteryText ?: return
+        val bm = context.getSystemService(BatteryManager::class.java) ?: return
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val charging = bm.isCharging
+        bt.text = "$pct%"
+        val color = when {
+            charging -> Colors.GREEN
+            pct <= 15 -> Colors.ORANGE
+            else -> Color.WHITE
+        }
+        bt.setTextColor(color)
+        ((bt.parent as? ViewGroup)?.findViewWithTag<ImageView>("batt"))?.let { img ->
+            img.setImageResource(if (charging) R.drawable.ic_bolt else if (pct <= 15) R.drawable.ic_battery_low else R.drawable.ic_battery_full)
+            img.setColorFilter(color)
+        }
+    }
+
     private fun fmt(ms: Long): String {
         val s = max(0L, ms) / 1000
         return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s / 60) % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
@@ -1304,13 +1329,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun onBubble(x: Float, y: Float): Boolean {
-        if (bubble == null) return false
-        if (cur[7] < 0.5f) return false
-        val d = cur[8]
-        val bx = bubbleCenterX(cur[0], d)
-        val dx = x - bx
-        val dy = y - cur[6]
-        return dx * dx + dy * dy <= (d / 2f + dpf(4f)) * (d / 2f + dpf(4f))
+        if (bubble == null || v(7) < 0.5f) return false
+        val d = v(8)
+        val dx = x - bubbleCenterX(v(0), d)
+        val dy = y - v(6)
+        val r = d / 2f + dpf(4f)
+        return dx * dx + dy * dy <= r * r
     }
 
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
@@ -1382,10 +1406,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                pillRect(cur[0], cur[1], cur[6], rect)
+                pillRect(v(0), v(1), v(6), rect)
                 pivotX = rect.centerX()
                 pivotY = rect.centerY()
-                if (mode != Mode.PANEL && mode != Mode.EXPANDED) animate().scaleX(0.96f).scaleY(0.96f).setDuration(80L).start()
+                if (mode == Mode.COMPACT || mode == Mode.IDLE) animate().scaleX(0.96f).scaleY(0.96f).setDuration(80L).start()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 animate().scaleX(1f).scaleY(1f).setDuration(180L).start()

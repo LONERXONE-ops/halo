@@ -3,8 +3,6 @@ package com.lonerxone.halo
 import android.Manifest
 import android.app.Activity
 import android.app.NotificationManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -91,19 +89,20 @@ class MainActivity : Activity() {
     // =====================================================================
 
     private fun render() {
-        night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        bgTop = if (night) Color.rgb(46, 48, 62) else Color.rgb(232, 235, 246)
-        bgBottom = if (night) Color.rgb(17, 17, 22) else Color.rgb(250, 250, 253)
-        cardFill = if (night) Color.argb(24, 255, 255, 255) else Color.WHITE
-        cardStroke = if (night) Color.argb(38, 255, 255, 255) else Color.argb(18, 0, 0, 0)
-        text1 = if (night) Color.rgb(246, 246, 250) else Color.rgb(18, 18, 24)
-        text2 = if (night) Color.rgb(160, 162, 176) else Color.rgb(110, 112, 124)
-        divider = if (night) Color.argb(26, 255, 255, 255) else Color.argb(14, 0, 0, 0)
-        accent = if (night) Colors.LAVENDER else Color.rgb(74, 91, 212)
+        // Always black: the look Halo started with, refined.
+        night = true
+        bgTop = Color.BLACK
+        bgBottom = Color.BLACK
+        cardFill = Color.rgb(18, 18, 20)
+        cardStroke = Color.argb(22, 255, 255, 255)
+        text1 = Color.rgb(245, 245, 247)
+        text2 = Color.rgb(150, 150, 158)
+        divider = Color.argb(18, 255, 255, 255)
+        accent = Colors.BLUE
 
         window.decorView.setBackgroundColor(bgBottom)
         window.insetsController?.setSystemBarsAppearance(
-            if (night) 0 else WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            0,
             WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
         )
 
@@ -118,7 +117,8 @@ class MainActivity : Activity() {
             gravity = Gravity.BOTTOM
             setPadding(dp(10), 0, dp(10), dp(22))
         }
-        header.addView(label("Halo", 38f, text1, true))
+        header.addView(label("Halo", 40f, text1, true))
+        header.addView(label("Dynamic island for Android", 14f, text2, false).apply { setPadding(0, dp(2), 0, 0) })
         val running = HaloService.instance != null
         header.addView(chip(if (running) "● Active" else "○ Not running", if (running) Colors.GREEN else text2).apply {
             (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(8)
@@ -153,7 +153,7 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         })
         setup.addView(line())
-        setup.addView(statusRow("Battery: unrestricted", "Stops One UI from closing Halo", batteryOk()) {
+        setup.addView(statusRow("Battery: unrestricted", "Stops the system closing Halo", batteryOk()) {
             try {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
             } catch (_: Exception) {
@@ -208,7 +208,7 @@ class MainActivity : Activity() {
         look.addView(line())
         look.addView(sliderRow("Island size", Prefs.SCALE, 100, 80, 130, "%"))
         look.addView(line())
-        look.addView(sliderRow("Glass strength", Prefs.GLASS, 20, 0, 100, "%"))
+        look.addView(sliderRow("Glass strength", Prefs.GLASS, 0, 0, 100, "%"))
         look.addView(line())
         look.addView(sliderRow("Move left / right", Prefs.OFFSET_X, 0, -60, 60, "dp"))
         look.addView(line())
@@ -228,38 +228,19 @@ class MainActivity : Activity() {
             if (svc == null) {
                 Toast.makeText(this, "Island service isn't running. Turn Halo off and on in Accessibility.", Toast.LENGTH_LONG).show()
             } else {
-                IslandStore.showPop("Halo", "Ready", Colors.LAVENDER, R.drawable.ic_check, 2_500L)
+                IslandStore.showPop("Halo", "Ready", Colors.BLUE, R.drawable.ic_check, 2_500L)
                 Toast.makeText(this, "Sent · " + svc.diagnostics(), Toast.LENGTH_LONG).show()
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(18) })
 
-        // ADB
-        col.addView(sectionTitle("ADB setup (Termux)"))
-        val adb = card()
-        val cmds = adbCommands()
-        adb.addView(label(cmds, 11f, text1, false).apply {
-            typeface = Typeface.MONOSPACE
-            setTextIsSelectable(true)
-            setPadding(dp(20), dp(16), dp(20), dp(8))
-        })
-        adb.addView(actionButton("Copy commands") {
-            getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Halo ADB", cmds))
-            Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply {
-            gravity = Gravity.END
-            marginEnd = dp(14)
-            bottomMargin = dp(12)
-        })
-        col.addView(adb)
-
         // About
         col.addView(sectionTitle("About"))
         val about = card()
-        about.addView(infoRow("Built for", "Galaxy A06 · One UI 8"))
+        about.addView(infoRow("Works on", "Android 11 and newer. Tuned for Samsung One UI, where it feels most at home."))
         about.addView(line())
         about.addView(infoRow("Privacy", "Halo never reads your screen. Everything stays on your phone, except the update check with GitHub."))
         about.addView(line())
-        about.addView(infoRow("Design", "Inspired by Smart Island (agupta07505, GPL-3.0). Halo's code is its own."))
+        about.addView(infoRow("Thanks", "Ideas from Smart Island, Island and Islandify, open-source islands worth a look. Halo's code is its own."))
         col.addView(about)
 
         val scroll = ScrollView(this).apply {
@@ -420,24 +401,6 @@ class MainActivity : Activity() {
         "0"
     }
 
-    private fun adbCommands(): String {
-        val pkg = packageName
-        return """
-            PKG=$pkg
-            adb shell appops set ${'$'}PKG ACCESS_RESTRICTED_SETTINGS allow
-            adb shell cmd notification allow_listener ${'$'}PKG/${'$'}PKG.HaloNotificationListener
-            A=${'$'}(adb shell settings get secure enabled_accessibility_services)
-            [ "${'$'}A" = "null" ] && A=""
-            adb shell settings put secure enabled_accessibility_services "${'$'}{A:+${'$'}A:}${'$'}PKG/${'$'}PKG.HaloService"
-            adb shell settings put secure accessibility_enabled 1
-            adb shell cmd deviceidle whitelist +${'$'}PKG
-            adb shell cmd appops set ${'$'}PKG RUN_ANY_IN_BACKGROUND allow
-            adb shell appops set ${'$'}PKG REQUEST_INSTALL_PACKAGES allow
-            for P in READ_PHONE_STATE ANSWER_PHONE_CALLS BLUETOOTH_CONNECT POST_NOTIFICATIONS; do adb shell pm grant ${'$'}PKG android.permission.${'$'}P; done
-            adb shell cmd notification allow_dnd ${'$'}PKG
-        """.trimIndent()
-    }
-
     // =====================================================================
     // Building blocks (Smart Island style)
     // =====================================================================
@@ -460,7 +423,7 @@ class MainActivity : Activity() {
     }
 
     private fun actionButton(t: String, onClick: () -> Unit): TextView =
-        label(t, 14f, if (night) Color.rgb(20, 22, 40) else Color.WHITE, true).apply {
+        label(t, 14f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
             setPadding(dp(18), 0, dp(18), 0)
             background = GradientDrawable().apply {

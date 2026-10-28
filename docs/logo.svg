@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="216" height="216">
+  <defs>
+    <radialGradient id="bg" cx="54" cy="44" r="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1B1D29"/><stop offset="0.55" stop-color="#0A0A10"/><stop offset="1" stop-color="#000"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="26" y1="54" x2="82" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A99CFF"/><stop offset="0.5" stop-color="#5AA2FF"/><stop offset="1" stop-color="#45E0D4"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="26" y1="54" x2="82" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8C7CFF"/><stop offset="0.5" stop-color="#3E91FF"/><stop offset="1" stop-color="#2FD3C8"/>
+    </linearGradient>
+    <linearGradient id="cover" x1="38" y1="50" x2="47" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB347"/><stop offset="1" stop-color="#FF5E8E"/>
+    </linearGradient>
+    <clipPath id="sq"><rect width="108" height="108" rx="26"/></clipPath>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect width="108" height="108" fill="url(#bg)"/>
+    <path d="M41,39h26a15,15 0 0 1 0,30h-26a15,15 0 0 1 0,-30z" fill="none" stroke="url(#glow)" stroke-width="7" stroke-opacity="0.22"/>
+    <path d="M41,39h26a15,15 0 0 1 0,30h-26a15,15 0 0 1 0,-30z" fill="none" stroke="url(#ring)" stroke-width="1.8"/>
+    <path d="M42,45h24a9,9 0 0 1 0,18h-24a9,9 0 0 1 0,-18z" fill="#000" stroke="#26262E" stroke-width="1"/>
+    <circle cx="42.5" cy="54" r="4.5" fill="url(#cover)"/>
+    <path d="M63,52.2v3.6M66.4,50.6v6.8M69.8,52.8v2.4" stroke="#FF6B9A" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+</svg>

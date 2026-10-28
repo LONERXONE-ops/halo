@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.app.NotificationManager
+import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.media.AudioManager
 import android.app.PendingIntent
@@ -269,7 +270,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val d = resources.displayMetrics.density
         v.offsetX = p.getInt(Prefs.OFFSET_X, 0) * d
         v.offsetY = p.getInt(Prefs.OFFSET_Y, 0) * d
-        v.glassStrength = p.getInt(Prefs.GLASS, 20) / 100f
+        v.glassStrength = p.getInt(Prefs.GLASS, 0) / 100f
         v.artBackdrop = p.getBoolean(Prefs.ART_BACKDROP, true)
         v.lowPower = p.getBoolean(Prefs.LOW_POWER, false)
     }
@@ -378,23 +379,31 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
     }
 
+    /**
+     * Only real listening devices count: bonded (paired) audio gear such as
+     * earbuds, headphones and car kits. Plain Bluetooth links (watches, tags,
+     * background scans) used to trigger a bogus "Connected" pop.
+     */
     @Suppress("DEPRECATION")
     private fun onBluetooth(i: Intent) {
         if (!popsOn()) return
-        val now = System.currentTimeMillis()
-        if (now - lastBt < 4_000L) return
-        lastBt = now
-        val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val device: BluetoothDevice = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
         } else {
             i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-        }
-        val name = try {
-            device?.name
+        }) ?: return
+        val info = try {
+            val bonded = device.bondState == BluetoothDevice.BOND_BONDED
+            val major = device.bluetoothClass?.majorDeviceClass
+            val audio = major == BluetoothClass.Device.Major.AUDIO_VIDEO || major == BluetoothClass.Device.Major.WEARABLE
+            if (bonded && audio) device.name else null
         } catch (_: SecurityException) {
             null
-        } ?: "Device"
-        IslandStore.showPop("Connected", name.take(14), Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+        } ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastBt < 8_000L) return
+        lastBt = now
+        IslandStore.showPop("Connected", info.take(18), Colors.BLUE, R.drawable.ic_headphones, 3_000L)
     }
 
     private fun onDnd() {
