@@ -764,9 +764,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     companion object {
         var instance: HaloService? = null
+            private set
+
         /** How long a flashlight pill stays before settling back into the camera. */
         private const val SETTLE_MS = 12_000L
-            private set
 
         private const val ACTION_BT_BATTERY = "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"
         private const val EXTRA_BT_BATTERY = "android.bluetooth.device.extra.BATTERY_LEVEL"
