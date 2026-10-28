@@ -380,7 +380,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
         val alert = main is IslandView.Content.Call || main is IslandView.Content.Note || main is IslandView.Content.Popup
         val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
-        val hide = locked || landscape || hideFs
+        // Landscape is fine: the camera is on the side then, so the island sits at
+        // the top centre (CameraFinder ignores cutouts that aren't on the top edge).
+        val hide = locked || hideFs
         // Nothing else running beside the pill? Show a small bell there so the
         // notification panel stays one tap away while music (or a timer) plays.
         val bubble = second?.let { bubbleFor(it) } ?: if (
@@ -394,7 +396,6 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.setState(main, bubble, hide)
         val reasons = buildList {
             if (locked) add("locked")
-            if (landscape) add("landscape")
             if (hideFs) add("fullscreen")
         }
         Debug.island = "on · ${v.mode.name.lowercase()}" + if (reasons.isEmpty()) "" else " · hidden: ${reasons.joinToString()}"
@@ -567,7 +568,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
             }
         } catch (_: Throwable) {
         }
-        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        val land = screenW > screenH
+        val id = resources.getIdentifier(if (land) "status_bar_height_landscape" else "status_bar_height", "dimen", "android")
+            .takeIf { it > 0 } ?: resources.getIdentifier("status_bar_height", "dimen", "android")
         val sb = if (id > 0) resources.getDimensionPixelSize(id) else (24 * dm.density).toInt()
         // The display's cutout first; if a phone reports nothing there, ask the
         // overlay window's insets (some skins only fill one of the two).
