@@ -1,0 +1,59 @@
+name: Build Halo
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Restore signing key
+        run: base64 -d app/halo.keystore.b64 > app/halo.keystore
+
+      - name: Build APK
+        run: |
+          set -o pipefail
+          touch build.log
+          gradle :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Publish release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          V="0.1.${{ github.run_number }}"
+          cp app/build/outputs/apk/release/app-release.apk "Halo-$V.apk"
+          gh release create "v$V" "Halo-$V.apk" --title "Halo $V" --notes "${NOTES:-Manual build}"
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          touch build.log
+          {
+            echo '```'
+            grep -nE "^e: |error:|What went wrong|FAILURE|Could not" build.log | head -80
+            echo '--- last lines ---'
+            tail -60 build.log
+            echo '```'
+          } > report.md
+          gh issue create --title "Build failed: run ${{ github.run_number }}" --body-file report.md
