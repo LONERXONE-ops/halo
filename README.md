@@ -40,6 +40,7 @@
 | **Split bubble** | Two things at once (say a timer while music plays): the second one sits in a circle beside the pill. With only one, a small bell sits there instead and opens the notification center. |
 | **Charging** | A pop when you plug in; tap it for the charging card: big percentage, wattage, time to full and temperature. |
 | **Flashlight** | Shows on the island for a few seconds, then settles back into the camera. Tap the camera: a Flashlight chip switches it off. |
+| **Halo handles pop-ups** | Optional: switch off Android's own pop-up banners so new notifications only show on the island (they still reach your shade and still ring). Needs a one-time ADB unlock, explained in the app; banners come back by themselves if the island stops. |
 | **Pictures** | Put your own picture inside the island (wide) and behind the notification center (tall), with a dimming slider so text stays readable. |
 | **Look** | White and grey on black, everywhere. Only charging stays green, and the answer / hang-up buttons keep their colours. |
 | **Little pops** | Fully charged, low battery, silent / vibrate / ring, earbuds connected (with their battery), Do Not Disturb, Wi-Fi, airplane mode, power saving. |

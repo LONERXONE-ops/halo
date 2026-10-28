@@ -566,9 +566,21 @@ class HaloNotificationListener : NotificationListenerService() {
         def
     }
 
-    /** Splits a notification into chat parts: title, sender, text, photo, image, count. */
-    @Suppress("DEPRECATION")
+    /** Parsed notifications, so opening the notification center doesn't decode every photo again. */
+    private val richCache = object : LinkedHashMap<String, Rich>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Rich>?) = size > 60
+    }
+
+    /** Splits a notification into chat parts (cached per version of the notification). */
     fun richOf(sbn: StatusBarNotification, hideText: Boolean): Rich {
+        val ex = sbn.notification.extras
+        val k = "${sbn.key}|${sbn.postTime}|$hideText|${ex?.getCharSequence(Notification.EXTRA_TEXT)?.hashCode()}"
+        richCache[k]?.let { return it }
+        return parseRich(sbn, hideText).also { richCache[k] = it }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun parseRich(sbn: StatusBarNotification, hideText: Boolean): Rich {
         val n = sbn.notification
         val ex = n.extras ?: Bundle()
         val msgs = try {
@@ -628,8 +640,15 @@ class HaloNotificationListener : NotificationListenerService() {
         )
     }
 
-    /** How many notifications the panel would show (cheap: no icons). */
+    private val countNow = Runnable { countNotifications() }
+
+    /** How many notifications the panel would show; bursts of posts are counted once. */
     fun refreshCount() {
+        handler.removeCallbacks(countNow)
+        handler.postDelayed(countNow, 150L)
+    }
+
+    private fun countNotifications() {
         val all: Array<StatusBarNotification> = try {
             activeNotifications ?: emptyArray<StatusBarNotification>()
         } catch (_: Exception) {

@@ -147,7 +147,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // ---------- springs ----------
     // 0 w, 1 h, 2 radius, 3 alpha, 4 glass, 5 shadow, 6 centre y, 7 bubble alpha, 8 bubble size, 9 edge
     // 10 = the x the pill is centred on (before it is kept on screen).
-    private val springs = Array(11) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8, 10)) 0.4f else 0.002f) }
+    // 11 = how much of the music cover shows (0 = your island picture, 1 = the cover).
+    private val springs = Array(12) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8, 10)) 0.4f else 0.002f) }
     private fun v(i: Int) = springs[i].value
     private fun t(i: Int) = springs[i].target
     private val startW = FloatArray(2)
@@ -347,7 +348,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             (c is Content.Popup && c.pop.kind == "charge")
 
     private fun needsTicker() =
-        mode == Mode.EXPANDED || mode == Mode.PANEL || content is Content.Call || content is Content.Timer
+        mode != Mode.HIDDEN && (mode == Mode.EXPANDED || mode == Mode.PANEL || content is Content.Call || content is Content.Timer)
 
     private fun desiredMode(): Mode {
         if (hidden) return Mode.HIDDEN
@@ -412,7 +413,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         glow = 0f
         // Clear BEFORE building: the builders below fill these in for the new content.
         clearRefs()
-        if (content !is Content.Music || m == Mode.PANEL) Beat.ensure(context, false)
+        // The beat listener only runs while the bars are actually on screen.
+        if (content !is Content.Music || m == Mode.PANEL || m == Mode.HIDDEN) Beat.ensure(context, false)
 
         when (m) {
             Mode.HIDDEN -> {
@@ -490,6 +492,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 wave?.playing = info.playing
                 wave?.color = Colors.INK
                 Beat.ensure(context, info.playing && !lowPower)
+                if (mode == Mode.EXPANDED) {
+                    setCover(info)
+                    springs[11].to(coverTarget(), k * 0.22f, 1f)
+                    startFrames()
+                }
                 if (info.art != null) artImage?.let { img ->
                     img.background = null
                     img.clearColorFilter()
@@ -553,12 +560,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /**
      * Opening: damping 0.8 (a small, lively overshoot). Closing: 0.92 (settles
-     * without bounce). Stiffness 400, scaled by the system animation speed.
+     * without bounce). Stiffness 460, scaled by the system animation speed.
      * Width leads height a little for the organic stretch.
      */
     private fun animateTo(w: Float, h: Float, r: Float, a: Float, glass: Float, shadow: Float, edge: Float, cy: Float, grow: Boolean) {
         val scale = animScale()
-        k = if (scale <= 0f) 400f else 400f / (scale * scale)
+        k = if (scale <= 0f) 460f else 460f / (scale * scale)
         zeta = if (grow) 0.8f else 0.92f
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
@@ -574,6 +581,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[5].to(shadow, k * 0.8f, 1f)
         springs[6].to(cy, k, zeta)
         springs[10].to(anchorXFor(mode), k, zeta)
+        // The cover fades in slowly and calmly (no bounce), so your picture and the
+        // cover blend through each other instead of swapping.
+        springs[11].to(coverTarget(), k * 0.22f, 1f)
         springs[9].to(edge, k, 1f)
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
@@ -604,7 +614,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         lastFrameNanos = nanos
         var moving = false
         for (s in springs) if (s.step(dt)) moving = true
-        if (!revealed && shapeProgress() >= 0.7f) reveal()
+        if (!revealed && shapeProgress() >= 0.6f) reveal()
         slot?.translationY = v(6) - t(6)
         if (moving) {
             Choreographer.getInstance().postFrameCallback(frameCallback)
@@ -710,22 +720,100 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      */
     private fun drawPicture(canvas: Canvas, r: Float, a: Float) {
         if (mode == Mode.IDLE || mode == Mode.HIDDEN) return
-        val panel = mode == Mode.PANEL
-        val shader = (if (panel) panelShader else islandShader) ?: return
-        val bmp = (if (panel) panelPic else islandPic) ?: return
         val grow = ((rect.height() - idleD()) / max(1f, compactH() - idleD())).coerceIn(0f, 1f)
         val f = a * grow
         if (f <= 0.01f) return
+        if (mode == Mode.PANEL) {
+            val sh = panelShader ?: return
+            val bmp = panelPic ?: return
+            paintCropped(canvas, sh, bmp, r, f)
+            dim(canvas, r, picDim * f)
+            return
+        }
+        // Your island picture underneath...
+        val mix = v(11).coerceIn(0f, 1f)
+        val ish = islandShader
+        val ibmp = islandPic
+        if (ish != null && ibmp != null) {
+            paintCropped(canvas, ish, ibmp, r, f)
+            dim(canvas, r, picDim * f * (1f - mix))
+        }
+        // ...and the music cover washing in over it.
+        val csh = coverShader
+        val cbmp = coverBlur
+        val wash = coverWash
+        if (mix > 0.01f && csh != null && cbmp != null && wash != null) {
+            paintCropped(canvas, csh, cbmp, r, f * mix)
+            coverMatrix.reset()
+            coverMatrix.setScale(1f, rect.height())
+            coverMatrix.postTranslate(0f, rect.top)
+            wash.setLocalMatrix(coverMatrix)
+            washPaint.shader = wash
+            washPaint.alpha = (255 * f * mix).toInt()
+            canvas.drawRoundRect(rect, r, r, washPaint)
+        }
+    }
+
+    private fun paintCropped(canvas: Canvas, shader: BitmapShader, bmp: Bitmap, r: Float, alpha: Float) {
         val s = max(rect.width() / bmp.width, rect.height() / bmp.height)
         picMatrix.reset()
         picMatrix.setScale(s, s)
         picMatrix.postTranslate(rect.centerX() - bmp.width * s / 2f, rect.centerY() - bmp.height * s / 2f)
         shader.setLocalMatrix(picMatrix)
         picPaint.shader = shader
-        picPaint.alpha = (255 * f).toInt()
+        picPaint.alpha = (255 * alpha).toInt().coerceIn(0, 255)
         canvas.drawRoundRect(rect, r, r, picPaint)
-        dimPaint.color = Color.argb((255 * picDim * f).toInt(), 0, 0, 0)
+    }
+
+    private fun dim(canvas: Canvas, r: Float, amount: Float) {
+        if (amount <= 0.01f) return
+        dimPaint.color = Color.argb((255 * amount).toInt().coerceIn(0, 255), 0, 0, 0)
         canvas.drawRoundRect(rect, r, r, dimPaint)
+    }
+
+    // ----- Music cover backdrop -----
+    private var coverKey: String? = null
+    private var coverBlur: Bitmap? = null
+    private var coverShader: BitmapShader? = null
+    private var coverWash: android.graphics.LinearGradient? = null
+    private val coverMatrix = Matrix()
+    private val washPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** Blurs the cover once per song and builds its colour wash (cover tint into black). */
+    private fun setCover(info: MusicInfo) {
+        if (!artBackdrop || lowPower || info.art == null) {
+            coverKey = null
+            coverBlur = null
+            coverShader = null
+            return
+        }
+        if (coverKey == info.trackKey && coverBlur != null) return
+        val blur = BitmapFx.blur(info.art) ?: return
+        coverKey = info.trackKey
+        coverBlur = blur
+        coverShader = BitmapShader(blur, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        val c = info.accent
+        // A unit-height gradient, stretched to the card each frame (no per-frame allocation).
+        coverWash = android.graphics.LinearGradient(
+            0f, 0f, 0f, 1f,
+            intArrayOf(
+                Color.argb(120, Color.red(c) / 3, Color.green(c) / 3, Color.blue(c) / 3),
+                Color.argb(165, 0, 0, 0),
+                Color.argb(225, 0, 0, 0),
+            ),
+            floatArrayOf(0f, 0.55f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+    }
+
+    /**
+     * How much cover to show. In the open player it's all cover, or, with your
+     * own island picture set, a blend that keeps a hint of your picture.
+     */
+    private fun coverTarget(): Float {
+        val music = content is Content.Music && mode == Mode.EXPANDED && coverBlur != null
+        if (!music) return 0f
+        return if (islandPic != null) 0.8f else 1f
     }
 
     private val previewPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1067,24 +1155,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun buildExpandedMusic(info: MusicInfo, w: Int, top: Float): View {
         Beat.ensure(context, info.playing && !lowPower)
         val root = FrameLayout(context)
-        if (artBackdrop && info.art != null && !lowPower) {
-            root.addView(ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setImageBitmap(BitmapFx.blur(info.art) ?: info.art)
-            }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-            // The cover's own colour washes down into black, so each song tints the card.
-            val c = info.accent
-            root.addView(View(context).apply {
-                background = GradientDrawable(
-                    GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(
-                        Color.argb(120, Color.red(c) / 3, Color.green(c) / 3, Color.blue(c) / 3),
-                        Color.argb(165, 0, 0, 0),
-                        Color.argb(225, 0, 0, 0),
-                    ),
-                )
-            }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        }
+        // The blurred cover is drawn by the island itself (see drawPicture), so it
+        // can cross-fade with your island picture as the card opens.
+        setCover(info)
         val col = card()
         val wv = WaveformView(context).apply {
             color = Colors.INK

@@ -91,7 +91,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     return
                 }
                 PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
-                    // Battery saver on the phone = Halo's low-power look too.
+                    // Battery saver: slower clock updates (the look stays the same).
                     island?.let {
                         applyPrefs(it)
                         it.rebuild()
@@ -140,6 +140,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
         watchTorch()
         watchWifi()
+        PopupControl.sync(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -168,6 +169,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
     }
 
     private fun teardown() {
+        // Never leave the phone without pop-ups when the island isn't there to show them.
+        PopupControl.release(this)
+        main.removeCallbacks(settle)
         IslandStore.removeListener(storeListener)
         try {
             unregisterReceiver(receiver)

@@ -348,6 +348,84 @@ class MainActivity : Activity() {
                 startActivity(Intent(this, AppsActivity::class.java))
             },
         ))
+
+        col.addView(sectionTitle("Pop-ups"))
+        col.addView(takeoverCard())
+    }
+
+    /**
+     * "Halo handles pop-ups": Android's own banners off, the island shows new
+     * notifications instead. Needs a one-time ADB grant; until then the card
+     * explains how, with the command ready to copy.
+     */
+    private fun takeoverCard(): View {
+        if (PopupControl.canControl(this)) {
+            val prefs = Prefs.get(this)
+            val row = rowBase("Halo handles pop-ups", "Android's own banners stay off; new notifications show on the island. They still go to your shade and still make sound.")
+            val sw = Switch(this).apply {
+                val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+                thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, Color.rgb(170, 170, 176)))
+                trackTintList = ColorStateList(states, intArrayOf(Color.rgb(120, 120, 128), Color.rgb(58, 58, 62)))
+                isChecked = prefs.getBoolean(Prefs.TAKEOVER, false) && !PopupControl.systemPopupsOn(this@MainActivity)
+                setOnCheckedChangeListener { _, on ->
+                    prefs.edit().putBoolean(Prefs.TAKEOVER, on).apply()
+                    // Only take over while the island is actually running.
+                    PopupControl.apply(this@MainActivity, on && HaloService.instance != null)
+                    if (on && HaloService.instance == null) {
+                        Toast.makeText(this@MainActivity, "Turn on the island first; Halo takes over once it's running.", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            row.addView(sw)
+            row.setOnClickListener { sw.toggle() }
+            return group(row, infoRow("Good to know", "If the island stops (or you turn Halo off in Accessibility), Android's banners come straight back. Turn this off before uninstalling Halo."))
+        }
+        // Not unlocked yet: one-time setup.
+        val c = card().apply { setPadding(dp(20), dp(16), dp(20), dp(18)) }
+        c.addView(label("Halo handles pop-ups", 16f, text1, true))
+        c.addView(label(
+            "Turn off Android's own pop-up banners so new notifications only show on the island. Android only lets an app change this after a one-time unlock over ADB (the same wireless debugging you used before). Run this once in Termux:",
+            12.5f, text2, false,
+        ).apply {
+            setLineSpacing(0f, 1.2f)
+            setPadding(0, dp(4), 0, dp(12))
+        })
+        c.addView(label(PopupControl.GRANT, 12f, text1, false).apply {
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                setColor(Color.BLACK)
+                setStroke(dp(1), Color.argb(30, 255, 255, 255))
+                cornerRadius = dp(14).toFloat()
+            }
+        })
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        buttons.addView(actionButton("Copy command") {
+            val cm = getSystemService(android.content.ClipboardManager::class.java)
+            cm?.setPrimaryClip(android.content.ClipData.newPlainText("Halo", PopupControl.GRANT))
+            Toast.makeText(this, "Copied. Paste it in Termux after adb connect.", Toast.LENGTH_SHORT).show()
+        }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        buttons.addView(label("I've done it", 14f, text1, true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Colors.GRAPHITE)
+                cornerRadius = dp(24).toFloat()
+            }
+            isClickable = true
+            setOnClickListener {
+                if (PopupControl.canControl(this@MainActivity)) {
+                    render()
+                } else {
+                    Toast.makeText(this@MainActivity, "Not unlocked yet. Check the command ran without errors.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(10) })
+        c.addView(buttons)
+        return c
     }
 
     private fun lookPage(col: LinearLayout) {

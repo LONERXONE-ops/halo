@@ -333,6 +333,8 @@ object Prefs {
     const val PIC_DIM = "pic_dim"
     /** Music bars follow the real sound (needs the microphone permission for Android's visualizer). */
     const val BEAT = "beat"
+    /** Halo shows new notifications instead of Android's own pop-up banners. */
+    const val TAKEOVER = "takeover"
 
     fun picFile(c: Context, key: String): java.io.File = java.io.File(c.filesDir, "$key.jpg")
 
