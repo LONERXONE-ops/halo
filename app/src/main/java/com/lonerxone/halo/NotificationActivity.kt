@@ -98,7 +98,7 @@ class NotificationActivity : Activity() {
         val n = sbn.notification
         val ex = n.extras ?: Bundle()
         val app = listener.appName(sbn.packageName)
-        val title = listener.titleOf(ex).ifEmpty { app }
+        val title = listener.richOf(sbn, false).title.ifEmpty { app }
         val icon = listener.iconBitmap(n.getLargeIcon()) ?: listener.appIcon(sbn.packageName)
         val accent = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) {
             HaloNotificationListener.brighten(n.color)
@@ -243,6 +243,28 @@ class NotificationActivity : Activity() {
             s.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
         }
 
+        // The app's other buttons (Like, Mute, Archive, Call back...).
+        val extras = n.actions?.filter { a ->
+            a !== replyAction && a !== readAction && a.actionIntent != null && !a.title.isNullOrBlank()
+        }.orEmpty()
+        if (extras.isNotEmpty()) {
+            val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for (a in extras.take(3)) {
+                chips.addView(label(a.title.toString(), 13.5f, text1, true).apply {
+                    setPadding(dp(14), dp(8), dp(14), dp(8))
+                    background = GradientDrawable().apply {
+                        setColor(bubbleColor)
+                        cornerRadius = dp(16).toFloat()
+                    }
+                    setOnClickListener {
+                        Launch.send(this@NotificationActivity, a.actionIntent)
+                        close()
+                    }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) })
+            }
+            s.addView(chips, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+        }
+
         // Actions
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -259,18 +281,15 @@ class NotificationActivity : Activity() {
             })
         }
         action("Open") {
-            try {
-                n.contentIntent?.send()
-            } catch (_: Exception) {
-            }
+            // Opens the exact chat; falls back to the app itself.
+            if (!Launch.send(this, n.contentIntent)) Launch.openApp(this, sbn.packageName)
+            // Tapping a notification in the shade clears it; do the same here.
+            if ((n.flags and Notification.FLAG_AUTO_CANCEL) != 0) listener.dismiss(sbn.key)
             close()
         }
         if (readAction != null) {
             action("Mark as read") {
-                try {
-                    readAction.actionIntent?.send()
-                } catch (_: Exception) {
-                }
+                Launch.send(this, readAction.actionIntent)
                 close()
             }
         }
@@ -339,8 +358,7 @@ class NotificationActivity : Activity() {
         val results = Bundle()
         for (ri in inputs) results.putCharSequence(ri.resultKey, text)
         RemoteInput.addResultsToIntent(inputs, data, results)
-        action.actionIntent.send(this, 0, data)
-        true
+        Launch.send(this, action.actionIntent, data)
     } catch (_: Exception) {
         false
     }

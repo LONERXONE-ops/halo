@@ -604,17 +604,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
     }
 
     override fun send(intent: PendingIntent?) {
-        intent ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val opts = ActivityOptions.makeBasic()
-                    .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
-                intent.send(this, 0, null, null, null, null, opts.toBundle())
-            } else {
-                intent.send()
-            }
-        } catch (_: Exception) {
-        }
+        Launch.send(this, intent)
+    }
+
+    override fun dismissNotification(key: String) {
+        HaloNotificationListener.instance?.dismiss(key)
     }
 
     override fun openMusicApp(info: MusicInfo) {

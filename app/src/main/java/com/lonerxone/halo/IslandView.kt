@@ -66,6 +66,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         fun panelItems(): List<PanelItem>
         fun clearAll()
         fun torchOff()
+        fun dismissNotification(key: String)
     }
 
     enum class Mode { HIDDEN, IDLE, COMPACT, EXPANDED, PANEL }
@@ -1504,7 +1505,65 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         cardView.addView(meta)
         cardView.addView(messageRow(item.rich, item.accent, big = false), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(9) })
         cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        swipeToDismiss(cardView) { host.dismissNotification(item.key) }
         return cardView
+    }
+
+    /** Drag a card sideways to dismiss it; a plain tap still opens it. */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun swipeToDismiss(view: View, onDismiss: () -> Unit) {
+        val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+        var downX = 0f
+        var downY = 0f
+        var dragging = false
+        view.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX
+                    downY = e.rawY
+                    dragging = false
+                    v.isPressed = true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX
+                    val dy = e.rawY - downY
+                    if (!dragging && abs(dx) > slop && abs(dx) > abs(dy) * 1.3f) {
+                        dragging = true
+                        v.isPressed = false
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (dragging) {
+                        v.translationX = dx
+                        v.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1)).coerceIn(0.2f, 1f)
+                    } else if (abs(dy) > slop) {
+                        v.isPressed = false
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.isPressed = false
+                    val dx = e.rawX - downX
+                    if (dragging && abs(dx) > v.width * 0.33f) {
+                        haptic()
+                        v.animate().translationX(if (dx > 0) v.width.toFloat() else -v.width.toFloat()).alpha(0f).setDuration(160L)
+                            .withEndAction {
+                                onDismiss()
+                                (v.parent as? ViewGroup)?.removeView(v)
+                            }.start()
+                    } else if (dragging) {
+                        v.animate().translationX(0f).alpha(1f).setDuration(180L).start()
+                    } else if (abs(e.rawY - downY) < slop) {
+                        v.performClick()
+                    }
+                    dragging = false
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    v.animate().translationX(0f).alpha(1f).setDuration(180L).start()
+                    dragging = false
+                }
+            }
+            true
+        }
     }
 
     // =====================================================================
@@ -1633,6 +1692,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
 
         override fun onLongPress(e: MotionEvent) {
+            val c = content
+            if (c is Content.Note) {
+                haptic()
+                IslandStore.dismissNotif()
+                host.send(c.note.contentIntent)
+                return
+            }
             when {
                 mode == Mode.COMPACT && canExpand(content) -> openCurrent()
                 mode == Mode.COMPACT || mode == Mode.IDLE -> openPanel()
