@@ -292,6 +292,13 @@ class HaloNotificationListener : NotificationListenerService() {
             if (answer == null) answer = n.actions.last().actionIntent
         }
 
+        if (ringing) {
+            quietReason(rankingOf(sbn))?.let {
+                Debug.lastNotification = "call: ${name.ifEmpty { "unknown" }} (silenced: $it)"
+                return
+            }
+        }
+
         val avatar = iconBitmap(n.getLargeIcon())
         IslandStore.setCall(
             CallInfo(
@@ -413,12 +420,23 @@ class HaloNotificationListener : NotificationListenerService() {
         if (sbn.isOngoing) return skip("ongoing (progress, service)")
         if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return skip("group summary")
 
-        val ranking = Ranking()
-        if (currentRanking?.getRanking(sbn.key, ranking) == true) {
-            if (ranking.importance in 1 until NotificationManager.IMPORTANCE_DEFAULT) return skip("silent notification")
+        // Follow the phone's own rules: Do Not Disturb (and its exceptions,
+        // like starred contacts), silent or blocked channels, paused apps.
+        val ranking = rankingOf(sbn)
+        quietReason(ranking)?.let { return skip(it) }
+        if (ranking != null && ranking.importance in 1 until NotificationManager.IMPORTANCE_DEFAULT) return skip("silent notification")
+
+        // Lock screen privacy: hidden notifications stay hidden, private ones lose their text.
+        var hideText = prefs.getBoolean(Prefs.HIDE_TEXT, false)
+        if (isLocked()) {
+            if (!secureFlag("lock_screen_show_notifications", true)) return skip("lock screen notifications off")
+            val override = ranking?.lockscreenVisibilityOverride ?: NotificationManager.VISIBILITY_NO_OVERRIDE
+            val vis = if (override != NotificationManager.VISIBILITY_NO_OVERRIDE) override else n.visibility
+            if (vis == Notification.VISIBILITY_SECRET) return skip("hidden on lock screen")
+            if (vis == Notification.VISIBILITY_PRIVATE || !secureFlag("lock_screen_allow_private_notifications", true)) hideText = true
         }
 
-        val rich = richOf(sbn, prefs.getBoolean(Prefs.HIDE_TEXT, false))
+        val rich = richOf(sbn, hideText)
         val title = rich.title
         val text = rich.text
         if (title.isEmpty() && text.isEmpty()) return skip("no text")
@@ -512,6 +530,37 @@ class HaloNotificationListener : NotificationListenerService() {
                 )
             }
             .toList()
+    }
+
+    private fun rankingOf(sbn: StatusBarNotification): Ranking? = try {
+        val r = Ranking()
+        if (currentRanking?.getRanking(sbn.key, r) == true) r else null
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Why the phone would keep this quiet right now, or null if it may pop up. */
+    private fun quietReason(r: Ranking?): String? {
+        if (r == null) {
+            return if (currentInterruptionFilter > INTERRUPTION_FILTER_ALL) "Do Not Disturb" else null
+        }
+        if (!r.matchesInterruptionFilter()) return "Do Not Disturb"
+        if (r.importance == NotificationManager.IMPORTANCE_NONE) return "channel turned off"
+        if (r.isSuspended) return "app paused"
+        return null
+    }
+
+    private fun isLocked(): Boolean = try {
+        getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Reads an on/off system setting, falling back to [def] when the phone doesn't share it. */
+    private fun secureFlag(name: String, def: Boolean): Boolean = try {
+        android.provider.Settings.Secure.getInt(contentResolver, name, if (def) 1 else 0) != 0
+    } catch (_: Exception) {
+        def
     }
 
     /** Splits a notification into chat parts: title, sender, text, photo, image, count. */

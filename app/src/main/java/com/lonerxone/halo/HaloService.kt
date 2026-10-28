@@ -91,6 +91,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     return
                 }
                 PowerManager.ACTION_POWER_SAVE_MODE_CHANGED -> {
+                    // Battery saver on the phone = Halo's low-power look too.
+                    island?.let {
+                        applyPrefs(it)
+                        it.rebuild()
+                    }
                     if (connectivityOn()) {
                         val on = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
                         IslandStore.showPop("Power saving", if (on) "On" else "Off", Colors.GREEN, R.drawable.ic_leaf, 2_200L)
@@ -318,7 +323,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.offsetY = p.getInt(Prefs.OFFSET_Y, 0) * d
         v.glassStrength = p.getInt(Prefs.GLASS, 0) / 100f
         v.artBackdrop = p.getBoolean(Prefs.ART_BACKDROP, true)
-        v.lowPower = p.getBoolean(Prefs.LOW_POWER, false)
+        v.lowPower = p.getBoolean(Prefs.LOW_POWER, false) ||
+            getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
     }
 
     /** Called by the settings screen after a change. */
@@ -463,7 +469,15 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (now - lastBt < 8_000L) return
         lastBt = now
         lastBudsName = info
+        if (dndOn()) return
         IslandStore.showPop("Connected", info.take(18), Colors.BLUE, R.drawable.ic_headphones, 3_000L)
+    }
+
+    /** Do Not Disturb is on: background news (Wi-Fi, earbuds) waits; things you just did still show. */
+    private fun dndOn(): Boolean = try {
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).currentInterruptionFilter > NotificationManager.INTERRUPTION_FILTER_ALL
+    } catch (_: Exception) {
+        false
     }
 
     private fun connectivityOn() = popsOn() && Prefs.get(this).getBoolean(Prefs.CONNECTIVITY, true)
@@ -498,7 +512,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         override fun onAvailable(network: Network) {
             val now = System.currentTimeMillis()
             // The callback fires straight away for the current network; that is not news.
-            if (now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn()) return
+            if (now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn() || dndOn()) return
             lastWifi = now
             IslandStore.showPop("Wi-Fi", "Connected", Colors.BLUE, R.drawable.ic_wifi, 2_200L)
         }
@@ -521,7 +535,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (!popsOn()) return
         val level = i.getIntExtra(EXTRA_BT_BATTERY, -1)
         if (level !in 0..100) return
-        if (System.currentTimeMillis() - lastBt > 20_000L) return
+        if (System.currentTimeMillis() - lastBt > 20_000L || dndOn()) return
         val name = lastBudsName ?: return
         IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.ORANGE else Colors.BLUE, R.drawable.ic_headphones, 3_000L)
         lastBudsName = null
