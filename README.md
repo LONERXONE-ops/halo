@@ -28,10 +28,10 @@
 | | |
 |---|---|
 | **Camera circle** | At rest, Halo is a black circle sitting exactly on your camera, so you don't see it. Tap the camera to open it. |
-| **Notification panel** | Tap the camera: the island drops down with the time and battery beside the lens and your notifications underneath. Scroll, tap one to read it. |
+| **Notification center** | Tap the camera (or the bell beside the pill): date and time beside the lens, battery up top, a mini music player, then your notifications. Scroll, tap one to read it, or Clear all. |
 | **Reply sheet** | Opening a notification shows the whole chat (WhatsApp, Telegram, SMS…) with a reply box, plus Open, Mark as read and Dismiss. |
 | **Music** | Cover on the left, bouncing bars on the right. Tap for the full player: blurred cover behind, big play button, a seek bar you can drag. Swipe sideways to skip. |
-| **Messages** | New messages drop down as a banner for a few seconds. Banking and OTP apps are off by default. |
+| **Messages** | Drawn like a chat: contact or group photo with the app badge, who said what in groups, unread count, image previews, and Reply / Mark as read right on the banner. Banking and OTP apps are off by default. |
 | **Calls** | Caller and a live timer; tap for end call (and answer while ringing). |
 | **Timers** | Countdown or stopwatch from the Clock app, with its Pause / Cancel buttons. |
 | **Downloads** | A progress ring for downloads, uploads and app installs, and a "Done" pop at the end. |
@@ -65,6 +65,10 @@ Touch anywhere else on the screen and an open island retracts.
 
 Every push to `main` builds a signed APK with GitHub Actions and publishes it as a release.
 Kotlin, plain Android views, no extra libraries. `minSdk 30`, `targetSdk 35`.
+
+## Made by
+
+**Wisdom** ([LONERXONE-ops](https://github.com/LONERXONE-ops)). Issues and ideas welcome.
 
 ## Thanks
 

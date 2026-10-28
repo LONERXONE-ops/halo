@@ -236,12 +236,36 @@ class MainActivity : Activity() {
         // About
         col.addView(sectionTitle("About"))
         val about = card()
+        about.addView(infoRow("Creator", "Wisdom (LONERXONE-ops)"))
+        about.addView(line())
         about.addView(infoRow("Works on", "Android 11 and newer. Tuned for Samsung One UI, where it feels most at home."))
         about.addView(line())
         about.addView(infoRow("Privacy", "Halo never reads your screen. Everything stays on your phone, except the update check with GitHub."))
         about.addView(line())
         about.addView(infoRow("Thanks", "Ideas from Smart Island, Island and Islandify, open-source islands worth a look. Halo's code is its own."))
         col.addView(about)
+
+        // Credit
+        val credit = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(30), 0, dp(10))
+        }
+        credit.addView(label("Made by Wisdom", 15f, text1, true).apply { gravity = Gravity.CENTER })
+        credit.addView(label("Halo v${version()} · open source", 12.5f, text2, false).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(12))
+        })
+        credit.addView(chip("github.com/LONERXONE-ops/halo", accent).apply {
+            isClickable = true
+            setOnClickListener {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/LONERXONE-ops/halo")))
+                } catch (_: Exception) {
+                }
+            }
+        })
+        col.addView(credit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true

@@ -327,7 +327,17 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val alert = main is IslandView.Content.Call || main is IslandView.Content.Note || main is IslandView.Content.Popup
         val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
         val hide = locked || landscape || hideFs
-        v.setState(main, second?.let { bubbleFor(it) }, hide)
+        // Nothing else running beside the pill? Show a small bell there so the
+        // notification panel stays one tap away while music (or a timer) plays.
+        val bubble = second?.let { bubbleFor(it) } ?: if (
+            main !is IslandView.Content.None && main !is IslandView.Content.Note && main !is IslandView.Content.Popup &&
+            IslandStore.notifCount > 0 && p.getBoolean(Prefs.NOTIFS, true)
+        ) {
+            IslandView.Bubble("bell", null, R.drawable.ic_bell, android.graphics.Color.WHITE, -1f) { island?.openPanel() }
+        } else {
+            null
+        }
+        v.setState(main, bubble, hide)
         val reasons = buildList {
             if (locked) add("locked")
             if (landscape) add("landscape")
@@ -471,6 +481,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
             }
         } catch (_: Exception) {
         }
+    }
+
+    override fun clearAll() {
+        HaloNotificationListener.instance?.clearAll()
     }
 
     override fun panelItems(): List<PanelItem> =

@@ -51,6 +51,27 @@ data class Pop(
     val durationMs: Long,
 )
 
+/**
+ * A notification split into the parts a message needs, so it can be drawn like
+ * a chat (photo, group, who said it, image) instead of a generic box.
+ */
+data class Rich(
+    /** Conversation or sender name, without "(12 messages)" noise. */
+    val title: String,
+    /** Who wrote the newest line, for group chats only. */
+    val sender: String?,
+    val text: String,
+    /** Contact or group photo when the app provides one. */
+    val avatar: Bitmap?,
+    val appIcon: Bitmap?,
+    /** An image preview (photo message, screenshot, thumbnail). */
+    val picture: Bitmap?,
+    /** How many messages are waiting (shown when more than 1). */
+    val count: Int,
+    val replyable: Boolean,
+    val markRead: PendingIntent?,
+)
+
 /** A message or app notification, shown as a banner for a few seconds. */
 data class NotifInfo(
     val id: Int,
@@ -62,6 +83,7 @@ data class NotifInfo(
     val icon: Bitmap?,
     val accent: Int,
     val contentIntent: PendingIntent?,
+    val rich: Rich,
 )
 
 /** A call in progress or ringing, taken from the dialer's call notification. */
@@ -122,6 +144,7 @@ data class PanelItem(
     val accent: Int,
     val postTime: Long,
     val canReply: Boolean,
+    val rich: Rich,
 )
 
 /** Live readings shown in the app's status card, so problems are visible on the phone. */
@@ -148,6 +171,9 @@ object IslandStore {
     var transfer: TransferInfo? = null
         private set
     var nav: NavInfo? = null
+        private set
+    /** Notifications waiting in the panel (drives the bell next to the pill). */
+    var notifCount = 0
         private set
 
     private val listeners = LinkedHashSet<() -> Unit>()
@@ -192,6 +218,12 @@ object IslandStore {
 
     fun setTransfer(t: TransferInfo?) {
         transfer = t
+        dispatch()
+    }
+
+    fun setNotifCount(n: Int) {
+        if (n == notifCount) return
+        notifCount = n
         dispatch()
     }
 

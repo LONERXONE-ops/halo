@@ -79,6 +79,7 @@ class HaloNotificationListener : NotificationListenerService() {
             }
         }
         refresh()
+        refreshCount()
         // Pick up a call or media notification that was already showing.
         try {
             activeNotifications?.forEach { sbn ->
@@ -106,6 +107,7 @@ class HaloNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
+        refreshCount()
         try {
             val token = mediaToken(sbn.notification)
             if (token != null) {
@@ -125,6 +127,7 @@ class HaloNotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         sbn ?: return
+        refreshCount()
         shown.remove(sbn.key)
         if (IslandStore.call?.key == sbn.key) IslandStore.setCall(null)
         if (IslandStore.notif?.key == sbn.key) IslandStore.dismissNotif()
@@ -412,12 +415,12 @@ class HaloNotificationListener : NotificationListenerService() {
             if (ranking.importance in 1 until NotificationManager.IMPORTANCE_DEFAULT) return skip("silent notification")
         }
 
-        val ex = n.extras ?: Bundle()
-        val title = titleOf(ex)
-        val text = textOf(ex)
+        val rich = richOf(sbn, prefs.getBoolean(Prefs.HIDE_TEXT, false))
+        val title = rich.title
+        val text = rich.text
         if (title.isEmpty() && text.isEmpty()) return skip("no text")
 
-        val fingerprint = "$title|$text"
+        val fingerprint = "$title|${rich.sender}|$text"
         if (shown[sbn.key] == fingerprint) return skip("already shown")
         val alertOnce = (n.flags and Notification.FLAG_ONLY_ALERT_ONCE) != 0
         if (alertOnce && shown.containsKey(sbn.key)) {
@@ -427,9 +430,8 @@ class HaloNotificationListener : NotificationListenerService() {
         shown[sbn.key] = fingerprint
         if (shown.size > 200) shown.clear()
 
-        val icon = iconBitmap(n.getLargeIcon()) ?: appIcon(pkg)
-        val color = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else accentFrom(icon)
-        val hide = prefs.getBoolean(Prefs.HIDE_TEXT, false)
+        val icon = rich.avatar ?: rich.appIcon
+        val color = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else accentFrom(rich.appIcon)
         IslandStore.showNotif(
             NotifInfo(
                 id = IslandStore.nextId(),
@@ -437,12 +439,13 @@ class HaloNotificationListener : NotificationListenerService() {
                 packageName = pkg,
                 appName = app,
                 title = title.ifEmpty { app },
-                text = if (hide) "New message" else text,
+                text = text,
                 icon = icon,
                 accent = color,
                 contentIntent = n.contentIntent,
+                rich = rich.copy(title = title.ifEmpty { app }),
             ),
-            4_500L,
+            5_000L,
         )
         Debug.lastNotification = "$app — shown: ${title.take(24)}"
     }
@@ -470,6 +473,7 @@ class HaloNotificationListener : NotificationListenerService() {
             return emptyList()
         }
         val blocked = Prefs.blocked(this)
+        val hideText = Prefs.get(this).getBoolean(Prefs.HIDE_TEXT, false)
         return all.asSequence()
             .filter { it.packageName != packageName }
             .filter { it.packageName !in blocked }
@@ -480,25 +484,109 @@ class HaloNotificationListener : NotificationListenerService() {
             .take(20)
             .mapNotNull { sbn ->
                 val n = sbn.notification
-                val ex = n.extras ?: Bundle()
-                val title = titleOf(ex)
-                val text = textOf(ex)
-                if (title.isEmpty() && text.isEmpty()) return@mapNotNull null
-                val icon = iconBitmap(n.getLargeIcon()) ?: appIcon(sbn.packageName)
+                val rich = richOf(sbn, hideText)
+                if (rich.title.isEmpty() && rich.text.isEmpty()) return@mapNotNull null
                 val app = appName(sbn.packageName)
                 PanelItem(
                     key = sbn.key,
                     packageName = sbn.packageName,
                     appName = app,
-                    title = title.ifEmpty { app },
-                    text = if (Prefs.get(this).getBoolean(Prefs.HIDE_TEXT, false)) "New message" else text,
-                    icon = icon,
-                    accent = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else Colors.ACCENT_DEFAULT,
+                    title = rich.title.ifEmpty { app },
+                    text = rich.text,
+                    icon = rich.avatar ?: rich.appIcon,
+                    accent = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else Colors.BLUE,
                     postTime = sbn.postTime,
-                    canReply = n.actions?.any { a -> a.remoteInputs?.isNotEmpty() == true } == true,
+                    canReply = rich.replyable,
+                    rich = rich.copy(title = rich.title.ifEmpty { app }),
                 )
             }
             .toList()
+    }
+
+    /** Splits a notification into chat parts: title, sender, text, photo, image, count. */
+    @Suppress("DEPRECATION")
+    fun richOf(sbn: StatusBarNotification, hideText: Boolean): Rich {
+        val n = sbn.notification
+        val ex = n.extras ?: Bundle()
+        val msgs = try {
+            ex.getParcelableArray(Notification.EXTRA_MESSAGES)
+        } catch (_: Exception) {
+            null
+        }
+        val last = msgs?.lastOrNull() as? Bundle
+        val isGroup = ex.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)
+
+        var title = (ex.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
+            ?: ex.getCharSequence(Notification.EXTRA_TITLE))?.toString()?.trim().orEmpty()
+        var count = msgs?.size ?: 0
+        // WhatsApp writes "Group (124 messages)"; keep the name, keep the number separately.
+        COUNT_SUFFIX.find(title)?.let { m ->
+            count = maxOf(count, m.groupValues[1].toIntOrNull() ?: 0)
+            title = title.removeRange(m.range).trim()
+        }
+
+        val sender = last?.getCharSequence("sender")?.toString()?.trim()?.takeIf { isGroup && it.isNotEmpty() }
+        val text = (last?.getCharSequence("text")
+            ?: ex.getCharSequence(Notification.EXTRA_BIG_TEXT)
+            ?: ex.getCharSequence(Notification.EXTRA_TEXT))?.toString()?.trim().orEmpty()
+
+        val personIcon = try {
+            (last?.getParcelable("sender_person") as? android.app.Person)?.icon?.let { iconBitmap(it) }
+        } catch (_: Exception) {
+            null
+        }
+        val avatar = iconBitmap(n.getLargeIcon()) ?: personIcon
+
+        val picture: Bitmap? = if (hideText) null else try {
+            (ex.get(Notification.EXTRA_PICTURE) as? Bitmap)
+                ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    (ex.get(Notification.EXTRA_PICTURE_ICON) as? Icon)?.let { iconBitmap(it) }
+                } else {
+                    null
+                }
+        } catch (_: Exception) {
+            null
+        }
+
+        val markRead = n.actions?.firstOrNull { a ->
+            a.title?.toString()?.lowercase()?.contains("read") == true && a.remoteInputs.isNullOrEmpty()
+        }?.actionIntent
+
+        return Rich(
+            title = title,
+            sender = if (hideText) null else sender,
+            text = if (hideText) "New message" else text,
+            avatar = avatar,
+            appIcon = appIcon(sbn.packageName),
+            picture = picture,
+            count = count,
+            replyable = n.actions?.any { it.remoteInputs?.isNotEmpty() == true } == true,
+            markRead = markRead,
+        )
+    }
+
+    /** How many notifications the panel would show (cheap: no icons). */
+    fun refreshCount() {
+        val all: Array<StatusBarNotification> = try {
+            activeNotifications ?: emptyArray<StatusBarNotification>()
+        } catch (_: Exception) {
+            emptyArray<StatusBarNotification>()
+        }
+        val blocked = Prefs.blocked(this)
+        val n = all.count {
+            it.packageName != packageName && it.packageName !in blocked && !it.isOngoing &&
+                (it.notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0 &&
+                mediaToken(it.notification) == null
+        }
+        IslandStore.setNotifCount(n)
+    }
+
+    fun clearAll() {
+        try {
+            cancelAllNotifications()
+        } catch (_: Exception) {
+        }
+        handler.postDelayed({ refreshCount() }, 300L)
     }
 
     fun find(key: String): StatusBarNotification? = try {
@@ -556,6 +644,8 @@ class HaloNotificationListener : NotificationListenerService() {
     companion object {
         var instance: HaloNotificationListener? = null
             private set
+
+        private val COUNT_SUFFIX = Regex("""\s*\((\d+)\s+(new\s+)?messages?\)\s*$""", RegexOption.IGNORE_CASE)
 
         fun drawableToBitmap(d: Drawable?): Bitmap? {
             d ?: return null
