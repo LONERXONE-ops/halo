@@ -430,8 +430,8 @@ class HaloNotificationListener : NotificationListenerService() {
         var hideText = prefs.getBoolean(Prefs.HIDE_TEXT, false)
         if (isLocked()) {
             if (!secureFlag("lock_screen_show_notifications", true)) return skip("lock screen notifications off")
-            val override = ranking?.lockscreenVisibilityOverride ?: NotificationManager.VISIBILITY_NO_OVERRIDE
-            val vis = if (override != NotificationManager.VISIBILITY_NO_OVERRIDE) override else n.visibility
+            val override = ranking?.lockscreenVisibilityOverride ?: NO_OVERRIDE
+            val vis = if (override != NO_OVERRIDE) override else n.visibility
             if (vis == Notification.VISIBILITY_SECRET) return skip("hidden on lock screen")
             if (vis == Notification.VISIBILITY_PRIVATE || !secureFlag("lock_screen_allow_private_notifications", true)) hideText = true
         }
@@ -531,6 +531,9 @@ class HaloNotificationListener : NotificationListenerService() {
             }
             .toList()
     }
+
+    /** Ranking's "no lock screen override" value (hidden constant in the SDK). */
+    private val NO_OVERRIDE = -1000
 
     private fun rankingOf(sbn: StatusBarNotification): Ranking? = try {
         val r = Ranking()
