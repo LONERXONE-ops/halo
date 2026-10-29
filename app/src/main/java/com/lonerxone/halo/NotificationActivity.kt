@@ -298,16 +298,6 @@ class NotificationActivity : Activity() {
         val ago = DateUtils.getRelativeTimeSpanString(sbn.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
         names.addView(label("$app · $ago", 12.5f, text2, false).apply { setPadding(0, dp(2), 0, 0) })
         head.addView(names, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(ImageView(this).apply {
-            setImageResource(R.drawable.ic_close)
-            setColorFilter(text1)
-            val pad = dp(9)
-            setPadding(pad, pad, pad, pad)
-            background = circle(glassFill)
-            contentDescription = "Close"
-            pressy()
-            setOnClickListener { close() }
-        }, LinearLayout.LayoutParams(dp(38), dp(38)))
         top.addView(head)
         s.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             marginStart = basePad
@@ -326,12 +316,12 @@ class NotificationActivity : Activity() {
             val body = ex.getCharSequence(Notification.EXTRA_BIG_TEXT)
                 ?: ex.getCharSequence(Notification.EXTRA_TEXT)
                 ?: ""
-            if (body.isNotBlank()) list.addView(bubble(Msg(null, body, null, null), mine = false))
-            @Suppress("DEPRECATION")
-            val big = ex.getParcelable<android.graphics.Bitmap>(Notification.EXTRA_PICTURE)
-            if (big != null) list.addView(photo(big), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)).apply { topMargin = dp(8) })
+            // Posts with a picture (X, Instagram, news…): the picture sits in the bubble.
+            val big = picture(ex)
+            if (body.isNotBlank() || big != null) list.addView(bubble(Msg(null, body, null, null), mine = false, pic = big))
         } else {
             for (m in messages) list.addView(bubble(m, mine = false))
+            picture(ex)?.let { list.addView(bubble(Msg(null, "", null, null), mine = false, pic = it)) }
         }
         for (i in 0 until list.childCount) anim += list.getChildAt(i)
         val scroll = ScrollView(this).apply {
@@ -352,16 +342,6 @@ class NotificationActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.BOTTOM
             }
-            row.addView(ImageView(this).apply {
-                setImageResource(R.drawable.ic_image)
-                setColorFilter(text1)
-                val pad = dp(11)
-                setPadding(pad, pad, pad, pad)
-                background = circle(glassFill)
-                contentDescription = "Send a photo"
-                pressy()
-                setOnClickListener { pickPhoto() }
-            }, LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginEnd = dp(8) })
             val input = EditText(this).apply {
                 hint = "Message"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
@@ -442,41 +422,53 @@ class NotificationActivity : Activity() {
             anim += row
         }
 
-        // Buttons: round icons with a label under each, evenly spaced (never squashed).
+        // Buttons: one floating bar. "Open" is the big white pill; the rest are
+        // icons with a small label, evenly spaced inside the same bar.
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            background = pill(Color.argb(170, 22, 22, 26), dpf(32f))
         }
         val tiles = mutableListOf<View>()
-        fun tile(icon: Int, name: String, primary: Boolean = false, onClick: () -> Unit) {
+        val openPill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = pill(Colors.INK, dpf(26f), stroke = false)
+            addView(ImageView(this@NotificationActivity).apply {
+                setImageResource(R.drawable.ic_open)
+                setColorFilter(Color.BLACK)
+            }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) })
+            addView(label("Open", 15f, Color.BLACK, true))
+            pressy()
+            setOnClickListener {
+                // Opens the exact chat or post; falls back to the app itself.
+                if (!Launch.send(this@NotificationActivity, n.contentIntent)) Launch.openApp(this@NotificationActivity, sbn.packageName)
+                if ((n.flags and Notification.FLAG_AUTO_CANCEL) != 0) listener.dismiss(sbn.key)
+                close()
+            }
+        }
+        bar.addView(openPill, LinearLayout.LayoutParams(0, dp(52), 1.5f))
+        tiles += openPill
+        fun tile(icon: Int, name: String, onClick: () -> Unit) {
             val t = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(0, dp(4), 0, dp(4))
+                gravity = Gravity.CENTER
                 setOnClickListener { onClick() }
             }
             t.addView(ImageView(this).apply {
                 setImageResource(icon)
-                setColorFilter(if (primary) Color.BLACK else text1)
-                val pad = dp(13)
-                setPadding(pad, pad, pad, pad)
-                background = circle(if (primary) Colors.INK else glassFill, stroke = !primary)
-            }, LinearLayout.LayoutParams(dp(50), dp(50)))
-            t.addView(label(name, 11.5f, text1, false).apply {
+                setColorFilter(text1)
+            }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            t.addView(label(name, 10.5f, text2, false).apply {
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(2), dp(6), dp(2), 0)
+                setPadding(dp(2), dp(4), dp(2), 0)
             })
             t.pressy()
-            bar.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            bar.addView(t, LinearLayout.LayoutParams(0, dp(52), 1f))
             tiles += t
-        }
-        tile(R.drawable.ic_open, "Open", primary = true) {
-            // Opens the exact chat; falls back to the app itself.
-            if (!Launch.send(this, n.contentIntent)) Launch.openApp(this, sbn.packageName)
-            if ((n.flags and Notification.FLAG_AUTO_CANCEL) != 0) listener.dismiss(sbn.key)
-            close()
         }
         if (readAction != null) {
             tile(R.drawable.ic_check, "Read") {
@@ -484,7 +476,7 @@ class NotificationActivity : Activity() {
                 close()
             }
         }
-        // The app's own buttons (Mute, Like, Archive, Call back...).
+        // The app's own buttons (Mute, Like, Repost, Archive, Call back...).
         val extras = n.actions?.filter { a ->
             a !== replyAction && a !== readAction && a.actionIntent != null && !a.title.isNullOrBlank()
         }.orEmpty()
@@ -494,8 +486,10 @@ class NotificationActivity : Activity() {
             val icon = when {
                 l.contains("mute") || l.contains("silence") -> R.drawable.ic_bell_off
                 l.contains("call") -> R.drawable.ic_call
+                l.contains("like") || l.contains("love") || l.contains("heart") -> R.drawable.ic_heart
+                l.contains("repost") || l.contains("retweet") || l.contains("share") -> R.drawable.ic_repost
                 l.contains("archive") || l.contains("save") || l.contains("download") -> R.drawable.ic_download
-                l.contains("like") || l.contains("done") || l.contains("ok") -> R.drawable.ic_check
+                l.contains("done") || l.contains("ok") || l.contains("accept") -> R.drawable.ic_check
                 else -> R.drawable.ic_bolt
             }
             tile(icon, name.replaceFirstChar { it.uppercase() }) {
@@ -503,14 +497,14 @@ class NotificationActivity : Activity() {
                 close()
             }
         }
-        tile(R.drawable.ic_close, "Clear") {
+        tile(R.drawable.ic_delete, "Clear") {
             listener.dismiss(sbn.key)
             close()
         }
         s.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(16)
-            marginStart = dp(8)
-            marginEnd = dp(8)
+            topMargin = dp(14)
+            marginStart = dp(14)
+            marginEnd = dp(14)
         })
 
         root.addView(s, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
@@ -607,7 +601,7 @@ class NotificationActivity : Activity() {
         return root
     }
 
-    private fun bubble(m: Msg, mine: Boolean): View {
+    private fun bubble(m: Msg, mine: Boolean, pic: android.graphics.Bitmap? = null): View {
         val r = dpf(20f)
         val tail = dpf(6f)
         val box = LinearLayout(this).apply {
@@ -653,7 +647,20 @@ class NotificationActivity : Activity() {
                 }
             }
         }
-        if (m.text.isNotBlank()) box.addView(label(m.text, 15.5f, if (mine) Color.BLACK else text1, false).apply { setLineSpacing(0f, 1.12f) })
+        if (pic != null) box.addView(photo(pic), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)).apply { bottomMargin = if (m.text.isNotBlank()) dp(6) else 0 })
+        if (m.text.isNotBlank()) {
+            box.addView(label(m.text, 15.5f, if (mine) Color.BLACK else text1, false).apply { setLineSpacing(0f, 1.12f) })
+            // Hold a message to copy it.
+            box.setOnLongClickListener { v ->
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(android.content.ClipData.newPlainText("message", m.text))
+                v.animate().scaleX(0.95f).scaleY(0.95f).setDuration(90).withEndAction {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(380).setInterpolator(Springy(0.6f)).start()
+                }.start()
+                if (android.os.Build.VERSION.SDK_INT < 33) Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
         val wrap = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = if (mine) Gravity.END else Gravity.START
@@ -711,6 +718,21 @@ class NotificationActivity : Activity() {
         null
     }
 
+    /** The picture attached to a notification (a post's photo, a big-picture alert), if any. */
+    @Suppress("DEPRECATION")
+    private fun picture(ex: Bundle): android.graphics.Bitmap? {
+        (ex.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap)?.let { return it }
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            (ex.get(Notification.EXTRA_PICTURE_ICON) as? android.graphics.drawable.Icon)?.let { ic ->
+                try {
+                    return HaloNotificationListener.drawableToBitmap(ic.loadDrawable(this))
+                } catch (_: Exception) {
+                }
+            }
+        }
+        return null
+    }
+
     /** Last few lines of a chat notification (MessagingStyle), oldest first, with any photos. */
     @Suppress("DEPRECATION")
     private fun messages(ex: Bundle): List<Msg> {
@@ -722,68 +744,6 @@ class NotificationActivity : Activity() {
             if (text.isBlank() && uri == null) return@mapNotNull null
             Msg(b.getCharSequence("sender")?.toString(), text, uri, b.getString("type"))
         }.takeLast(12)
-    }
-
-    // ----- sending a photo -----
-
-    private fun pickPhoto() {
-        val i = if (android.os.Build.VERSION.SDK_INT >= 33) Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).setType("image/*") else Intent(Intent.ACTION_GET_CONTENT).setType("image/*")
-        try {
-            @Suppress("DEPRECATION")
-            startActivityForResult(i, PICK)
-        } catch (_: Exception) {
-            Toast.makeText(this, "No photo picker found", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    @Deprecated("Deprecated in Java")
-    @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != PICK || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        val sbn = current ?: return
-        val mime = contentResolver.getType(uri) ?: "image/jpeg"
-        val reply = sbn.notification.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
-        // 1. Apps that accept pictures in a notification reply (some do): send it right here.
-        val ri = reply?.remoteInputs?.firstOrNull { r -> r.allowedDataTypes?.any { t -> t == mime || t == "image/*" } == true }
-        if (reply != null && ri != null) {
-            try {
-                val fill = Intent()
-                RemoteInput.addDataResultToIntent(ri, fill, mapOf(mime to uri))
-                fill.clipData = android.content.ClipData.newRawUri("", uri)
-                fill.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                if (Launch.send(this, reply.actionIntent, fill)) {
-                    Toast.makeText(this, "Photo sent", Toast.LENGTH_SHORT).show()
-                    return
-                }
-            } catch (_: Exception) {
-            }
-        }
-        // 2. WhatsApp and most chat apps: open that same chat with the photo
-        //    ready to send (one tap on their send button).
-        val share = Intent(Intent.ACTION_SEND).apply {
-            type = mime
-            putExtra(Intent.EXTRA_STREAM, uri)
-            clipData = android.content.ClipData.newRawUri("", uri)
-            setPackage(sbn.packageName)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            sbn.notification.shortcutId?.let { id ->
-                putExtra(Intent.EXTRA_SHORTCUT_ID, id)
-                // WhatsApp's chat id ("234…@s.whatsapp.net") picks the chat directly.
-                if (sbn.packageName.startsWith("com.whatsapp")) putExtra("jid", id)
-            }
-        }
-        try {
-            startActivity(share)
-            close()
-        } catch (_: Exception) {
-            try {
-                startActivity(Intent.createChooser(share.setPackage(null), "Send photo").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } catch (_: Exception) {
-                Toast.makeText(this, "Couldn't send the photo", Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 
     private fun sendReply(action: Notification.Action, text: String): Boolean = try {
@@ -814,6 +774,5 @@ class NotificationActivity : Activity() {
 
     companion object {
         const val EXTRA_KEY = "key"
-        private const val PICK = 7
     }
 }
