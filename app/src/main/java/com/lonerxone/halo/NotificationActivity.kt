@@ -48,6 +48,17 @@ class NotificationActivity : Activity() {
     private var thread: LinearLayout? = null
     private var threadScroll: ScrollView? = null
     private var closing = false
+    private var root: FrameLayout? = null
+    private var input: EditText? = null
+    /** The message you swiped to answer (quoted in your reply). */
+    private var quoting: Msg? = null
+    private var quoteChip: LinearLayout? = null
+    private var current: StatusBarNotification? = null
+    private val io = java.util.concurrent.Executors.newFixedThreadPool(2)
+    private val ui = Handler(Looper.getMainLooper())
+
+    /** One line of a conversation: who, what, and a photo if it has one. */
+    class Msg(val sender: String?, val text: CharSequence, val uri: android.net.Uri?, val mime: String?)
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
@@ -84,6 +95,8 @@ class NotificationActivity : Activity() {
         bubbleColor = Color.rgb(36, 36, 40)
         text1 = Color.rgb(245, 245, 247)
         text2 = Color.rgb(150, 150, 158)
+        current = sbn
+        quoting = null
         setContentView(build(sbn, listener!!))
     }
 
@@ -111,6 +124,7 @@ class NotificationActivity : Activity() {
         val root = FrameLayout(this).apply {
             setOnClickListener { close() }
         }
+        this.root = root
 
         val s = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -167,8 +181,19 @@ class NotificationActivity : Activity() {
                 ?: ex.getCharSequence(Notification.EXTRA_TEXT)
                 ?: ""
             list.addView(label(body, 15.5f, text1, false).apply { setLineSpacing(0f, 1.15f) })
+            // A picture notification (BigPicture): show the picture.
+            @Suppress("DEPRECATION")
+            val pic = ex.getParcelable<android.graphics.Bitmap>(Notification.EXTRA_PICTURE)
+            if (pic != null) list.addView(photo(pic), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)).apply { topMargin = dp(10) })
         } else {
-            for ((sender, text) in messages) list.addView(bubble(sender, text, mine = false))
+            for ((i, m) in messages.withIndex()) {
+                val b = bubble(m, mine = false, canQuote = replyAction != null)
+                list.addView(b)
+                // Messages rise in one after another.
+                b.alpha = 0f
+                b.translationY = dp(14).toFloat()
+                b.animate().alpha(1f).translationY(0f).setStartDelay(60L + i * 28L).setDuration(220L).setInterpolator(DecelerateInterpolator(2f)).start()
+            }
         }
         val scroll = ScrollView(this).apply {
             isVerticalScrollBarEnabled = false
@@ -179,16 +204,42 @@ class NotificationActivity : Activity() {
             View.MeasureSpec.makeMeasureSpec(resources.displayMetrics.widthPixels - basePad * 2, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        val maxH = (resources.displayMetrics.heightPixels * 0.42f).toInt()
-        s.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, minOf(list.measuredHeight, maxH)))
+        val maxH = (resources.displayMetrics.heightPixels * 0.5f).toInt()
+        val hasPhotos = messages.any { it.uri != null }
+        s.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (hasPhotos) maxH else minOf(list.measuredHeight, maxH)))
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
 
         // Reply box
         if (replyAction != null) {
+            // "Replying to…" chip, shown after you swipe a message.
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(8), dp(8), dp(8))
+                background = GradientDrawable().apply {
+                    setColor(bubbleColor)
+                    cornerRadius = dp(16).toFloat()
+                }
+                visibility = View.GONE
+            }
+            quoteChip = chip
+            s.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
             }
+            // Send a photo into this chat.
+            row.addView(ImageView(this).apply {
+                setImageResource(R.drawable.ic_image)
+                setColorFilter(text1)
+                val pad = dp(11)
+                setPadding(pad, pad, pad, pad)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(bubbleColor)
+                }
+                setOnClickListener { pickPhoto() }
+            }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(8) })
             val input = EditText(this).apply {
                 hint = "Reply to $title"
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -213,14 +264,26 @@ class NotificationActivity : Activity() {
                     setColor(accent)
                 }
             }
+            this.input = input
             val doSend = {
-                val text = input.text?.toString()?.trim().orEmpty()
-                if (text.isNotEmpty()) {
+                val typed = input.text?.toString()?.trim().orEmpty()
+                if (typed.isNotEmpty()) {
+                    // A swiped message is quoted with WhatsApp's "> " quote formatting.
+                    val q = quoting
+                    val text = if (q != null) "> " + listOfNotNull(q.sender, q.text.toString().take(80)).joinToString(": ") + "\n" + typed else typed
                     if (sendReply(replyAction, text)) {
-                        list.addView(bubble(null, text, mine = true))
+                        val mineBubble = bubble(Msg(null, typed, null, null), mine = true, canQuote = false)
+                        list.addView(mineBubble)
+                        // Your message pops in from the send button.
+                        mineBubble.scaleX = 0.6f
+                        mineBubble.scaleY = 0.6f
+                        mineBubble.alpha = 0f
+                        mineBubble.pivotX = mineBubble.width.toFloat()
+                        mineBubble.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(240L).setInterpolator(android.view.animation.OvershootInterpolator(1.6f)).start()
                         input.setText("")
+                        setQuote(null)
                         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-                        Toast.makeText(this, "Sent", Toast.LENGTH_SHORT).show()
+                        send.animate().rotation(send.rotation + 360f).setDuration(380L).start()
                     } else {
                         Toast.makeText(this, "Couldn't send. Open the app to reply.", Toast.LENGTH_SHORT).show()
                     }
@@ -314,11 +377,11 @@ class NotificationActivity : Activity() {
 
         // Slide up.
         s.translationY = resources.displayMetrics.heightPixels * 0.6f
-        s.animate().translationY(0f).setInterpolator(DecelerateInterpolator(2f)).setDuration(280L).start()
+        s.animate().translationY(0f).setInterpolator(android.view.animation.PathInterpolator(0.16f, 1.12f, 0.3f, 1f)).setDuration(340L).start()
         return root
     }
 
-    private fun bubble(sender: String?, text: CharSequence, mine: Boolean): View {
+    private fun bubble(m: Msg, mine: Boolean, canQuote: Boolean): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(9), dp(14), dp(10))
@@ -327,10 +390,42 @@ class NotificationActivity : Activity() {
                 cornerRadius = dp(18).toFloat()
             }
         }
-        if (!sender.isNullOrEmpty() && !mine) {
-            box.addView(label(sender, 12f, text2, true).apply { setPadding(0, 0, 0, dp(2)) })
+        if (!m.sender.isNullOrEmpty() && !mine) {
+            box.addView(label(m.sender, 12f, text2, true).apply { setPadding(0, 0, 0, dp(2)) })
         }
-        box.addView(label(text, 15f, if (mine) Color.BLACK else text1, false))
+        // A photo in the message: shown right here; tap to see it full screen.
+        if (m.uri != null && (m.mime?.startsWith("image/") != false)) {
+            val img = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = GradientDrawable().apply {
+                    setColor(Color.argb(40, 255, 255, 255))
+                    cornerRadius = dp(12).toFloat()
+                }
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(v: View, outline: Outline) {
+                        outline.setRoundRect(0, 0, v.width, v.height, dp(12).toFloat())
+                    }
+                }
+                clipToOutline = true
+            }
+            box.addView(img, LinearLayout.LayoutParams(dp(220), dp(220)).apply { bottomMargin = dp(6) })
+            io.execute {
+                val bmp = loadImage(m.uri)
+                ui.post {
+                    if (bmp != null) {
+                        img.setImageBitmap(bmp)
+                        img.alpha = 0f
+                        img.animate().alpha(1f).setDuration(200L).start()
+                        img.setOnClickListener { viewFull(bmp) }
+                    } else {
+                        img.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        img.visibility = View.GONE
+                        box.addView(label("📷 Photo (open the chat to see it)", 13f, text2, false), 0)
+                    }
+                }
+            }
+        }
+        if (m.text.isNotBlank()) box.addView(label(m.text, 15f, if (mine) Color.BLACK else text1, false))
         val wrap = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = if (mine) Gravity.END else Gravity.START
@@ -341,18 +436,204 @@ class NotificationActivity : Activity() {
         wrap.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(6)
         }
+        if (canQuote && !mine) swipeToQuote(box, m)
         return wrap
     }
 
-    /** Last few lines of a chat notification (MessagingStyle), oldest first. */
+    /** Swipe a message to the right to reply to it, like WhatsApp. */
+    private fun swipeToQuote(v: View, m: Msg) {
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        var downX = 0f
+        var downY = 0f
+        var dragging = false
+        var buzzed = false
+        v.setOnTouchListener { view, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX
+                    downY = e.rawY
+                    dragging = false
+                    buzzed = false
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX
+                    if (!dragging && dx > slop && dx > kotlin.math.abs(e.rawY - downY) * 1.3f) {
+                        dragging = true
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (dragging) {
+                        // Resists a little, like a rubber band.
+                        view.translationX = (dx * 0.55f).coerceIn(0f, dp(90).toFloat())
+                        if (!buzzed && view.translationX > dp(56)) {
+                            buzzed = true
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                        }
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (dragging && view.translationX > dp(56)) setQuote(m)
+                    view.animate().translationX(0f).setDuration(260L).setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
+                    dragging = false
+                }
+            }
+            // Keep getting this touch (so a swipe can start); scrolling still wins vertically.
+            e.actionMasked == android.view.MotionEvent.ACTION_DOWN || dragging
+        }
+    }
+
+    private fun setQuote(m: Msg?) {
+        quoting = m
+        val chip = quoteChip ?: return
+        chip.removeAllViews()
+        if (m == null) {
+            chip.animate().alpha(0f).setDuration(120L).withEndAction { chip.visibility = View.GONE }.start()
+            return
+        }
+        chip.addView(View(this).apply {
+            background = GradientDrawable().apply {
+                setColor(Colors.INK)
+                cornerRadius = dp(2).toFloat()
+            }
+        }, LinearLayout.LayoutParams(dp(3), dp(30)))
+        val t = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), 0, 0, 0)
+        }
+        t.addView(label("Replying to " + (m.sender ?: "this message"), 12f, text1, true))
+        t.addView(label(if (m.text.isBlank()) "📷 Photo" else m.text, 13f, text2, false).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        chip.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        chip.addView(label("✕", 15f, text2, true).apply {
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            setOnClickListener { setQuote(null) }
+        })
+        chip.visibility = View.VISIBLE
+        chip.alpha = 0f
+        chip.translationY = dp(10).toFloat()
+        chip.animate().alpha(1f).translationY(0f).setDuration(200L).start()
+        input?.requestFocus()
+        getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.showSoftInput(input, 0)
+    }
+
+    private fun photo(b: android.graphics.Bitmap): View = ImageView(this).apply {
+        setImageBitmap(b)
+        scaleType = ImageView.ScaleType.CENTER_CROP
+        outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(v: View, outline: Outline) {
+                outline.setRoundRect(0, 0, v.width, v.height, dp(14).toFloat())
+            }
+        }
+        clipToOutline = true
+        setOnClickListener { viewFull(b) }
+    }
+
+    /** A photo, full screen; tap to close. */
+    private fun viewFull(b: android.graphics.Bitmap) {
+        val r = root ?: return
+        val f = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+        }
+        f.addView(ImageView(this).apply {
+            setImageBitmap(b)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        f.setOnClickListener {
+            f.animate().alpha(0f).setDuration(150L).withEndAction { r.removeView(f) }.start()
+        }
+        r.addView(f, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        f.alpha = 0f
+        f.scaleX = 0.92f
+        f.scaleY = 0.92f
+        f.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200L).start()
+    }
+
+    /** Reads a photo the app attached to its notification (sized for the screen). */
+    private fun loadImage(uri: android.net.Uri): android.graphics.Bitmap? = try {
+        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+        var sample = 1
+        while (maxOf(o.outWidth, o.outHeight) / (sample * 2) >= 1080) sample *= 2
+        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }) }
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Last few lines of a chat notification (MessagingStyle), oldest first, with any photos. */
     @Suppress("DEPRECATION")
-    private fun messages(ex: Bundle): List<Pair<String?, CharSequence>> {
+    private fun messages(ex: Bundle): List<Msg> {
         val arr = ex.getParcelableArray(Notification.EXTRA_MESSAGES) ?: return emptyList()
         return arr.mapNotNull { p ->
             val b = p as? Bundle ?: return@mapNotNull null
-            val text = b.getCharSequence("text") ?: return@mapNotNull null
-            b.getCharSequence("sender")?.toString() to text
+            val text = b.getCharSequence("text") ?: ""
+            val uri = b.getParcelable<android.net.Uri>("uri")
+            if (text.isBlank() && uri == null) return@mapNotNull null
+            Msg(b.getCharSequence("sender")?.toString(), text, uri, b.getString("type"))
         }.takeLast(12)
+    }
+
+    // ----- sending a photo -----
+
+    private fun pickPhoto() {
+        val i = if (android.os.Build.VERSION.SDK_INT >= 33) Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).setType("image/*") else Intent(Intent.ACTION_GET_CONTENT).setType("image/*")
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, PICK)
+        } catch (_: Exception) {
+            Toast.makeText(this, "No photo picker found", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != PICK || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        val sbn = current ?: return
+        val mime = contentResolver.getType(uri) ?: "image/jpeg"
+        val reply = sbn.notification.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
+        // 1. Apps that accept pictures in a notification reply (some do): send it right here.
+        val ri = reply?.remoteInputs?.firstOrNull { r -> r.allowedDataTypes?.any { t -> t == mime || t == "image/*" } == true }
+        if (reply != null && ri != null) {
+            try {
+                val fill = Intent()
+                RemoteInput.addDataResultToIntent(ri, fill, mapOf(mime to uri))
+                fill.clipData = android.content.ClipData.newRawUri("", uri)
+                fill.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (Launch.send(this, reply.actionIntent, fill)) {
+                    Toast.makeText(this, "Photo sent", Toast.LENGTH_SHORT).show()
+                    return
+                }
+            } catch (_: Exception) {
+            }
+        }
+        // 2. WhatsApp and most chat apps: open that same chat with the photo
+        //    ready to send (one tap on their send button).
+        val share = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = android.content.ClipData.newRawUri("", uri)
+            setPackage(sbn.packageName)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            sbn.notification.shortcutId?.let { id ->
+                putExtra(Intent.EXTRA_SHORTCUT_ID, id)
+                // WhatsApp's chat id ("234…@s.whatsapp.net") picks the chat directly.
+                if (sbn.packageName.startsWith("com.whatsapp")) putExtra("jid", id)
+            }
+        }
+        try {
+            startActivity(share)
+            close()
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent.createChooser(share.setPackage(null), "Send photo").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Couldn't send the photo", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun sendReply(action: Notification.Action, text: String): Boolean = try {
@@ -374,7 +655,7 @@ class NotificationActivity : Activity() {
             finish()
             return
         }
-        s.animate().translationY(s.height.toFloat() + dp(40)).setDuration(200L).withEndAction {
+        s.animate().translationY(s.height.toFloat() + dp(40)).setDuration(170L).setInterpolator(android.view.animation.AccelerateInterpolator(1.4f)).withEndAction {
             finish()
         }.start()
         Handler(Looper.getMainLooper()).postDelayed({ if (!isFinishing) finish() }, 400L)
@@ -382,5 +663,6 @@ class NotificationActivity : Activity() {
 
     companion object {
         const val EXTRA_KEY = "key"
+        private const val PICK = 7
     }
 }

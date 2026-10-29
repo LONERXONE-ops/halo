@@ -692,8 +692,12 @@ class MainActivity : Activity() {
         col.addView(footnote("While you drag, a white outline shows where the circle sits. Leave everything at 0 if it already covers the lens."))
     }
 
+    private var guideOpen = false
+
     private fun setupPage(col: LinearLayout) {
         pageHeader(col, "Permissions", "What Halo needs to work")
+        if (!accessibilityOn() || !listenerOn() || guideOpen) col.addView(restrictedGuide())
+        gap(col, 12)
         col.addView(group(
             statusRow("Accessibility service", "Draws the island over the camera", accessibilityOn()) {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -720,6 +724,87 @@ class MainActivity : Activity() {
             },
         ))
         col.addView(footnote("Tap any row to open the right system screen. Everything stays on your phone."))
+    }
+
+    /**
+     * Android 13+ greys out Accessibility and Notification access for apps
+     * installed from outside the Play Store ("Restricted setting"). A tap-to-
+     * open guide for getting past it, with a button to the exact screen.
+     */
+    private fun restrictedGuide(): View {
+        val c = card().apply { setPadding(dp(18), dp(14), dp(18), dp(14)) }
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_shield)
+            imageTintList = ColorStateList.valueOf(Color.BLACK)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            background = GradientDrawable().apply {
+                setColor(Colors.INK)
+                cornerRadius = dp(10).toFloat()
+            }
+        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(12) })
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titles.addView(label("Says \"Restricted setting\"?", 15.5f, Color.WHITE, true))
+        titles.addView(label("Android blocks this for apps not from the Play Store. Tap for the 1-minute fix", 12.5f, text2, false).apply { setPadding(0, dp(2), 0, 0) })
+        head.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val arrow = android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_chevron)
+            imageTintList = ColorStateList.valueOf(Color.argb(150, 255, 255, 255))
+            rotation = if (guideOpen) 270f else 90f
+        }
+        head.addView(arrow, LinearLayout.LayoutParams(dp(20), dp(20)))
+        c.addView(head)
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (guideOpen) View.VISIBLE else View.GONE
+            setPadding(0, dp(12), 0, 0)
+        }
+        val steps = listOf(
+            "Try once" to "Go to Accessibility (or Notification access), tap Halo and try to switch it on. Android shows \"Restricted setting\". Tap OK. (This step makes the next option appear.)",
+            "Open Halo's App info" to "Use the button below, or Settings → Apps → Halo.",
+            "Tap ⋮ (top right)" to "Choose \"Allow restricted settings\" and confirm with your PIN, pattern or fingerprint.",
+            "Switch Halo on" to "Go back to Accessibility and Notification access: Halo's switch now works. Do both.",
+        )
+        for ((i, st) in steps.withIndex()) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            row.addView(label((i + 1).toString(), 12f, Color.BLACK, true).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Colors.INK)
+                }
+            }, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(12) })
+            val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            t.addView(label(st.first, 14.5f, Color.WHITE, true))
+            t.addView(label(st.second, 12.5f, text2, false).apply {
+                setLineSpacing(0f, 1.15f)
+                setPadding(0, dp(2), 0, 0)
+            })
+            row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            body.addView(row)
+        }
+        body.addView(actionButton("Open Halo's App info") { openAppInfo() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        body.addView(label("On Samsung it's the same: App info → ⋮ → Allow restricted settings. The ⋮ option only shows after step 1.", 12f, text2, false).apply { setPadding(0, dp(10), 0, 0) })
+        c.addView(body)
+        head.setOnClickListener {
+            guideOpen = !guideOpen
+            arrow.animate().rotation(if (guideOpen) 270f else 90f).setDuration(200).start()
+            if (guideOpen) {
+                body.visibility = View.VISIBLE
+                body.alpha = 0f
+                body.translationY = -dp(8).toFloat()
+                body.animate().alpha(1f).translationY(0f).setDuration(220).start()
+            } else {
+                body.visibility = View.GONE
+            }
+        }
+        return c
     }
 
     private fun updatesPage(col: LinearLayout) {

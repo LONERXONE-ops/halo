@@ -1847,30 +1847,41 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Drag a card sideways to dismiss it; a plain tap still opens it. */
     @SuppressLint("ClickableViewAccessibility")
+    /**
+     * Swipe a card away. Quick: a flick of any length clears it, the card
+     * follows the finger 1:1, flies off in ~0.1 s and the cards below close
+     * the gap smoothly instead of jumping.
+     */
     private fun swipeToDismiss(view: View, onDismiss: () -> Unit) {
         val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
         var downX = 0f
         var downY = 0f
         var dragging = false
+        var tracker: android.view.VelocityTracker? = null
         view.setOnTouchListener { v, e ->
+            tracker?.addMovement(e)
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = e.rawX
                     downY = e.rawY
                     dragging = false
                     v.isPressed = true
+                    v.animate().cancel()
+                    tracker?.recycle()
+                    tracker = android.view.VelocityTracker.obtain().also { it.addMovement(e) }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
-                    if (!dragging && abs(dx) > slop && abs(dx) > abs(dy) * 1.3f) {
+                    if (!dragging && abs(dx) > slop * 0.8f && abs(dx) > abs(dy) * 1.1f) {
                         dragging = true
                         v.isPressed = false
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                     }
                     if (dragging) {
                         v.translationX = dx
-                        v.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1)).coerceIn(0.2f, 1f)
+                        v.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1) * 0.9f).coerceIn(0.15f, 1f)
+                        v.rotation = dx / v.width.coerceAtLeast(1) * 3f
                     } else if (abs(dy) > slop) {
                         v.isPressed = false
                     }
@@ -1878,15 +1889,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 MotionEvent.ACTION_UP -> {
                     v.isPressed = false
                     val dx = e.rawX - downX
-                    if (dragging && abs(dx) > v.width * 0.33f) {
+                    tracker?.computeCurrentVelocity(1000)
+                    val vx = tracker?.xVelocity ?: 0f
+                    tracker?.recycle()
+                    tracker = null
+                    val flick = abs(vx) > 700f && Math.signum(vx) == Math.signum(dx)
+                    if (dragging && (abs(dx) > v.width * 0.22f || flick)) {
                         haptic()
-                        v.animate().translationX(if (dx > 0) v.width.toFloat() else -v.width.toFloat()).alpha(0f).setDuration(160L)
-                            .withEndAction {
-                                onDismiss()
-                                (v.parent as? ViewGroup)?.removeView(v)
-                            }.start()
+                        val dir = if ((if (flick) vx else dx) > 0) 1f else -1f
+                        val left = v.width - abs(dx)
+                        val ms = (if (flick) (left / abs(vx) * 1000f) else 110f).toLong().coerceIn(70L, 140L)
+                        v.animate().translationX(dir * v.width * 1.1f).alpha(0f).setDuration(ms)
+                            .setInterpolator(android.view.animation.LinearInterpolator())
+                            .withEndAction { collapse(v, onDismiss) }.start()
                     } else if (dragging) {
-                        v.animate().translationX(0f).alpha(1f).setDuration(180L).start()
+                        v.animate().translationX(0f).alpha(1f).rotation(0f).setDuration(220L)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(1.4f)).start()
                     } else if (abs(e.rawY - downY) < slop) {
                         v.performClick()
                     }
@@ -1894,11 +1912,40 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
-                    v.animate().translationX(0f).alpha(1f).setDuration(180L).start()
+                    v.animate().translationX(0f).alpha(1f).rotation(0f).setDuration(180L).start()
                     dragging = false
+                    tracker?.recycle()
+                    tracker = null
                 }
             }
             true
+        }
+    }
+
+    /** Closes the gap a dismissed card leaves, then removes it. */
+    private fun collapse(v: View, then: () -> Unit) {
+        val h = v.height
+        val lp = v.layoutParams
+        val mlp = lp as? ViewGroup.MarginLayoutParams
+        val top = mlp?.topMargin ?: 0
+        val bottom = mlp?.bottomMargin ?: 0
+        then()
+        android.animation.ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = 150L
+            interpolator = DecelerateInterpolator(1.6f)
+            addUpdateListener {
+                val f = it.animatedValue as Float
+                lp.height = (h * f).toInt().coerceAtLeast(0)
+                mlp?.topMargin = (top * f).toInt()
+                mlp?.bottomMargin = (bottom * f).toInt()
+                v.layoutParams = lp
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: android.animation.Animator) {
+                    (v.parent as? ViewGroup)?.removeView(v)
+                }
+            })
+            start()
         }
     }
 
