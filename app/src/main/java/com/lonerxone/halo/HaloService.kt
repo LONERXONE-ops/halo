@@ -703,28 +703,55 @@ class HaloService : AccessibilityService(), IslandView.Host {
      * it), taps it and closes Quick Settings. A few tries, because the panel
      * takes a moment to open; if it never shows up, the settings page opens.
      */
+    /** Whether Android has given this (running) service the right to read Quick Settings. */
+    private fun canReadScreen(): Boolean = try {
+        (serviceInfo?.capabilities ?: 0) and android.accessibilityservice.AccessibilityServiceInfo.CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT != 0
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun toast(t: String) {
+        main.post { android.widget.Toast.makeText(this, t, android.widget.Toast.LENGTH_LONG).show() }
+    }
+
+    /**
+     * Opens Quick Settings, finds the tile (by the name Android reads out for
+     * it), taps it and closes Quick Settings straight away: about half a
+     * second in all. It checks every 120 ms rather than waiting a fixed time.
+     */
     private fun tapTile(d: Controls.Def, attempt: Int = 0) {
         if (attempt == 0) {
+            if (!canReadScreen()) {
+                // The new permission only applies once the service restarts (Android's rule).
+                toast("One-time step: turn Halo off and on in Accessibility so its buttons can switch ${d.label}")
+                openSettings(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                return
+            }
             performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
-            main.postDelayed({ tapTile(d, 1) }, 550L)
+            main.postDelayed({ tapTile(d, 1) }, 220L)
             return
         }
-        val node = findTile(d)
+        val node = try {
+            findTile(d)
+        } catch (_: Exception) {
+            null
+        }
         if (node != null) {
             var n: android.view.accessibility.AccessibilityNodeInfo? = node
             while (n != null && !n.isClickable) n = n.parent
             (n ?: node).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
-            main.postDelayed({ closeShade() }, 650L)
+            main.postDelayed({ closeShade() }, 180L)
             return
         }
-        if (attempt < 4) {
-            main.postDelayed({ tapTile(d, attempt + 1) }, 300L)
+        if (attempt < 16) {
+            main.postDelayed({ tapTile(d, attempt + 1) }, 120L)
             return
         }
         closeShade()
+        toast("Couldn't find ${d.label} in your Quick Settings. Add its tile there, or switch it here.")
         openSettings(when (d.id) {
-            "data" -> android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY
-            "wifi" -> android.provider.Settings.Panel.ACTION_WIFI
+            "data" -> android.provider.Settings.ACTION_DATA_ROAMING_SETTINGS
+            "wifi" -> android.provider.Settings.ACTION_WIFI_SETTINGS
             "bluetooth" -> android.provider.Settings.ACTION_BLUETOOTH_SETTINGS
             "airplane" -> android.provider.Settings.ACTION_AIRPLANE_MODE_SETTINGS
             "location" -> android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
@@ -736,7 +763,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE) else performGlobalAction(GLOBAL_ACTION_BACK)
     }
 
-    /** The Quick Settings tile whose spoken name starts with one of the control's names. */
+    /**
+     * The Quick Settings tile for a control. Tiles announce themselves like
+     * "Mobile data, On" or "Bluetooth, Galaxy Buds connected" (Samsung shows
+     * the network name under Wi-Fi, so the spoken name is what counts).
+     */
     private fun findTile(d: Controls.Def): android.view.accessibility.AccessibilityNodeInfo? {
         val roots = try {
             windows.mapNotNull { it.root }.ifEmpty { listOfNotNull(rootInActiveWindow) }
@@ -744,21 +775,21 @@ class HaloService : AccessibilityService(), IslandView.Host {
             listOfNotNull(rootInActiveWindow)
         }
         val ui = roots.filter { it.packageName?.toString()?.contains("systemui") == true }.ifEmpty { roots }
-        for (word in d.tile) {
-            for (r in ui) {
-                val q = ArrayDeque<android.view.accessibility.AccessibilityNodeInfo>()
-                q.add(r)
-                var seen = 0
-                while (q.isNotEmpty() && seen < 1500) {
-                    val n = q.removeFirst()
-                    seen++
-                    val label = ((n.contentDescription ?: n.text)?.toString() ?: "").lowercase().trim()
-                    // "Mobile data, On" yes; "Data saver" no.
-                    if (label.isNotEmpty() && label.startsWith(word) && !label.contains("saver") && !label.contains("settings")) return n
-                    for (i in 0 until n.childCount) n.getChild(i)?.let { q.add(it) }
-                }
+        val all = ArrayList<Pair<String, android.view.accessibility.AccessibilityNodeInfo>>()
+        for (r in ui) {
+            val q = ArrayDeque<android.view.accessibility.AccessibilityNodeInfo>()
+            q.add(r)
+            while (q.isNotEmpty() && all.size < 2500) {
+                val n = q.removeFirst()
+                val label = listOfNotNull(n.contentDescription, n.text).joinToString(" ").lowercase().trim()
+                if (label.isNotEmpty()) all += label to n
+                for (i in 0 until n.childCount) n.getChild(i)?.let { q.add(it) }
             }
         }
+        fun ok(l: String) = !l.contains("saver") && !l.contains("settings") && !l.contains("roaming")
+        // Best: the label starts with the name ("mobile data, on"); then: contains it.
+        for (word in d.tile) all.firstOrNull { (l, _) -> l.startsWith(word) && ok(l) }?.let { return it.second }
+        for (word in d.tile) all.firstOrNull { (l, _) -> l.contains(word) && ok(l) && l.length < 80 }?.let { return it.second }
         return null
     }
 
