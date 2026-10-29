@@ -966,12 +966,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         revealed = false
         updateClip()
         if (slide != 0) {
-            // The next alert slides in from the side you swiped towards.
+            // Swiped in: the new alert is already exactly where the swipe left it.
             s.alpha = 1f
             revealed = true
-            view.translationX = slide * w * 0.6f
-            view.alpha = 0.25f
-            view.animate().translationX(0f).alpha(1f).setDuration(380L).setInterpolator(android.view.animation.PathInterpolator(0.16f, 0.9f, 0.2f, 1f)).start()
         }
     }
 
@@ -1389,30 +1386,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return col
     }
 
-    /** "now", plus a dot for each recent alert (swipe sideways to move between them). */
-    private fun noteMeta(): View {
-        val row = hRow()
-        val (at, count) = IslandStore.notePosition()
-        if (count > 1) {
-            val dots = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, 0, dp(8), 0)
-            }
-            for (i in 0 until count) {
-                val on = i == at
-                dots.addView(View(context).apply {
-                    background = GradientDrawable().apply {
-                        setColor(if (on) Color.WHITE else Color.argb(90, 255, 255, 255))
-                        cornerRadius = dpf(3f)
-                    }
-                }, LinearLayout.LayoutParams(if (on) dp(12) else dp(5), dp(5)).apply { marginStart = dp(3) })
-            }
-            row.addView(dots)
-        }
-        row.addView(text(11.5f, white55, false).apply { text = "now" })
-        return row
-    }
+    private fun noteMeta(): View = text(11.5f, white55, false).apply { text = "now" }
 
     /**
      * Who it's from. A contact photo is a circle with the app's icon as a badge;
@@ -2251,14 +2225,24 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     // ----- Swiping between alerts -----
+    //
+    // Like pages: the alert next to this one is laid out beside it, and both
+    // move together under your finger, so you see the next one coming. The
+    // island's height blends between the two as you drag. The one leaving
+    // sinks back a touch and the one arriving rises to meet you.
 
-    /** +1: the next alert comes in from the right; -1: from the left. */
     private var pendingSlide = 0
     private var noteSwiping = false
     private var swipeX = 0f
     private var swipeY = 0f
     private var swipeVt: android.view.VelocityTracker? = null
     private val swipeSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private var neighbour: View? = null
+    private var neighbourDir = 0
+    private var neighbourH = 0f
+    private var startH = 0f
+    private var crossed = false
+    private var stripAnim: android.animation.ValueAnimator? = null
 
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         if (content !is Content.Note || mode != Mode.EXPANDED) return false
@@ -2275,15 +2259,76 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 swipeVt?.addMovement(e)
                 val dx = e.rawX - swipeX
                 val dy = e.rawY - swipeY
-                // Starts as soon as the finger moves more sideways than up/down.
                 if (!noteSwiping && abs(dx) > swipeSlop * 0.7f && abs(dx) > abs(dy) && IslandStore.notePosition().second > 1) {
                     noteSwiping = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                     swipeX = e.rawX
+                    stripAnim?.cancel()
+                    startH = v(1)
+                    crossed = false
                 }
             }
         }
         return noteSwiping
+    }
+
+    /** The alert on the side we're dragging towards, built and placed beside this one. */
+    private fun ensureNeighbour(dir: Int, w: Int): View? {
+        if (neighbourDir == dir && neighbour != null) return neighbour
+        dropNeighbour()
+        val (at, count) = IslandStore.notePosition()
+        val j = at + dir
+        if (j !in 0 until count) return null
+        val note = IslandStore.recentNotes.getOrNull(j) ?: return null
+        val s = slot ?: return null
+        val view = buildNote(note, w, gapTop() + offsetY)
+        view.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        neighbourH = min(view.measuredHeight.toFloat(), panelMaxH())
+        // Tall enough for whichever is taller (the island's shape does the clipping).
+        val lp = s.layoutParams
+        val need = max(lp.height, neighbourH.toInt())
+        if (lp.height != need) {
+            lp.height = need
+            s.layoutParams = lp
+        }
+        s.addView(view, LayoutParams(w, LayoutParams.WRAP_CONTENT))
+        neighbour = view
+        neighbourDir = dir
+        return view
+    }
+
+    private fun dropNeighbour() {
+        neighbour?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        neighbour = null
+        neighbourDir = 0
+    }
+
+    /** Lays out the strip for an offset [dx] (how far the current card has moved). */
+    private fun placeStrip(card: View, dx: Float, w: Float) {
+        val gap = dpf(14f)
+        card.translationX = dx
+        val f = (abs(dx) / (w + gap)).coerceIn(0f, 1f)
+        // Leaving: sinks back a little. Arriving: rises to full size.
+        val out = 1f - 0.06f * f
+        card.scaleX = out
+        card.scaleY = out
+        card.alpha = 1f - 0.5f * f
+        neighbour?.let { n ->
+            n.translationX = dx + (if (neighbourDir > 0) 1f else -1f) * (w + gap)
+            val inn = 0.94f + 0.06f * f
+            n.scaleX = inn
+            n.scaleY = inn
+            n.alpha = 0.5f + 0.5f * f
+        }
+        // The island's height blends between the two alerts.
+        if (neighbour != null) {
+            val h = startH + (neighbourH - startH) * f
+            springs[1].snap(h)
+            springs[2].snap(min(dpf(32f), h / 2f))
+            springs[6].snap(cyFor(Mode.EXPANDED, h))
+            updateClip()
+            invalidate()
+        }
     }
 
     private fun noteSwipe(e: MotionEvent) {
@@ -2291,15 +2336,18 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         swipeVt?.addMovement(e)
         val dx = e.rawX - swipeX
         val w = card.width.coerceAtLeast(1).toFloat()
-        val (at, count) = IslandStore.notePosition()
         // Swipe left = the next (older) alert; right = back to a newer one.
         val dir = if (dx < 0) 1 else -1
-        val hasNext = (at + dir) in 0 until count
+        val n = ensureNeighbour(dir, card.width)
         when (e.actionMasked) {
             MotionEvent.ACTION_MOVE -> {
-                // Follows the finger; at either end it only gives a little.
-                card.translationX = if (hasNext) dx else dx * 0.25f
-                card.alpha = 1f - (abs(card.translationX) / w).coerceIn(0f, 1f) * 0.45f
+                // Nothing that way: it only gives a little.
+                placeStrip(card, if (n != null) dx else dx * 0.22f, w)
+                val past = n != null && abs(dx) > w * 0.3f
+                if (past != crossed) {
+                    crossed = past
+                    if (past) haptic()
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 swipeVt?.computeCurrentVelocity(1000)
@@ -2307,19 +2355,39 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 swipeVt?.recycle()
                 swipeVt = null
                 noteSwiping = false
-                val go = hasNext && e.actionMasked == MotionEvent.ACTION_UP && (abs(dx) > w * 0.18f || (abs(vx) > 600f && (vx < 0) == (dx < 0)))
-                if (go) {
-                    haptic()
-                    val out = if (dx < 0) -w else w
-                    // Carries on at the speed you flicked it, then hands over.
-                    val left = abs(out - card.translationX)
-                    val ms = if (abs(vx) > 300f) (left / abs(vx) * 1000f).toLong().coerceIn(90L, 200L) else 180L
-                    card.animate().translationX(out).alpha(0.2f).setDuration(ms).setInterpolator(android.view.animation.LinearInterpolator()).withEndAction {
-                        pendingSlide = if (dx < 0) 1 else -1
-                        if (!IslandStore.showSibling(dir)) pendingSlide = 0
-                    }.start()
-                } else {
-                    card.animate().translationX(0f).alpha(1f).setDuration(280L).setInterpolator(android.view.animation.PathInterpolator(0.2f, 0.9f, 0.25f, 1f)).start()
+                val go = n != null && e.actionMasked == MotionEvent.ACTION_UP &&
+                    (abs(dx) > w * 0.3f || (abs(vx) > 650f && (vx < 0) == (dx < 0)))
+                val gap = dpf(14f)
+                val from = card.translationX
+                val to = if (go) (if (dx < 0) -(w + gap) else (w + gap)) else 0f
+                // Keeps the speed of your flick, then eases in like a page settling.
+                val dist = abs(to - from)
+                val ms = if (abs(vx) > 400f) (dist / abs(vx) * 1000f * 1.6f).toLong().coerceIn(160L, 340L) else (180L + dist / w * 160L).toLong()
+                stripAnim = android.animation.ValueAnimator.ofFloat(from, to).apply {
+                    duration = ms
+                    interpolator = android.view.animation.PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
+                    addUpdateListener { placeStrip(card, it.animatedValue as Float, w) }
+                    addListener(object : android.animation.AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(a: android.animation.Animator) {
+                            if (go) {
+                                // The arriving alert is now in place: make it the shown one, with no jump.
+                                pendingSlide = 1
+                                dropNeighbour()
+                                if (!IslandStore.showSibling(dir)) pendingSlide = 0
+                            } else {
+                                card.scaleX = 1f
+                                card.scaleY = 1f
+                                card.alpha = 1f
+                                dropNeighbour()
+                                springs[1].snap(startH)
+                                springs[2].snap(min(dpf(32f), startH / 2f))
+                                springs[6].snap(cyFor(Mode.EXPANDED, startH))
+                                updateClip()
+                                invalidate()
+                            }
+                        }
+                    })
+                    start()
                 }
             }
         }
