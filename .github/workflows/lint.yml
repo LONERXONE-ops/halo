@@ -1,0 +1,37 @@
+name: Bug check (Android lint)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Restore signing key
+        run: base64 -d app/halo.keystore.b64 > app/halo.keystore || true
+      - name: Lint
+        run: gradle :app:lintDebug --no-daemon || true
+      - name: Publish report
+        run: |
+          mkdir -p /tmp/r && cp app/build/lint.txt /tmp/r/lint.txt 2>/dev/null || echo "no report" > /tmp/r/lint.txt
+          git config user.name "lint-bot"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan lint-report
+          git rm -rf --quiet . || true
+          cp /tmp/r/lint.txt lint.txt
+          git add lint.txt
+          git commit -q -m "Lint report ${{ github.run_number }}"
+          git push -f origin lint-report

@@ -48,5 +48,8 @@ android {
     lint {
         checkReleaseBuilds = false
         abortOnError = false
+        textReport = true
+        textOutput = file("build/lint.txt")
+        checkDependencies = false
     }
 }
