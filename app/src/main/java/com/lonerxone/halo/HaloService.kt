@@ -174,10 +174,36 @@ class HaloService : AccessibilityService(), IslandView.Host {
             "open_notif" -> if (arg != null) openDetail(arg)
             "lock" -> performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
             "quick" -> if (arg != null) quickAction(arg)
-            "seek" -> arg?.toLongOrNull()?.let { tc?.seekTo(it) }
+            "seek" -> arg?.toLongOrNull()?.let { ms -> seekMusic(ms) }
+            "music_home" -> {
+                val on = arg == "1"
+                if (on != launcherShowsMusic) {
+                    launcherShowsMusic = on
+                    push()
+                }
+            }
             "queue_play" -> arg?.toLongOrNull()?.let { tc?.skipToQueueItem(it) }
         }
         main.postDelayed({ LauncherLink.sendNow(this) }, 400L)
+    }
+
+    /** The launcher's music card is on screen (so the island hides its music). */
+    private var launcherShowsMusic = false
+
+    /** Seek, with whichever controller can: Halo's own, else the active session of that app. */
+    private fun seekMusic(ms: Long) {
+        val m = IslandStore.music ?: return
+        try {
+            m.controller?.transportControls?.seekTo(ms)
+            return
+        } catch (_: Exception) {
+        }
+        try {
+            val msm = getSystemService(android.media.session.MediaSessionManager::class.java)
+            val comp = android.content.ComponentName(this, HaloNotificationListener::class.java)
+            msm.getActiveSessions(comp).firstOrNull { it.packageName == m.packageName }?.transportControls?.seekTo(ms)
+        } catch (_: Exception) {
+        }
     }
 
     /** No player in focus: wake the last one with a media key, like a headset button. */
@@ -438,7 +464,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val live = buildList<IslandView.Content> {
             IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }?.let { add(IslandView.Content.Call(it)) }
             IslandStore.timer?.takeIf { p.getBoolean(Prefs.TIMERS, true) }?.let { add(IslandView.Content.Timer(it)) }
-            IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) }?.let { add(IslandView.Content.Music(it)) }
+            // Halo Launcher's own player is on screen: the island steps back so only one shows.
+            IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) && !launcherShowsMusic }?.let { add(IslandView.Content.Music(it)) }
             IslandStore.nav?.takeIf { p.getBoolean(Prefs.NAV, true) }?.let { add(IslandView.Content.Nav(it)) }
             IslandStore.transfer?.takeIf { p.getBoolean(Prefs.TRANSFERS, true) }?.let { add(IslandView.Content.Transfer(it)) }
             // The flashlight shows for a moment, then the island settles back into the
