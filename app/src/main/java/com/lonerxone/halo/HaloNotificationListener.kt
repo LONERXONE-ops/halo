@@ -71,6 +71,7 @@ class HaloNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        LauncherIcons.checkVersion(this) { synchronized(iconCache) { iconCache.clear() } }
         Debug.listenerConnected = true
         val m = getSystemService(MediaSessionManager::class.java)
         sessions = m
@@ -736,19 +737,28 @@ class HaloNotificationListener : NotificationListenerService() {
 
     private val iconCache = HashMap<String, Bitmap?>()
 
+    /**
+     * The app's icon. With Halo Launcher installed it's the same icon as on
+     * the home screen (icon pack, Liquid Glass…): read from Halo's own copy,
+     * or, the first time, the system icon while the launcher's is fetched in
+     * the background for next time.
+     */
     fun appIcon(pkg: String): Bitmap? = synchronized(iconCache) {
-        iconCache.getOrPut(pkg) {
-            // Same icon as on Halo Launcher's home screen, when it's installed.
-            LauncherIcons.get(this, pkg) ?: try {
-                drawableToBitmap(packageManager.getApplicationIcon(pkg))
-            } catch (_: Exception) {
-                null
-            }
+        iconCache[pkg]?.let { return it }
+        LauncherIcons.cached(this, pkg)?.let { iconCache[pkg] = it; return it }
+        val sys = try {
+            drawableToBitmap(packageManager.getApplicationIcon(pkg))
+        } catch (_: Exception) {
+            null
         }
+        iconCache[pkg] = sys
+        LauncherIcons.fetch(this, pkg) { b -> synchronized(iconCache) { iconCache[pkg] = b } }
+        sys
     }
 
     /** The launcher's icon look changed. */
     fun forgetIcons() {
+        LauncherIcons.clear(this)
         synchronized(iconCache) { iconCache.clear() }
     }
 

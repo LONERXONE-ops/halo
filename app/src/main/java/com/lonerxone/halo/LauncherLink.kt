@@ -123,13 +123,66 @@ object LauncherLink {
  */
 object LauncherIcons {
     private val URI = android.net.Uri.parse("content://com.lonerxone.halo.launcher.icons")
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val pending = HashSet<String>()
 
-    fun get(c: Context, pkg: String): Bitmap? {
+    private fun dir(c: Context) = java.io.File(c.filesDir, "launcher_icons").apply { mkdirs() }
+
+    /** From Halo's own copy (fast, safe on the main thread); null if not fetched yet. */
+    fun cached(c: Context, pkg: String): Bitmap? {
         if (!LauncherLink.launcherInstalled(c)) return null
+        val f = java.io.File(dir(c), "$pkg.png")
+        if (!f.exists()) return null
         return try {
-            c.contentResolver.openInputStream(android.net.Uri.withAppendedPath(URI, pkg))?.use { android.graphics.BitmapFactory.decodeStream(it) }
+            android.graphics.BitmapFactory.decodeFile(f.path)
         } catch (_: Throwable) {
             null
+        }
+    }
+
+    /** Fetches the launcher's icon in the background, then calls [done] on the main thread. */
+    fun fetch(c: Context, pkg: String, done: (Bitmap) -> Unit) {
+        if (!LauncherLink.launcherInstalled(c)) return
+        synchronized(pending) { if (!pending.add(pkg)) return }
+        val app = c.applicationContext
+        io.execute {
+            val b = try {
+                app.contentResolver.openInputStream(android.net.Uri.withAppendedPath(URI, pkg))?.use { android.graphics.BitmapFactory.decodeStream(it) }
+            } catch (_: Throwable) {
+                null
+            }
+            synchronized(pending) { pending.remove(pkg) }
+            if (b != null) {
+                try {
+                    java.io.File(dir(app), "$pkg.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                } catch (_: Throwable) {
+                }
+                Handler(Looper.getMainLooper()).post { done(b) }
+            }
+        }
+    }
+
+    /** The launcher's icon look changed (or might have, while Halo was off): start fresh. */
+    fun clear(c: Context) {
+        dir(c).listFiles()?.forEach { it.delete() }
+    }
+
+    /** On start: if the launcher's look changed since the icons were saved, drop them. */
+    fun checkVersion(c: Context, changed: () -> Unit) {
+        if (!LauncherLink.launcherInstalled(c)) return
+        val app = c.applicationContext
+        io.execute {
+            val v = try {
+                app.contentResolver.call(URI, "version", null, null)?.getString("v")
+            } catch (_: Throwable) {
+                null
+            } ?: return@execute
+            val p = Prefs.get(app)
+            if (p.getString("launcher_icons_v", null) != v) {
+                clear(app)
+                p.edit().putString("launcher_icons_v", v).apply()
+                Handler(Looper.getMainLooper()).post { changed() }
+            }
         }
     }
 }
