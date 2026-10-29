@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  canRetrieveWindowContent lets Halo find and tap a Quick Settings tile
+  (mobile data, Bluetooth, airplane mode) when you press its button in the
+  notification center. Halo reads nothing else on screen.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault"
-    android:canRetrieveWindowContent="false"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_desc"
     android:notificationTimeout="100" />

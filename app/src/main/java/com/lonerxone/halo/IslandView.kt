@@ -70,6 +70,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         /** Things switched on that the notification center can switch off. */
         fun quickStates(): List<Quick>
         fun quickAction(id: String)
+        /** The buttons beside "Notifications" (up to four, chosen in settings). */
+        fun controlStates(): List<Controls.State>
+        fun controlTap(id: String)
     }
 
     enum class Mode { HIDDEN, IDLE, COMPACT, EXPANDED, PANEL }
@@ -1600,7 +1603,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(18), dp(6), dp(12), dp(2))
         }
-        header.addView(text(19f, Color.WHITE, true).apply { text = "Notifications" })
+        // The title shrinks to make room for your control buttons.
+        val nControls = host.controlStates().size
+        header.addView(text(if (nControls >= 3) 16f else 19f, Color.WHITE, true).apply {
+            text = "Notifications"
+            maxLines = 1
+            setAutoSizeTextTypeUniformWithConfiguration(11, if (nControls >= 3) 16 else 19, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+            gravity = Gravity.CENTER_VERTICAL
+        }, if (nControls == 0) LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)) else LinearLayout.LayoutParams(0, dp(28), 1f))
         if (items.isNotEmpty()) {
             header.addView(text(11f, Color.WHITE, true).apply {
                 text = items.size.toString()
@@ -1612,7 +1622,29 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         }
-        header.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+        if (nControls == 0) header.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+        // Your controls: white when on, graphite when off.
+        for (st in host.controlStates()) {
+            val on = st.on == true
+            header.addView(ImageView(context).apply {
+                setImageResource(st.def.icon)
+                setColorFilter(if (on) Color.BLACK else Color.WHITE)
+                val pad = dp(7)
+                setPadding(pad, pad, pad, pad)
+                contentDescription = st.def.label
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(if (on) Colors.INK else Colors.GRAPHITE)
+                }
+                setOnClickListener {
+                    haptic()
+                    bounce(it)
+                    // Screenshots and Quick Settings taps need the panel out of the way.
+                    if (st.def.id == "screenshot" || st.def.tile.isNotEmpty()) closePanel()
+                    host.controlTap(st.def.id)
+                }
+            }, LinearLayout.LayoutParams(dp(31), dp(31)).apply { marginStart = dp(5) })
+        }
         header.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_close)
             setColorFilter(Color.argb(210, 255, 255, 255))
@@ -1626,7 +1658,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 haptic()
                 closePanel()
             }
-        }, LinearLayout.LayoutParams(dp(30), dp(30)))
+        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginStart = dp(if (nControls > 0) 9 else 0) })
         col.addView(header)
 
         // Chips: battery first, then everything that's on.

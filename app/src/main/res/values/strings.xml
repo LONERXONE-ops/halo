@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Halo</string>
-    <string name="accessibility_desc">Draws Halo, your dynamic island, around the camera notch. Halo does not read what is on your screen.</string>
+    <string name="accessibility_desc">Draws Halo, your dynamic island, around the camera notch. When you press a control in Halo's notification center (mobile data, Bluetooth, airplane mode), Halo opens Quick Settings and taps that tile for you. It reads nothing else on your screen.</string>
 </resources>

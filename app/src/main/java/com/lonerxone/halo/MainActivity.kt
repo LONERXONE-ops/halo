@@ -356,8 +356,79 @@ class MainActivity : Activity() {
             },
         ))
 
+        col.addView(sectionTitle("Notification center buttons"))
+        col.addView(controlsCard())
+
         col.addView(sectionTitle("Pop-ups"))
         col.addView(takeoverCard())
+    }
+
+    /**
+     * Up to four buttons beside "Notifications": tap to pick (the number is
+     * the order they appear in), tap again to remove.
+     */
+    private fun controlsCard(): View {
+        val c = card().apply { setPadding(dp(16), dp(16), dp(16), dp(14)) }
+        val chosen = Controls.chosenIds(this).toMutableList()
+        c.addView(label("Pick up to ${Controls.MAX}. Mobile data, Wi-Fi, Bluetooth, airplane mode, location and hotspot are switched through Quick Settings, which Android only lets the system change directly, so you'll see it open and close for a moment.", 12.5f, text2, false).apply {
+            setLineSpacing(0f, 1.15f)
+            setPadding(dp(2), 0, dp(2), dp(12))
+        })
+        val grid = android.widget.GridLayout(this).apply { columnCount = 2 }
+        for (d in Controls.ALL) {
+            val pos = chosen.indexOf(d.id)
+            val on = pos >= 0
+            val cell = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                background = GradientDrawable().apply {
+                    setColor(if (on) Colors.INK else Colors.GRAPHITE)
+                    cornerRadius = dp(16).toFloat()
+                }
+                setOnClickListener {
+                    if (on) {
+                        chosen.remove(d.id)
+                    } else if (chosen.size < Controls.MAX) {
+                        chosen.add(d.id)
+                    } else {
+                        android.widget.Toast.makeText(this@MainActivity, "Up to ${Controls.MAX}: remove one first", android.widget.Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
+                    Controls.set(this@MainActivity, chosen)
+                    render()
+                }
+            }
+            cell.addView(android.widget.ImageView(this).apply {
+                setImageResource(d.icon)
+                imageTintList = ColorStateList.valueOf(if (on) Color.BLACK else Color.WHITE)
+            }, LinearLayout.LayoutParams(dp(18), dp(18)))
+            cell.addView(label(d.label, 13f, if (on) Color.BLACK else Color.WHITE, true).apply {
+                setPadding(dp(8), 0, 0, 0)
+                maxLines = 1
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (on) cell.addView(label((pos + 1).toString(), 11f, Color.WHITE, true).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.BLACK)
+                }
+            }, LinearLayout.LayoutParams(dp(20), dp(20)))
+            grid.addView(cell, android.widget.GridLayout.LayoutParams(
+                android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),
+                android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f),
+            ).apply {
+                width = 0
+                setMargins(dp(4), dp(4), dp(4), dp(4))
+            })
+        }
+        c.addView(grid)
+        if (!android.provider.Settings.System.canWrite(this) && "rotate" in chosen) {
+            c.addView(actionButton("Allow auto-rotate switching") {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:$packageName")))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        }
+        return c
     }
 
     /**

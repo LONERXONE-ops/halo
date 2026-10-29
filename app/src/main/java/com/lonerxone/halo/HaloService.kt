@@ -622,6 +622,146 @@ class HaloService : AccessibilityService(), IslandView.Host {
         main.postDelayed({ push() }, 350L)
     }
 
+    // ---------------------------------------------------------------------
+    // Notification center controls (Controls.kt)
+    // ---------------------------------------------------------------------
+
+    override fun controlStates(): List<Controls.State> = Controls.chosen(this).map { d ->
+        Controls.State(d, when (d.id) {
+            "data" -> globalOn("mobile_data")
+            "wifi" -> try {
+                (applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager).isWifiEnabled
+            } catch (_: Exception) {
+                globalOn(android.provider.Settings.Global.WIFI_ON)
+            }
+            "bluetooth" -> globalOn(android.provider.Settings.Global.BLUETOOTH_ON)
+            "airplane" -> airplaneOn()
+            "torch" -> IslandStore.torch != null
+            "dnd" -> dndOn()
+            "rotate" -> try {
+                android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+            } catch (_: Exception) {
+                false
+            }
+            "location" -> try {
+                getSystemService(android.location.LocationManager::class.java)?.isLocationEnabled == true
+            } catch (_: Exception) {
+                false
+            }
+            "hotspot" -> null
+            else -> null
+        })
+    }
+
+    private fun globalOn(key: String): Boolean = try {
+        android.provider.Settings.Global.getInt(contentResolver, key, 0) != 0
+    } catch (_: Exception) {
+        false
+    }
+
+    override fun controlTap(id: String) {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        when (id) {
+            // The panel has just closed; give it a moment so it's not in the picture.
+            "screenshot" -> main.postDelayed({ performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) }, 450L)
+            "torch" -> if (IslandStore.torch != null) torchOff() else torchOn()
+            "dnd" -> if (nm.isNotificationPolicyAccessGranted) {
+                nm.setInterruptionFilter(if (dndOn()) NotificationManager.INTERRUPTION_FILTER_ALL else NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+            } else {
+                openSettings(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+            }
+            "rotate" -> if (android.provider.Settings.System.canWrite(this)) {
+                val on = android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+                android.provider.Settings.System.putInt(contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, if (on) 0 else 1)
+            } else {
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS, android.net.Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: Exception) {
+                }
+            }
+            else -> Controls.ALL.firstOrNull { it.id == id }?.let { tapTile(it) }
+        }
+        main.postDelayed({ push() }, 400L)
+        main.postDelayed({ push() }, 1800L)
+    }
+
+    private fun torchOn() {
+        try {
+            val cm = getSystemService(CameraManager::class.java) ?: return
+            val id = cm.cameraIdList.firstOrNull { cid ->
+                val ch = cm.getCameraCharacteristics(cid)
+                ch.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true &&
+                    ch.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+            } ?: cm.cameraIdList.firstOrNull { cm.getCameraCharacteristics(it).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true } ?: return
+            cm.setTorchMode(id, true)
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Opens Quick Settings, finds the tile (by the name Android reads out for
+     * it), taps it and closes Quick Settings. A few tries, because the panel
+     * takes a moment to open; if it never shows up, the settings page opens.
+     */
+    private fun tapTile(d: Controls.Def, attempt: Int = 0) {
+        if (attempt == 0) {
+            performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+            main.postDelayed({ tapTile(d, 1) }, 550L)
+            return
+        }
+        val node = findTile(d)
+        if (node != null) {
+            var n: android.view.accessibility.AccessibilityNodeInfo? = node
+            while (n != null && !n.isClickable) n = n.parent
+            (n ?: node).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+            main.postDelayed({ closeShade() }, 650L)
+            return
+        }
+        if (attempt < 4) {
+            main.postDelayed({ tapTile(d, attempt + 1) }, 300L)
+            return
+        }
+        closeShade()
+        openSettings(when (d.id) {
+            "data" -> android.provider.Settings.Panel.ACTION_INTERNET_CONNECTIVITY
+            "wifi" -> android.provider.Settings.Panel.ACTION_WIFI
+            "bluetooth" -> android.provider.Settings.ACTION_BLUETOOTH_SETTINGS
+            "airplane" -> android.provider.Settings.ACTION_AIRPLANE_MODE_SETTINGS
+            "location" -> android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            else -> android.provider.Settings.ACTION_WIRELESS_SETTINGS
+        })
+    }
+
+    private fun closeShade() {
+        if (Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE) else performGlobalAction(GLOBAL_ACTION_BACK)
+    }
+
+    /** The Quick Settings tile whose spoken name starts with one of the control's names. */
+    private fun findTile(d: Controls.Def): android.view.accessibility.AccessibilityNodeInfo? {
+        val roots = try {
+            windows.mapNotNull { it.root }.ifEmpty { listOfNotNull(rootInActiveWindow) }
+        } catch (_: Exception) {
+            listOfNotNull(rootInActiveWindow)
+        }
+        val ui = roots.filter { it.packageName?.toString()?.contains("systemui") == true }.ifEmpty { roots }
+        for (word in d.tile) {
+            for (r in ui) {
+                val q = ArrayDeque<android.view.accessibility.AccessibilityNodeInfo>()
+                q.add(r)
+                var seen = 0
+                while (q.isNotEmpty() && seen < 1500) {
+                    val n = q.removeFirst()
+                    seen++
+                    val label = ((n.contentDescription ?: n.text)?.toString() ?: "").lowercase().trim()
+                    // "Mobile data, On" yes; "Data saver" no.
+                    if (label.isNotEmpty() && label.startsWith(word) && !label.contains("saver") && !label.contains("settings")) return n
+                    for (i in 0 until n.childCount) n.getChild(i)?.let { q.add(it) }
+                }
+            }
+        }
+        return null
+    }
+
     private fun ringerMode(): Int = try {
         (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
     } catch (_: Exception) {
