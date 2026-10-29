@@ -44,6 +44,16 @@ class HaloNotificationListener : NotificationListenerService() {
     /** Per chat: the time of the newest message already shown (survives the notification being re-posted). */
     private val seenMsg = HashMap<String, Long>()
 
+    /** In a chat notification, a message with no sender is one you sent. */
+    @Suppress("DEPRECATION")
+    private fun lastIsFromYou(n: Notification): Boolean = try {
+        val arr = n.extras?.getParcelableArray(Notification.EXTRA_MESSAGES)
+        val last = arr?.lastOrNull() as? android.os.Bundle
+        last != null && last.getCharSequence("sender") == null && last.getParcelable<android.app.Person>("sender_person") == null
+    } catch (_: Exception) {
+        false
+    }
+
     @Suppress("DEPRECATION")
     private fun newestMessageTime(n: Notification): Long = try {
         val arr = n.extras?.getParcelableArray(Notification.EXTRA_MESSAGES)
@@ -81,6 +91,7 @@ class HaloNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        Debug.note("Notification access connected")
         LauncherIcons.checkVersion(this) { synchronized(iconCache) { iconCache.clear() } }
         Debug.listenerConnected = true
         val m = getSystemService(MediaSessionManager::class.java)
@@ -108,6 +119,13 @@ class HaloNotificationListener : NotificationListenerService() {
         super.onListenerDisconnected()
         if (instance === this) instance = null
         Debug.listenerConnected = false
+        Debug.note("Notification access dropped by Android: reconnecting")
+        // Ask Android to connect us again right away (it used to wait until
+        // you opened Halo, and the island missed every message meanwhile).
+        try {
+            requestRebind(android.content.ComponentName(this, HaloNotificationListener::class.java))
+        } catch (_: Exception) {
+        }
         try {
             sessions?.removeOnActiveSessionsChangedListener(sessionsChanged)
         } catch (_: Exception) {
@@ -427,6 +445,7 @@ class HaloNotificationListener : NotificationListenerService() {
         val app = appName(pkg)
         fun skip(reason: String) {
             Debug.lastNotification = "$app — skipped: $reason"
+            Debug.note("$app: not shown (${reason})")
         }
 
         if (pkg == packageName) return skip("Halo itself")
@@ -476,6 +495,11 @@ class HaloNotificationListener : NotificationListenerService() {
         }
         if (newest > 0L) seenMsg[conv] = newest
         if (seenMsg.size > 300) seenMsg.clear()
+        // Your own reply (sent from Halo or the app) updating the chat: nothing to announce.
+        if (lastIsFromYou(n)) {
+            shown[sbn.key] = fingerprint
+            return skip("your own message")
+        }
         val alertOnce = (n.flags and Notification.FLAG_ONLY_ALERT_ONCE) != 0
         if (alertOnce && shown.containsKey(sbn.key)) {
             shown[sbn.key] = fingerprint
@@ -511,6 +535,7 @@ class HaloNotificationListener : NotificationListenerService() {
             5_000L,
         )
         Debug.lastNotification = "$app — shown: ${title.take(24)}" + if (peek) " (DND peek)" else ""
+        Debug.note("$app: shown \u2014 ${title.take(30)}" + if (peek) " (DND peek)" else "")
     }
 
     /** WhatsApp and most chat apps use MessagingStyle; take the newest line. */

@@ -981,6 +981,11 @@ class MainActivity : Activity() {
             append("Sessions   ").append(Debug.sessions).append('\n')
             append("Playing    ").append(Debug.nowPlaying).append('\n')
             append("Last alert ").append(Debug.lastNotification)
+            val recent = synchronized(Debug.log) { Debug.log.toList() }
+            if (recent.isNotEmpty()) {
+                append("\n\nRecent alerts (why each did or didn't show)\n")
+                for (l in recent.take(12)) append(l).append('\n')
+            }
         }
     }
 

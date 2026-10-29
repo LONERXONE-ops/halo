@@ -161,6 +161,17 @@ object Debug {
     var nowPlaying = "nothing"
     var lastNotification = "none yet"
     var island = "not running"
+
+    /** The last few things Halo did with notifications, newest first (shown in Halo → Permissions). */
+    val log = ArrayDeque<String>()
+
+    fun note(line: String) {
+        val t = android.text.format.DateFormat.format("HH:mm:ss", System.currentTimeMillis())
+        synchronized(log) {
+            log.addFirst("$t  $line")
+            while (log.size > 25) log.removeLast()
+        }
+    }
 }
 
 /** One place every source writes to; the overlay reads from here. Main thread only. */

@@ -67,6 +67,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             when (intent.action) {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
                 Intent.ACTION_SCREEN_OFF -> locked = true
+                Intent.ACTION_SCREEN_ON -> ensureListener()
                 Intent.ACTION_BATTERY_CHANGED -> {
                     onBattery(intent)
                     return
@@ -141,6 +142,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         watchTorch()
         watchWifi()
         PopupControl.sync(this)
+        main.postDelayed(listenerWatch, 60_000L)
         // Commands from Halo Launcher (signature-protected).
         val link = IntentFilter(LauncherLink.ACTION_COMMAND)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -600,6 +602,28 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     // ----- Flashlight -----
     private val main = Handler(Looper.getMainLooper())
+
+    /**
+     * Every minute (and when the screen turns on): if notification access is
+     * on but Android has disconnected the listener, ask it to reconnect.
+     */
+    private val listenerWatch = object : Runnable {
+        override fun run() {
+            ensureListener()
+            main.postDelayed(this, 60_000L)
+        }
+    }
+
+    private fun ensureListener() {
+        if (HaloNotificationListener.instance != null) return
+        val on = android.provider.Settings.Secure.getString(contentResolver, "enabled_notification_listeners")?.contains("$packageName/") == true
+        if (!on) return
+        try {
+            android.service.notification.NotificationListenerService.requestRebind(android.content.ComponentName(this, HaloNotificationListener::class.java))
+            Debug.note("Reconnecting notification access")
+        } catch (_: Exception) {
+        }
+    }
     private val torchCallback = object : CameraManager.TorchCallback() {
         override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
             if (enabled) IslandStore.setTorch(cameraId) else if (IslandStore.torch == cameraId) IslandStore.setTorch(null)
