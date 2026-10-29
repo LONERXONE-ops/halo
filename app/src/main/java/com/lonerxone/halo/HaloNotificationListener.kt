@@ -423,7 +423,12 @@ class HaloNotificationListener : NotificationListenerService() {
         // Follow the phone's own rules: Do Not Disturb (and its exceptions,
         // like starred contacts), silent or blocked channels, paused apps.
         val ranking = rankingOf(sbn)
-        quietReason(ranking)?.let { return skip(it) }
+        val quiet = quietReason(ranking)
+        // DND peek: only Do Not Disturb is waived (a paused app or a channel
+        // you turned off stays hidden). Halo itself makes no sound, and the
+        // system's sound, vibration and pop-up still follow DND.
+        val peek = quiet == "Do Not Disturb" && prefs.getBoolean(Prefs.DND_PEEK, false)
+        if (quiet != null && !peek) return skip(quiet)
         if (ranking != null && ranking.importance in 1 until NotificationManager.IMPORTANCE_DEFAULT) return skip("silent notification")
 
         // Lock screen privacy: hidden notifications stay hidden, private ones lose their text.
@@ -473,10 +478,11 @@ class HaloNotificationListener : NotificationListenerService() {
                 accent = color,
                 contentIntent = n.contentIntent,
                 rich = rich.copy(title = title.ifEmpty { app }),
+                silent = peek,
             ),
             5_000L,
         )
-        Debug.lastNotification = "$app — shown: ${title.take(24)}"
+        Debug.lastNotification = "$app — shown: ${title.take(24)}" + if (peek) " (DND peek)" else ""
     }
 
     /** WhatsApp and most chat apps use MessagingStyle; take the newest line. */

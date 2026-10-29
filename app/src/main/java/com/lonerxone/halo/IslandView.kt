@@ -477,7 +477,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 swapContent(view, w.toInt(), h.toInt(), r, cy)
                 animateTo(w, h, r, 1f, glassStrength, if (lowPower) 0f else 1f, 1f, cy, grow = true)
                 lastTouch = SystemClock.uptimeMillis()
-                haptic()
+                // A message shown during Do Not Disturb arrives without a tap.
+                if ((content as? Content.Note)?.note?.silent != true) haptic()
             }
         }
         Debug.island = "mode ${m.name.lowercase()}"

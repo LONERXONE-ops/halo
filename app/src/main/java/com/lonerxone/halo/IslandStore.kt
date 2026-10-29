@@ -89,6 +89,8 @@ data class NotifInfo(
     val accent: Int,
     val contentIntent: PendingIntent?,
     val rich: Rich,
+    /** Shown during Do Not Disturb (DND peek): no haptic tap when it arrives. */
+    val silent: Boolean = false,
 )
 
 /** A call in progress or ringing, taken from the dialer's call notification. */
@@ -335,6 +337,12 @@ object Prefs {
     const val BEAT = "beat"
     /** Halo shows new notifications instead of Android's own pop-up banners. */
     const val TAKEOVER = "takeover"
+    /**
+     * "See messages in Do Not Disturb": the island still shows new messages
+     * (silently) while DND is on. Sounds, vibration and Android's pop-ups
+     * keep obeying DND. Off by default.
+     */
+    const val DND_PEEK = "dnd_peek"
 
     fun picFile(c: Context, key: String): java.io.File = java.io.File(c.filesDir, "$key.jpg")
 

@@ -345,6 +345,7 @@ class MainActivity : Activity() {
         col.addView(group(
             switchRow("Messages", "WhatsApp, SMS and app alerts", Prefs.NOTIFS),
             switchRowDefault("Hide message text", "Show \"New message\" instead", Prefs.HIDE_TEXT, false),
+            switchRowDefault("See messages in Do Not Disturb", "The island still shows new messages, silently. Sounds, vibration and pop-ups keep following Do Not Disturb", Prefs.DND_PEEK, false),
             switchRow("Charging", "Pop when you plug in", Prefs.CHARGING),
             switchRow("System pops", "Low battery, full, silent, earbuds, DND", Prefs.SYSTEM_POPS),
             switchRow("Connections & modes", "Wi-Fi, airplane mode, power saving", Prefs.CONNECTIVITY),
