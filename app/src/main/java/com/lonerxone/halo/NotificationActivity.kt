@@ -69,8 +69,9 @@ class NotificationActivity : Activity() {
 
     /** Springy ease: overshoots a touch and settles (1 - e^-kt cos wt). */
     private class Springy(bounce: Float = 0.4f) : android.view.animation.Interpolator {
-        private val k = 7.5f - 2.5f * bounce
-        private val w = 8.5f + 3f * bounce
+        // Small overshoot only, so moving things never swing into their neighbours.
+        private val k = 9f - 2f * bounce
+        private val w = 7.5f + 2f * bounce
         override fun getInterpolation(t: Float): Float =
             if (t >= 1f) 1f else (1.0 - Math.exp((-k * t).toDouble()) * Math.cos((w * t).toDouble())).toFloat()
     }
@@ -180,13 +181,29 @@ class NotificationActivity : Activity() {
         if (stroke) setStroke(dp(1), Color.argb(30, 255, 255, 255))
     }
 
-    /** Shrinks on touch, springs back on release. */
+    /**
+     * Dips on touch and eases back, never past its size. The dip waits for
+     * Android's tap delay, so starting a scroll doesn't make things dip and pop.
+     */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     private fun View.pressy() {
+        val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+        var dx = 0f
+        var dy = 0f
+        val press = Runnable { animate().scaleX(0.92f).scaleY(0.92f).setDuration(90L).setInterpolator(DecelerateInterpolator()).start() }
+        fun release(v: View) {
+            v.removeCallbacks(press)
+            v.animate().scaleX(1f).scaleY(1f).setDuration(220L).setInterpolator(DecelerateInterpolator(2f)).start()
+        }
         setOnTouchListener { v, e ->
             when (e.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90L).setInterpolator(DecelerateInterpolator()).start()
-                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(380L).setInterpolator(Springy(0.6f)).start()
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    dx = e.x
+                    dy = e.y
+                    v.postDelayed(press, android.view.ViewConfiguration.getTapTimeout().toLong())
+                }
+                android.view.MotionEvent.ACTION_MOVE -> if (kotlin.math.abs(e.x - dx) > slop || kotlin.math.abs(e.y - dy) > slop) release(v)
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> release(v)
             }
             false
         }

@@ -621,6 +621,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         for (s in springs) if (s.step(dt)) moving = true
         if (!revealed && shapeProgress() >= 0.6f) reveal()
         slot?.translationY = v(6) - t(6)
+        updateClip()
         if (moving) {
             Choreographer.getInstance().postFrameCallback(frameCallback)
         } else {
@@ -641,6 +642,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun onSettled() {
+        updateClip()
         if (!revealed) reveal()
     }
 
@@ -917,7 +919,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun swapContent(view: View?, w: Int, h: Int, radius: Float, cy: Float) {
         slot?.let { old ->
             old.animate().cancel()
-            old.animate().alpha(0f).scaleX(0.96f).scaleY(0.96f).setDuration(90L).withEndAction { removeView(old) }.start()
+            old.animate().alpha(0f).setDuration(90L).withEndAction { removeView(old) }.start()
         }
         slot = null
         if (view == null) {
@@ -926,11 +928,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         val s = FrameLayout(context).apply {
             alpha = 0f
-            scaleX = 0.94f
-            scaleY = 0.94f
+            tag = SLOT_TAG
+            // Clipped to the island's shape *as it is right now* (not its final
+            // size): while it grows or shrinks, nothing spills over its edges.
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, outline: Outline) {
-                    outline.setRoundRect(0, 0, v.width, v.height, radius)
+                    if (liveRect.isEmpty) {
+                        outline.setRoundRect(0, 0, v.width, v.height, radius)
+                        return
+                    }
+                    val ox = v.left + v.translationX
+                    val oy = v.top + v.translationY
+                    val l = (liveRect.left - ox).toInt().coerceIn(0, v.width)
+                    val t = (liveRect.top - oy).toInt().coerceIn(0, v.height)
+                    val r = (liveRect.right - ox).toInt().coerceIn(l, v.width)
+                    val b = (liveRect.bottom - oy).toInt().coerceIn(t, v.height)
+                    outline.setRoundRect(l, t, r, b, liveR.coerceAtMost(minOf(r - l, b - t) / 2f))
                 }
             }
             clipToOutline = true
@@ -943,12 +956,29 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         addView(s, lp)
         slot = s
         revealed = false
+        updateClip()
     }
 
     private fun reveal() {
         revealed = true
-        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)
-            ?.setInterpolator(DecelerateInterpolator(1.6f))?.setDuration(220L)?.start()
+        slot?.animate()?.alpha(1f)?.setInterpolator(DecelerateInterpolator(1.6f))?.setDuration(220L)?.start()
+    }
+
+    /** The island's current shape on screen (in this view), for clipping its contents. */
+    private val liveRect = RectF()
+    private var liveR = 0f
+
+    private fun updateClip() {
+        if (v(0) < 1f || v(1) < 1f) {
+            liveRect.setEmpty()
+        } else {
+            pillRect(v(0), v(1), v(6), liveRect)
+            liveR = min(max(v(2), 0f), v(1) / 2f)
+        }
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)
+            if (c.tag == SLOT_TAG) c.invalidateOutline()
+        }
     }
 
     // =====================================================================
@@ -1941,8 +1971,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                             .setInterpolator(android.view.animation.LinearInterpolator())
                             .withEndAction { collapse(v, onDismiss) }.start()
                     } else if (dragging) {
-                        v.animate().translationX(0f).alpha(1f).rotation(0f).setDuration(220L)
-                            .setInterpolator(android.view.animation.OvershootInterpolator(1.4f)).start()
+                        v.animate().translationX(0f).alpha(1f).rotation(0f).setDuration(240L)
+                            .setInterpolator(DecelerateInterpolator(2f)).start()
                     } else if (abs(e.rawY - downY) < slop) {
                         v.performClick()
                     }
@@ -2238,3 +2268,6 @@ class ShineDrawable(private val fill: Int, private val radius: Float, private va
         outline.setRoundRect(bounds, radius)
     }
 }
+
+/** Marks the island's content holders (clipped to its live shape). */
+private const val SLOT_TAG = "island_slot"
