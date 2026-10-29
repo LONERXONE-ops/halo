@@ -55,12 +55,17 @@ class NotificationActivity : Activity() {
     /** What you sent from here (the app echoes it back in its next notification). */
     private val sentTexts = HashSet<String>()
 
-    private fun sig(m: Msg) = (m.sender ?: "") + "\u0000" + m.text + "\u0000" + (m.uri ?: "")
+    /**
+     * Who, when and what. Not the photo's link: apps hand out a fresh link to
+     * the same photo every time they update the notification, which made one
+     * photo look like a new message each time.
+     */
+    private fun sig(m: Msg) = (m.sender ?: "") + "\u0000" + m.time + "\u0000" + m.text + "\u0000" + (if (m.uri != null) "photo" else "")
     private val io = java.util.concurrent.Executors.newFixedThreadPool(2)
     private val ui = Handler(Looper.getMainLooper())
 
     /** One line of a conversation: who, what, and a photo if it has one. */
-    class Msg(val sender: String?, val text: CharSequence, val uri: android.net.Uri?, val mime: String?)
+    class Msg(val sender: String?, val text: CharSequence, val uri: android.net.Uri?, val mime: String?, val time: Long = 0L)
 
     /** Springy ease: overshoots a touch and settles (1 - e^-kt cos wt). */
     private class Springy(bounce: Float = 0.4f) : android.view.animation.Interpolator {
@@ -805,7 +810,7 @@ class NotificationActivity : Activity() {
             val text = b.getCharSequence("text") ?: ""
             val uri = b.getParcelable<android.net.Uri>("uri")
             if (text.isBlank() && uri == null) return@mapNotNull null
-            Msg(b.getCharSequence("sender")?.toString(), text, uri, b.getString("type"))
+            Msg(b.getCharSequence("sender")?.toString(), text, uri, b.getString("type"), b.getLong("time", 0L))
         }.takeLast(12)
     }
 

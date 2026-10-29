@@ -41,6 +41,16 @@ class HaloNotificationListener : NotificationListenerService() {
 
     /** key -> last text we showed, so re-posted notifications do not pop twice. */
     private val shown = HashMap<String, String>()
+    /** Per chat: the time of the newest message already shown (survives the notification being re-posted). */
+    private val seenMsg = HashMap<String, Long>()
+
+    @Suppress("DEPRECATION")
+    private fun newestMessageTime(n: Notification): Long = try {
+        val arr = n.extras?.getParcelableArray(Notification.EXTRA_MESSAGES)
+        arr?.mapNotNull { (it as? android.os.Bundle)?.getLong("time", 0L) }?.maxOrNull() ?: 0L
+    } catch (_: Exception) {
+        0L
+    }
 
     private val sessionsChanged = MediaSessionManager.OnActiveSessionsChangedListener { list ->
         pick(list ?: emptyList())
@@ -454,6 +464,17 @@ class HaloNotificationListener : NotificationListenerService() {
 
         val fingerprint = "$title|${rich.sender}|$text"
         if (shown[sbn.key] == fingerprint) return skip("already shown")
+        // The same message coming back (chat apps re-post a notification when
+        // a photo finishes downloading, or cancel and post it again): only a
+        // message newer than the last one shown for this chat pops the island.
+        val conv = pkg + "|" + (n.shortcutId ?: sbn.key)
+        val newest = newestMessageTime(n)
+        if (newest > 0L && newest <= (seenMsg[conv] ?: 0L)) {
+            shown[sbn.key] = fingerprint
+            return skip("same message again")
+        }
+        if (newest > 0L) seenMsg[conv] = newest
+        if (seenMsg.size > 300) seenMsg.clear()
         val alertOnce = (n.flags and Notification.FLAG_ONLY_ALERT_ONCE) != 0
         if (alertOnce && shown.containsKey(sbn.key)) {
             shown[sbn.key] = fingerprint
