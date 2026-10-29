@@ -451,7 +451,8 @@ class HaloNotificationListener : NotificationListenerService() {
         var hideText = prefs.getBoolean(Prefs.HIDE_TEXT, false)
         if (isLocked()) {
             if (!secureFlag("lock_screen_show_notifications", true)) return skip("lock screen notifications off")
-            val override = ranking?.lockscreenVisibilityOverride ?: NO_OVERRIDE
+            // (Android 12+ only; on 11 the notification's own setting decides.)
+            val override = if (Build.VERSION.SDK_INT >= 31) ranking?.lockscreenVisibilityOverride ?: NO_OVERRIDE else NO_OVERRIDE
             val vis = if (override != NO_OVERRIDE) override else n.visibility
             if (vis == Notification.VISIBILITY_SECRET) return skip("hidden on lock screen")
             if (vis == Notification.VISIBILITY_PRIVATE || !secureFlag("lock_screen_allow_private_notifications", true)) hideText = true
