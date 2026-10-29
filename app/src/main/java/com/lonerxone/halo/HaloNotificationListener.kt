@@ -92,6 +92,7 @@ class HaloNotificationListener : NotificationListenerService() {
         super.onListenerConnected()
         instance = this
         Debug.note("Notification access connected")
+        IslandStore.noteSource = { instance?.swipeNotes().orEmpty() }
         LauncherIcons.checkVersion(this) { synchronized(iconCache) { iconCache.clear() } }
         Debug.listenerConnected = true
         val m = getSystemService(MediaSessionManager::class.java)
@@ -590,6 +591,48 @@ class HaloNotificationListener : NotificationListenerService() {
                     postTime = sbn.postTime,
                     canReply = rich.replyable,
                     rich = rich.copy(title = rich.title.ifEmpty { app }),
+                )
+            }
+            .toList()
+    }
+
+    /**
+     * Every notification you have right now (any app, not only the ones that
+     * popped), as alerts you can swipe through on the island, newest first.
+     */
+    fun swipeNotes(): List<NotifInfo> {
+        val all = try {
+            activeNotifications ?: return emptyList()
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        val blocked = Prefs.blocked(this)
+        val hideText = Prefs.get(this).getBoolean(Prefs.HIDE_TEXT, false) || isLocked()
+        return all.asSequence()
+            .filter { it.packageName != packageName && it.packageName !in blocked }
+            .filter { !it.isOngoing }
+            .filter { (it.notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0 }
+            .filter { mediaToken(it.notification) == null && !isCall(it) }
+            .sortedByDescending { it.postTime }
+            .take(10)
+            .mapNotNull { sbn ->
+                val n = sbn.notification
+                val rich = richOf(sbn, hideText)
+                if (rich.title.isEmpty() && rich.text.isEmpty()) return@mapNotNull null
+                if (SUMMARY.containsMatchIn(rich.text) || SUMMARY.containsMatchIn(rich.title)) return@mapNotNull null
+                val app = appName(sbn.packageName)
+                NotifInfo(
+                    id = IslandStore.nextId(),
+                    key = sbn.key,
+                    packageName = sbn.packageName,
+                    appName = app,
+                    title = rich.title.ifEmpty { app },
+                    text = rich.text,
+                    icon = rich.avatar ?: rich.appIcon,
+                    accent = if (n.color != Notification.COLOR_DEFAULT && Color.alpha(n.color) > 0) brighten(n.color) else accentFrom(rich.appIcon),
+                    contentIntent = n.contentIntent,
+                    rich = rich.copy(title = rich.title.ifEmpty { app }),
+                    silent = true,
                 )
             }
             .toList()

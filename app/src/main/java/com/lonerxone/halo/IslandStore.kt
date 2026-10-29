@@ -299,14 +299,26 @@ object IslandStore {
     private fun pruneRecent() {
         val now = System.currentTimeMillis()
         recentNotes.removeAll { now - (recentAt[it.key] ?: 0L) > RECENT_MS }
-        while (recentNotes.size > 6) recentNotes.removeAt(recentNotes.size - 1)
+        while (recentNotes.size > 10) recentNotes.removeAt(recentNotes.size - 1)
     }
 
+    /** All your current notifications (from the listener), for swiping through. */
+    var noteSource: (() -> List<NotifInfo>)? = null
+
     fun showNotif(n: NotifInfo, durationMs: Long) {
-        recentNotes.removeAll { it.key == n.key }
-        recentNotes.add(0, n)
-        recentAt[n.key] = System.currentTimeMillis()
-        pruneRecent()
+        // The new alert first, then every other notification you have (any app),
+        // newest first: swipe sideways to go through them all.
+        val now = System.currentTimeMillis()
+        val others = try {
+            noteSource?.invoke().orEmpty().filter { it.key != n.key }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        recentNotes.clear()
+        recentNotes.add(n)
+        recentNotes.addAll(others)
+        while (recentNotes.size > 10) recentNotes.removeAt(recentNotes.size - 1)
+        for (r in recentNotes) recentAt[r.key] = now
         notif = n
         handler.removeCallbacks(clearNotif)
         handler.postDelayed(clearNotif, durationMs)

@@ -658,7 +658,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             val d = t(8)
             touchRect.right = bubbleCenterX(t(0), d, t(10)) + d / 2f
         }
-        val extra = if (mode == Mode.IDLE) dpf(10f) else dpf(2f)
+        // A bigger margin around an alert so a sideways swipe is easy to start.
+        val extra = when {
+            mode == Mode.IDLE -> dpf(10f)
+            content is Content.Note -> dpf(14f)
+            else -> dpf(2f)
+        }
         host.setTouchArea(
             Rect(
                 (touchRect.left - extra).toInt(),
@@ -964,9 +969,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             // The next alert slides in from the side you swiped towards.
             s.alpha = 1f
             revealed = true
-            view.translationX = slide * w * 0.5f
-            view.alpha = 0f
-            view.animate().translationX(0f).alpha(1f).setDuration(300L).setInterpolator(DecelerateInterpolator(2.2f)).start()
+            view.translationX = slide * w * 0.6f
+            view.alpha = 0.25f
+            view.animate().translationX(0f).alpha(1f).setDuration(380L).setInterpolator(android.view.animation.PathInterpolator(0.16f, 0.9f, 0.2f, 1f)).start()
         }
     }
 
@@ -2270,7 +2275,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 swipeVt?.addMovement(e)
                 val dx = e.rawX - swipeX
                 val dy = e.rawY - swipeY
-                if (!noteSwiping && abs(dx) > swipeSlop && abs(dx) > abs(dy) * 1.4f && IslandStore.notePosition().second > 1) {
+                // Starts as soon as the finger moves more sideways than up/down.
+                if (!noteSwiping && abs(dx) > swipeSlop * 0.7f && abs(dx) > abs(dy) && IslandStore.notePosition().second > 1) {
                     noteSwiping = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                     swipeX = e.rawX
@@ -2293,7 +2299,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             MotionEvent.ACTION_MOVE -> {
                 // Follows the finger; at either end it only gives a little.
                 card.translationX = if (hasNext) dx else dx * 0.25f
-                card.alpha = 1f - (abs(card.translationX) / w).coerceIn(0f, 1f) * 0.7f
+                card.alpha = 1f - (abs(card.translationX) / w).coerceIn(0f, 1f) * 0.45f
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 swipeVt?.computeCurrentVelocity(1000)
@@ -2301,16 +2307,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 swipeVt?.recycle()
                 swipeVt = null
                 noteSwiping = false
-                val go = hasNext && e.actionMasked == MotionEvent.ACTION_UP && (abs(dx) > w * 0.22f || (abs(vx) > 900f && (vx < 0) == (dx < 0)))
+                val go = hasNext && e.actionMasked == MotionEvent.ACTION_UP && (abs(dx) > w * 0.18f || (abs(vx) > 600f && (vx < 0) == (dx < 0)))
                 if (go) {
                     haptic()
                     val out = if (dx < 0) -w else w
-                    card.animate().translationX(out).alpha(0f).setDuration(130L).setInterpolator(android.view.animation.AccelerateInterpolator(1.4f)).withEndAction {
+                    // Carries on at the speed you flicked it, then hands over.
+                    val left = abs(out - card.translationX)
+                    val ms = if (abs(vx) > 300f) (left / abs(vx) * 1000f).toLong().coerceIn(90L, 200L) else 180L
+                    card.animate().translationX(out).alpha(0.2f).setDuration(ms).setInterpolator(android.view.animation.LinearInterpolator()).withEndAction {
                         pendingSlide = if (dx < 0) 1 else -1
                         if (!IslandStore.showSibling(dir)) pendingSlide = 0
                     }.start()
                 } else {
-                    card.animate().translationX(0f).alpha(1f).setDuration(240L).setInterpolator(DecelerateInterpolator(2f)).start()
+                    card.animate().translationX(0f).alpha(1f).setDuration(280L).setInterpolator(android.view.animation.PathInterpolator(0.2f, 0.9f, 0.25f, 1f)).start()
                 }
             }
         }
