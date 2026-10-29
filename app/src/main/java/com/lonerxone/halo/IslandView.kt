@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Outline
 import android.graphics.Paint
@@ -691,9 +692,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         canvas.drawRoundRect(rect, r, r, fillPaint)
         drawPicture(canvas, r, a)
 
-        // A hairline on open cards so the black card reads against dark wallpapers.
+        // Liquid Glass shine: a soft sheen across the top and a rim that
+        // catches the light top-left (stronger on open cards, gentle on the
+        // pill; the idle circle over the camera stays pure black).
         val edge = v(9).coerceIn(0f, 1f)
-        if (edge > 0.02f) {
+        if (mode != Mode.IDLE && mode != Mode.HIDDEN) {
+            val grow = ((rect.height() - idleD()) / max(1f, compactH() - idleD())).coerceIn(0f, 1f)
+            val shine = a * grow * max(edge, 0.6f)
+            if (shine > 0.02f) drawShine(canvas, r, shine)
+        } else if (edge > 0.02f) {
             edgePaint.color = Color.argb((26 * edge * a).toInt(), 255, 255, 255)
             val inset = edgePaint.strokeWidth / 2f
             rect.inset(inset, inset)
@@ -715,6 +722,39 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
 
         drawBubble(canvas, w, a)
+    }
+
+    // Shine shaders are made once in unit space and stretched to the shape each frame.
+    private val sheenShader = LinearGradient(0f, 0f, 0f, 1f,
+        intArrayOf(Color.argb(34, 255, 255, 255), Color.argb(10, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(14, 255, 255, 255)),
+        floatArrayOf(0f, 0.22f, 0.5f, 0.88f, 1f), Shader.TileMode.CLAMP)
+    private val rimShader = LinearGradient(0f, 0f, 1f, 1f,
+        intArrayOf(Color.argb(150, 255, 255, 255), Color.argb(26, 255, 255, 255), Color.argb(18, 255, 255, 255), Color.argb(70, 255, 255, 255)),
+        floatArrayOf(0f, 0.35f, 0.65f, 1f), Shader.TileMode.CLAMP)
+    private val shineMatrix = Matrix()
+    private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
+    private fun drawShine(canvas: Canvas, r: Float, amount: Float) {
+        val al = (255 * amount).toInt().coerceIn(0, 255)
+        shineMatrix.reset()
+        shineMatrix.setScale(1f, rect.height())
+        shineMatrix.postTranslate(0f, rect.top)
+        sheenShader.setLocalMatrix(shineMatrix)
+        sheenPaint.shader = sheenShader
+        sheenPaint.alpha = al
+        canvas.drawRoundRect(rect, r, r, sheenPaint)
+        val sw = dpf(1.2f)
+        shineMatrix.reset()
+        shineMatrix.setScale(rect.width(), rect.height())
+        shineMatrix.postTranslate(rect.left, rect.top)
+        rimShader.setLocalMatrix(shineMatrix)
+        rimPaint.shader = rimShader
+        rimPaint.strokeWidth = sw
+        rimPaint.alpha = al
+        rect.inset(sw / 2f, sw / 2f)
+        canvas.drawRoundRect(rect, r - sw / 2f, r - sw / 2f, rimPaint)
+        rect.inset(-sw / 2f, -sw / 2f)
     }
 
     /**
@@ -1315,13 +1355,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             box.addView(roundImage(photo, size / 2f, Colors.GRAPHITE, R.drawable.ic_bell), LayoutParams(size, size))
             if (r.appIcon != null) {
                 val badge = (size * 0.4f).toInt()
+                // The app's icon as a small rounded tile in a ring the colour of the card.
                 val ring = FrameLayout(context).apply {
                     background = GradientDrawable().apply {
-                        setColor(Color.BLACK)
-                        cornerRadius = dpf(7f)
+                        setColor(Color.rgb(14, 14, 16))
+                        cornerRadius = (badge + dp(4)) * 0.3f
                     }
                     setPadding(dp(2), dp(2), dp(2), dp(2))
-                    addView(roundImage(r.appIcon, dpf(5f), Colors.GRAPHITE, R.drawable.ic_bell), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+                    addView(roundImage(r.appIcon, badge * 0.28f, Colors.GRAPHITE, R.drawable.ic_bell), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
                 }
                 box.addView(ring, LayoutParams(badge + dp(4), badge + dp(4), Gravity.END or Gravity.BOTTOM).apply {
                     marginEnd = -dp(3)
@@ -1811,11 +1852,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val cardView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(14))
-            background = GradientDrawable().apply {
-                // Nearly solid, so cards stay readable over any picture or wallpaper.
-                setColor(Color.argb(235, 30, 30, 32))
-                cornerRadius = dpf(22f)
-            }
+            // Nearly solid, so cards stay readable over any picture or wallpaper, with a Liquid Glass shine.
+            background = ShineDrawable(Color.argb(235, 30, 30, 32), dpf(22f), dpf(1.1f))
             setOnClickListener {
                 haptic()
                 panelOpen = false
@@ -2151,5 +2189,52 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         animating = false
         removeCallbacks(ticker)
+    }
+}
+
+
+/**
+ * A card with a Liquid Glass feel: its colour, a soft sheen across the top,
+ * and a hairline rim that's bright top-left and faint elsewhere.
+ */
+class ShineDrawable(private val fill: Int, private val radius: Float, private val stroke: Float) : Drawable() {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sheen = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = stroke
+    }
+    private val r = RectF()
+
+    override fun onBoundsChange(b: Rect) {
+        super.onBoundsChange(b)
+        sheen.shader = LinearGradient(0f, b.top.toFloat(), 0f, b.bottom.toFloat(),
+            intArrayOf(Color.argb(30, 255, 255, 255), Color.argb(8, 255, 255, 255), Color.argb(0, 255, 255, 255)),
+            floatArrayOf(0f, 0.3f, 0.6f), Shader.TileMode.CLAMP)
+        rim.shader = LinearGradient(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(),
+            intArrayOf(Color.argb(120, 255, 255, 255), Color.argb(20, 255, 255, 255), Color.argb(45, 255, 255, 255)),
+            floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+    }
+
+    override fun draw(c: Canvas) {
+        r.set(bounds)
+        p.color = fill
+        c.drawRoundRect(r, radius, radius, p)
+        c.drawRoundRect(r, radius, radius, sheen)
+        r.inset(stroke / 2f, stroke / 2f)
+        c.drawRoundRect(r, radius - stroke / 2f, radius - stroke / 2f, rim)
+    }
+
+    override fun setAlpha(alpha: Int) {
+        p.alpha = alpha
+    }
+
+    override fun setColorFilter(cf: android.graphics.ColorFilter?) {}
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+
+    override fun getOutline(outline: Outline) {
+        outline.setRoundRect(bounds, radius)
     }
 }
