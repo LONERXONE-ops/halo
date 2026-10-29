@@ -68,6 +68,22 @@ object LauncherLink {
             i.putExtra("m_pos_at", m.positionUpdatedAt)
             i.putExtra("m_speed", m.speed)
             smallArt(m)?.let { i.putExtra("m_art", it) }
+            // What's coming up (when the app shares its queue): up to 40 songs around the current one.
+            try {
+                val c = m.controller
+                val q = c?.queue.orEmpty()
+                if (q.isNotEmpty()) {
+                    val active = c?.playbackState?.activeQueueItemId ?: -1L
+                    val at = q.indexOfFirst { it.queueId == active }.coerceAtLeast(0)
+                    val from = (at - 5).coerceAtLeast(0)
+                    val part = q.subList(from, minOf(q.size, from + 40))
+                    i.putExtra("q_ids", part.map { it.queueId }.toLongArray())
+                    i.putExtra("q_titles", part.map { it.description?.title?.toString().orEmpty() }.toTypedArray())
+                    i.putExtra("q_subs", part.map { it.description?.subtitle?.toString().orEmpty() }.toTypedArray())
+                    i.putExtra("q_active", active)
+                }
+            } catch (_: Exception) {
+            }
         }
         val listener = HaloNotificationListener.instance
         if (listener != null) {

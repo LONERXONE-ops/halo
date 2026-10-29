@@ -174,6 +174,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
             "open_notif" -> if (arg != null) openDetail(arg)
             "lock" -> performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
             "quick" -> if (arg != null) quickAction(arg)
+            "seek" -> arg?.toLongOrNull()?.let { tc?.seekTo(it) }
+            "queue_play" -> arg?.toLongOrNull()?.let { tc?.skipToQueueItem(it) }
         }
         main.postDelayed({ LauncherLink.sendNow(this) }, 400L)
     }
