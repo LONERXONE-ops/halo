@@ -101,8 +101,11 @@ class MainActivity : Activity() {
     private var page = Page.HOME
     private var shownPage: Page? = null
     private var scroll: ScrollView? = null
+    /** Where you were on each page, so coming back from a section lands you where you left. */
+    private val scrollMemory = HashMap<Page, Int>()
 
     private fun go(p: Page) {
+        shownPage?.let { sp -> scroll?.let { scrollMemory[sp] = it.scrollY } }
         page = p
         render()
     }
@@ -153,7 +156,12 @@ class MainActivity : Activity() {
 
         // Same page re-rendered (a status change): keep the scroll position.
         val samePage = shownPage == page
-        val keepY = if (samePage) scroll?.scrollY ?: 0 else 0
+        // Back on the main menu: return to where you were before opening a section.
+        val keepY = when {
+            samePage -> scroll?.scrollY ?: 0
+            page == Page.HOME -> scrollMemory[Page.HOME] ?: 0
+            else -> 0
+        }
         val sv = ScrollView(this).apply {
             isFillViewport = true
             isVerticalScrollBarEnabled = false
@@ -168,9 +176,8 @@ class MainActivity : Activity() {
         }
         setContentView(sv)
         scroll = sv
-        if (samePage) {
-            sv.post { sv.scrollTo(0, keepY) }
-        } else {
+        if (keepY > 0) sv.post { sv.scrollTo(0, keepY) }
+        if (!samePage) {
             // A soft slide between pages.
             val dir = if (page == Page.HOME) -1 else 1
             col.alpha = 0f

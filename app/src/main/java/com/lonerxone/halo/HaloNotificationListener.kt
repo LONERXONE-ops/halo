@@ -731,12 +731,20 @@ class HaloNotificationListener : NotificationListenerService() {
 
     private val iconCache = HashMap<String, Bitmap?>()
 
-    fun appIcon(pkg: String): Bitmap? = iconCache.getOrPut(pkg) {
-        try {
-            drawableToBitmap(packageManager.getApplicationIcon(pkg))
-        } catch (_: Exception) {
-            null
+    fun appIcon(pkg: String): Bitmap? = synchronized(iconCache) {
+        iconCache.getOrPut(pkg) {
+            // Same icon as on Halo Launcher's home screen, when it's installed.
+            LauncherIcons.get(this, pkg) ?: try {
+                drawableToBitmap(packageManager.getApplicationIcon(pkg))
+            } catch (_: Exception) {
+                null
+            }
         }
+    }
+
+    /** The launcher's icon look changed. */
+    fun forgetIcons() {
+        synchronized(iconCache) { iconCache.clear() }
     }
 
     fun iconBitmap(icon: Icon?): Bitmap? {

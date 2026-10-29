@@ -109,7 +109,27 @@ object LauncherLink {
     fun handle(svc: HaloService, cmd: String?, arg: String?) {
         when (cmd) {
             "request_state" -> sendNow(svc)
+            "icons_changed" -> HaloNotificationListener.instance?.forgetIcons()
             else -> svc.launcherCommand(cmd ?: return, arg)
+        }
+    }
+}
+
+/**
+ * App icons from Halo Launcher, so the island and notification center use
+ * the same icon pack / Liquid Glass look as the home screen. Null when the
+ * launcher isn't installed or doesn't have that app; Halo then uses the
+ * system icon.
+ */
+object LauncherIcons {
+    private val URI = android.net.Uri.parse("content://com.lonerxone.halo.launcher.icons")
+
+    fun get(c: Context, pkg: String): Bitmap? {
+        if (!LauncherLink.launcherInstalled(c)) return null
+        return try {
+            c.contentResolver.openInputStream(android.net.Uri.withAppendedPath(URI, pkg))?.use { android.graphics.BitmapFactory.decodeStream(it) }
+        } catch (_: Throwable) {
+            null
         }
     }
 }
