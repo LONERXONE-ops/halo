@@ -50,6 +50,12 @@ class NotificationActivity : Activity() {
     private var root: FrameLayout? = null
     private var input: EditText? = null
     private var current: StatusBarNotification? = null
+    /** Messages already on screen, so a new notification only adds what's new. */
+    private val shownSigs = ArrayList<String>()
+    /** What you sent from here (the app echoes it back in its next notification). */
+    private val sentTexts = HashSet<String>()
+
+    private fun sig(m: Msg) = (m.sender ?: "") + "\u0000" + m.text + "\u0000" + (m.uri ?: "")
     private val io = java.util.concurrent.Executors.newFixedThreadPool(2)
     private val ui = Handler(Looper.getMainLooper())
 
@@ -80,6 +86,56 @@ class NotificationActivity : Activity() {
         load(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        HaloNotificationListener.onPosted = { sbn -> ui.post { newPost(sbn) } }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        HaloNotificationListener.onPosted = null
+    }
+
+    /** Same chat posted again (a new message): add the new lines to the conversation. */
+    private fun newPost(sbn: StatusBarNotification) {
+        val cur = current ?: return
+        if (closing) return
+        val same = sbn.key == cur.key || (sbn.packageName == cur.packageName && sbn.notification.shortcutId != null && sbn.notification.shortcutId == cur.notification.shortcutId)
+        if (!same) return
+        current = sbn
+        val list = thread ?: return
+        val scroll = threadScroll ?: return
+        val incoming = messages(sbn.notification.extras ?: Bundle())
+        if (incoming.isEmpty()) return
+        val left = HashMap<String, Int>()
+        for (k in shownSigs) left[k] = (left[k] ?: 0) + 1
+        var added = 0
+        for (m in incoming) {
+            val k = sig(m)
+            val n = left[k] ?: 0
+            if (n > 0) {
+                left[k] = n - 1
+                continue
+            }
+            shownSigs += k
+            // Your own reply coming back: already on screen.
+            if (m.text.toString().trim() in sentTexts) continue
+            val b = bubble(m, mine = false)
+            list.addView(b)
+            b.alpha = 0f
+            b.translationY = dpf(24f)
+            b.scaleX = 0.9f
+            b.scaleY = 0.9f
+            b.pivotX = 0f
+            b.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(added * 60L).setDuration(460L).setInterpolator(Springy(0.4f)).start()
+            added++
+        }
+        if (added > 0) {
+            list.post { scroll.smoothScrollTo(0, list.height) }
+            window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+        }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         close()
@@ -95,6 +151,8 @@ class NotificationActivity : Activity() {
             return
         }
         current = sbn
+        shownSigs.clear()
+        sentTexts.clear()
         setContentView(build(sbn, listener!!))
     }
 
@@ -320,7 +378,10 @@ class NotificationActivity : Activity() {
             val big = picture(ex)
             if (body.isNotBlank() || big != null) list.addView(bubble(Msg(null, body, null, null), mine = false, pic = big))
         } else {
-            for (m in messages) list.addView(bubble(m, mine = false))
+            for (m in messages) {
+                list.addView(bubble(m, mine = false))
+                shownSigs += sig(m)
+            }
             picture(ex)?.let { list.addView(bubble(Msg(null, "", null, null), mine = false, pic = it)) }
         }
         for (i in 0 until list.childCount) anim += list.getChildAt(i)
@@ -382,7 +443,9 @@ class NotificationActivity : Activity() {
             val doSend = {
                 val typed = input.text?.toString()?.trim().orEmpty()
                 if (typed.isNotEmpty()) {
-                    if (sendReply(replyAction, typed)) {
+                    val latest = current?.notification?.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true } ?: replyAction
+                    if (sendReply(latest, typed)) {
+                        sentTexts += typed
                         val mine = bubble(Msg(null, typed, null, null), mine = true)
                         list.addView(mine)
                         // Your message pops up from the reply box.

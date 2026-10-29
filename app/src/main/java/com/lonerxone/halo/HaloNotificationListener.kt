@@ -111,6 +111,11 @@ class HaloNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         refreshCount()
+        // An open reply sheet for this chat shows the new message straight away.
+        try {
+            onPosted?.invoke(sbn)
+        } catch (_: Exception) {
+        }
         try {
             val token = mediaToken(sbn.notification)
             if (token != null) {
@@ -757,6 +762,8 @@ class HaloNotificationListener : NotificationListenerService() {
     }
 
     companion object {
+        /** Set by the reply sheet while it's open. */
+        var onPosted: ((StatusBarNotification) -> Unit)? = null
         var instance: HaloNotificationListener? = null
             private set
 
