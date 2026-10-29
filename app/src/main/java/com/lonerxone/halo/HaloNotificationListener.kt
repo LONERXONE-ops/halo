@@ -167,6 +167,7 @@ class HaloNotificationListener : NotificationListenerService() {
         refreshCount()
         shown.remove(sbn.key)
         if (IslandStore.call?.key == sbn.key) IslandStore.setCall(null)
+        IslandStore.forgetNote(sbn.key)
         if (IslandStore.notif?.key == sbn.key) IslandStore.dismissNotif()
         if (IslandStore.timer?.key == sbn.key) IslandStore.setTimer(null)
         if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
@@ -481,6 +482,9 @@ class HaloNotificationListener : NotificationListenerService() {
         val title = rich.title
         val text = rich.text
         if (title.isEmpty() && text.isEmpty()) return skip("no text")
+        // "New messages from 3 chats" / "5 messages from 2 chats": a summary of
+        // other notifications (each chat already pops on its own).
+        if (SUMMARY.containsMatchIn(text) || SUMMARY.containsMatchIn(title)) return skip("summary of other chats")
 
         val fingerprint = "$title|${rich.sender}|$text"
         if (shown[sbn.key] == fingerprint) return skip("already shown")
@@ -824,6 +828,7 @@ class HaloNotificationListener : NotificationListenerService() {
         var instance: HaloNotificationListener? = null
             private set
 
+        private val SUMMARY = Regex("""(^|\b)(\d+\s+)?new\s+messages?\s+from\s+\d+\s+chats?|\d+\s+messages?\s+from\s+\d+\s+chats?""", RegexOption.IGNORE_CASE)
         private val COUNT_SUFFIX = Regex("""\s*\((\d+)\s+(new\s+)?messages?\)\s*$""", RegexOption.IGNORE_CASE)
 
         fun drawableToBitmap(d: Drawable?): Bitmap? {

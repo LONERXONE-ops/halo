@@ -917,9 +917,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // =====================================================================
 
     private fun swapContent(view: View?, w: Int, h: Int, radius: Float, cy: Float) {
+        val slide = pendingSlide
+        pendingSlide = 0
         slot?.let { old ->
             old.animate().cancel()
-            old.animate().alpha(0f).setDuration(90L).withEndAction { removeView(old) }.start()
+            // Swiping between alerts: the old one has already slid away.
+            if (slide != 0) removeView(old) else old.animate().alpha(0f).setDuration(90L).withEndAction { removeView(old) }.start()
         }
         slot = null
         if (view == null) {
@@ -957,6 +960,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         slot = s
         revealed = false
         updateClip()
+        if (slide != 0) {
+            // The next alert slides in from the side you swiped towards.
+            s.alpha = 1f
+            revealed = true
+            view.translationX = slide * w * 0.5f
+            view.alpha = 0f
+            view.animate().translationX(0f).alpha(1f).setDuration(300L).setInterpolator(DecelerateInterpolator(2.2f)).start()
+        }
     }
 
     private fun reveal() {
@@ -1335,8 +1346,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun buildNote(nf: NotifInfo, w: Int, top: Float): View {
         val r = nf.rich
         val col = card()
-        val ago = text(11.5f, white55, false).apply { text = "now" }
-        col.addView(cameraRow(appTag(r.appIcon, nf.appName, Colors.GRAPHITE), ago, w, top))
+        col.addView(cameraRow(appTag(r.appIcon, nf.appName, Colors.GRAPHITE), noteMeta(), w, top))
         val b = body().apply { setPadding(dp(18), dp(8), dp(18), dp(16)) }
         b.addView(messageRow(r, big = true))
 
@@ -1372,6 +1382,31 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         b.addView(actions)
         col.addView(b)
         return col
+    }
+
+    /** "now", plus a dot for each recent alert (swipe sideways to move between them). */
+    private fun noteMeta(): View {
+        val row = hRow()
+        val (at, count) = IslandStore.notePosition()
+        if (count > 1) {
+            val dots = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, dp(8), 0)
+            }
+            for (i in 0 until count) {
+                val on = i == at
+                dots.addView(View(context).apply {
+                    background = GradientDrawable().apply {
+                        setColor(if (on) Color.WHITE else Color.argb(90, 255, 255, 255))
+                        cornerRadius = dpf(3f)
+                    }
+                }, LinearLayout.LayoutParams(if (on) dp(12) else dp(5), dp(5)).apply { marginStart = dp(3) })
+            }
+            row.addView(dots)
+        }
+        row.addView(text(11.5f, white55, false).apply { text = "now" })
+        return row
     }
 
     /**
@@ -2158,6 +2193,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             val music = currentMusic()
+            // Sideways on an alert is for moving between alerts (handled above), never dismiss or music.
+            if (abs(velocityX) > abs(velocityY) && content is Content.Note) return true
             if (abs(velocityX) > abs(velocityY) && mode != Mode.PANEL) {
                 val tc = music?.controller?.transportControls ?: return false
                 haptic()
@@ -2208,8 +2245,83 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return super.dispatchTouchEvent(ev)
     }
 
+    // ----- Swiping between alerts -----
+
+    /** +1: the next alert comes in from the right; -1: from the left. */
+    private var pendingSlide = 0
+    private var noteSwiping = false
+    private var swipeX = 0f
+    private var swipeY = 0f
+    private var swipeVt: android.view.VelocityTracker? = null
+    private val swipeSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        if (content !is Content.Note || mode != Mode.EXPANDED) return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeX = e.rawX
+                swipeY = e.rawY
+                noteSwiping = false
+                swipeVt?.recycle()
+                swipeVt = android.view.VelocityTracker.obtain()
+                swipeVt?.addMovement(e)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                swipeVt?.addMovement(e)
+                val dx = e.rawX - swipeX
+                val dy = e.rawY - swipeY
+                if (!noteSwiping && abs(dx) > swipeSlop && abs(dx) > abs(dy) * 1.4f && IslandStore.notePosition().second > 1) {
+                    noteSwiping = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    swipeX = e.rawX
+                }
+            }
+        }
+        return noteSwiping
+    }
+
+    private fun noteSwipe(e: MotionEvent) {
+        val card = slot?.getChildAt(0) ?: return
+        swipeVt?.addMovement(e)
+        val dx = e.rawX - swipeX
+        val w = card.width.coerceAtLeast(1).toFloat()
+        val (at, count) = IslandStore.notePosition()
+        // Swipe left = the next (older) alert; right = back to a newer one.
+        val dir = if (dx < 0) 1 else -1
+        val hasNext = (at + dir) in 0 until count
+        when (e.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                // Follows the finger; at either end it only gives a little.
+                card.translationX = if (hasNext) dx else dx * 0.25f
+                card.alpha = 1f - (abs(card.translationX) / w).coerceIn(0f, 1f) * 0.7f
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                swipeVt?.computeCurrentVelocity(1000)
+                val vx = swipeVt?.xVelocity ?: 0f
+                swipeVt?.recycle()
+                swipeVt = null
+                noteSwiping = false
+                val go = hasNext && e.actionMasked == MotionEvent.ACTION_UP && (abs(dx) > w * 0.22f || (abs(vx) > 900f && (vx < 0) == (dx < 0)))
+                if (go) {
+                    haptic()
+                    val out = if (dx < 0) -w else w
+                    card.animate().translationX(out).alpha(0f).setDuration(130L).setInterpolator(android.view.animation.AccelerateInterpolator(1.4f)).withEndAction {
+                        pendingSlide = if (dx < 0) 1 else -1
+                        if (!IslandStore.showSibling(dir)) pendingSlide = 0
+                    }.start()
+                } else {
+                    card.animate().translationX(0f).alpha(1f).setDuration(240L).setInterpolator(DecelerateInterpolator(2f)).start()
+                }
+            }
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (noteSwiping) {
+            noteSwipe(event)
+            return true
+        }
         gestures.onTouchEvent(event)
         return true
     }

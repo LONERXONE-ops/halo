@@ -287,11 +287,57 @@ object IslandStore {
         }
     }
 
+    /**
+     * The alerts from the last few minutes, newest first, so you can swipe
+     * between them on the island (one per notification; a newer alert from
+     * the same chat replaces the older one).
+     */
+    val recentNotes = ArrayList<NotifInfo>()
+    private val recentAt = HashMap<String, Long>()
+    private const val RECENT_MS = 4 * 60_000L
+
+    private fun pruneRecent() {
+        val now = System.currentTimeMillis()
+        recentNotes.removeAll { now - (recentAt[it.key] ?: 0L) > RECENT_MS }
+        while (recentNotes.size > 6) recentNotes.removeAt(recentNotes.size - 1)
+    }
+
     fun showNotif(n: NotifInfo, durationMs: Long) {
+        recentNotes.removeAll { it.key == n.key }
+        recentNotes.add(0, n)
+        recentAt[n.key] = System.currentTimeMillis()
+        pruneRecent()
         notif = n
         handler.removeCallbacks(clearNotif)
         handler.postDelayed(clearNotif, durationMs)
         dispatch()
+    }
+
+    /** Where the showing alert sits among the recent ones (0 = newest), and how many there are. */
+    fun notePosition(): Pair<Int, Int> {
+        pruneRecent()
+        val cur = notif ?: return 0 to 0
+        return recentNotes.indexOfFirst { it.key == cur.key }.coerceAtLeast(0) to recentNotes.size
+    }
+
+    /** Swipe: show the next older (+1) or newer (-1) alert. False at either end. */
+    fun showSibling(dir: Int): Boolean {
+        pruneRecent()
+        val cur = notif ?: return false
+        val i = recentNotes.indexOfFirst { it.key == cur.key }
+        val j = i + dir
+        if (i < 0 || j !in recentNotes.indices) return false
+        notif = recentNotes[j]
+        handler.removeCallbacks(clearNotif)
+        handler.postDelayed(clearNotif, 6_000L)
+        dispatch()
+        return true
+    }
+
+    /** A notification was removed or dismissed: drop it from the swipe list too. */
+    fun forgetNote(key: String) {
+        recentNotes.removeAll { it.key == key }
+        recentAt.remove(key)
     }
 
     fun dismissNotif() {
