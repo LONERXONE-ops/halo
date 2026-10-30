@@ -1485,10 +1485,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var recCount: android.animation.ValueAnimator? = null
 
     /** 3, 2, 1: each new number lands with a pop and a tick. */
-    private fun showCount(tv: TextView, n: Int) {
+    private fun showCount(tv: TextView, n: Int, animate: Boolean = true) {
         val label = if (n > 0) n.toString() else "●"
         if (tv.text == label) return
         tv.text = label
+        if (!animate) {
+            if (n > 0) haptic()
+            return
+        }
         tv.scaleX = 1.7f
         tv.scaleY = 1.7f
         tv.alpha = 0.2f
@@ -1513,18 +1517,34 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             box.addView(ring, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
             val left = (r.countdownUntil - SystemClock.elapsedRealtime()).coerceIn(0L, 3_000L)
             ring.progress = left / 3_000f
-            // Ring and number read the same clock every frame, so each third
-            // of the ring drains exactly as its number shows.
-            recCount = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = left + 100L
-                interpolator = android.view.animation.LinearInterpolator()
-                addUpdateListener {
+            // Ring and number read the same clock on every screen frame, so
+            // each third of the ring empties exactly as its number shows. A
+            // frame loop, not an animator: animators follow the phone's
+            // animation speed setting (0.5x, off), which froze the ring
+            // while the numbers kept going.
+            val pop = android.view.animation.OvershootInterpolator(2.6f)
+            val loop = object : Runnable {
+                override fun run() {
                     val now = (r.countdownUntil - SystemClock.elapsedRealtime()).coerceIn(0L, 3_000L)
                     ring.progress = now / 3_000f
-                    timerText?.let { tv -> showCount(tv, r.countdown()) }
+                    timerText?.let { tv ->
+                        showCount(tv, r.countdown(), animate = false)
+                        // The pop of each number, from the same clock: it lands
+                        // as its third of the ring starts to drain.
+                        val since = if (now == 0L) 1_000L else (1_000L - now % 1_000L) % 1_000L
+                        val t = (since / 340f).coerceIn(0f, 1f)
+                        val o = pop.getInterpolation(t)
+                        tv.scaleX = 1.7f - 0.7f * o
+                        tv.scaleY = tv.scaleX
+                        tv.alpha = 0.2f + 0.8f * t
+                    }
+                    if (now > 0L && ring.isAttachedToWindow) ring.postOnAnimation(this)
                 }
-                start()
             }
+            ring.addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) = v.postOnAnimation(loop)
+                override fun onViewDetachedFromWindow(v: View) = v.removeCallbacks(loop)
+            })
         } else if (!r.paused) {
             box.addView(PulseView(context).apply {
                 color = Colors.RED
@@ -2826,7 +2846,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val r = c.rec
                 val n = r.countdown()
                 if (r.countdownUntil > 0L) {
-                    showCount(tv, n)
+                    // On the pill the ring's frame loop owns the number; here only for the open card.
+                    if (mode != Mode.COMPACT) showCount(tv, n)
                 } else {
                     tv.text = fmt(r.elapsedMs())
                 }
