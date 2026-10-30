@@ -410,7 +410,7 @@ class HaloNotificationListener : NotificationListenerService() {
                 else -> prev.copy(paused = false, runningSince = now)
             }
             IslandStore.setRec(info.copy(appName = appName(pkg), pauseIntent = pause, resumeIntent = resume, stopIntent = stop, contentIntent = n.contentIntent))
-            Debug.lastNotification = "${appName(pkg)} — screen recording"
+            Debug.lastNotification = "${appName(pkg)}: screen recording"
             return true
         }
 
@@ -426,7 +426,7 @@ class HaloNotificationListener : NotificationListenerService() {
                     contentIntent = n.contentIntent,
                 ),
             )
-            Debug.lastNotification = "Maps — navigation: ${title.take(24)}"
+            Debug.lastNotification = "Maps: navigation: ${title.take(24)}"
             return true
         }
 
@@ -451,7 +451,7 @@ class HaloNotificationListener : NotificationListenerService() {
                     actions = actions.take(3),
                 ),
             )
-            Debug.lastNotification = "Clock — ${title.ifEmpty { "timer" }}"
+            Debug.lastNotification = "Clock: ${title.ifEmpty { "timer" }}"
             return true
         }
 
@@ -492,7 +492,7 @@ class HaloNotificationListener : NotificationListenerService() {
         val pkg = sbn.packageName
         val app = appName(pkg)
         fun skip(reason: String) {
-            Debug.lastNotification = "$app — skipped: $reason"
+            Debug.lastNotification = "$app: skipped: $reason"
             Debug.note("$app: not shown (${reason})")
         }
 
@@ -585,7 +585,7 @@ class HaloNotificationListener : NotificationListenerService() {
             ),
             5_000L,
         )
-        Debug.lastNotification = "$app — shown: ${title.take(24)}" + if (peek) " (DND peek)" else ""
+        Debug.lastNotification = "$app: shown: ${title.take(24)}" + if (peek) " (DND peek)" else ""
         Debug.note("$app: shown \u2014 ${title.take(30)}" + if (peek) " (DND peek)" else "")
     }
 

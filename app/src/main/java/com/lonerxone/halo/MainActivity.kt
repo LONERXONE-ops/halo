@@ -96,6 +96,14 @@ class MainActivity : Activity() {
         SETUP("Permissions"),
         UPDATES("Updates"),
         ABOUT("About"),
+        REC_QUALITY("Recording quality"),
+        REC_SOUND("Recording sound"),
+    }
+
+    /** Where Back goes from a page. */
+    private fun parentOf(p: Page): Page = when (p) {
+        Page.REC_QUALITY, Page.REC_SOUND -> Page.ISLAND
+        else -> Page.HOME
     }
 
     private var page = Page.HOME
@@ -114,7 +122,7 @@ class MainActivity : Activity() {
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (page != Page.HOME) {
-            go(Page.HOME)
+            go(parentOf(page))
         } else {
             super.onBackPressed()
         }
@@ -152,6 +160,8 @@ class MainActivity : Activity() {
             Page.SETUP -> setupPage(col)
             Page.UPDATES -> updatesPage(col)
             Page.ABOUT -> aboutPage(col)
+            Page.REC_QUALITY -> recQualityPage(col)
+            Page.REC_SOUND -> recSoundPage(col)
         }
 
         // Same page re-rendered (a status change): keep the scroll position.
@@ -159,7 +169,7 @@ class MainActivity : Activity() {
         // Back on the main menu: return to where you were before opening a section.
         val keepY = when {
             samePage -> scroll?.scrollY ?: 0
-            page == Page.HOME -> scrollMemory[Page.HOME] ?: 0
+            page == Page.HOME || page == Page.ISLAND -> scrollMemory[page] ?: 0
             else -> 0
         }
         val sv = ScrollView(this).apply {
@@ -205,7 +215,7 @@ class MainActivity : Activity() {
                 }
                 contentDescription = "Back"
                 isClickable = true
-                setOnClickListener { go(Page.HOME) }
+                setOnClickListener { go(parentOf(page)) }
             }
             box.addView(back, LinearLayout.LayoutParams(dp(42), dp(42)).apply { bottomMargin = dp(34) })
         }
@@ -1161,40 +1171,129 @@ class MainActivity : Activity() {
         return row
     }
 
-    /** Quality for Halo's recordings; tap to go round 720p → 1080p → 4K. Shows roughly how big a minute is. */
     private fun recQualityRow(): View {
-        val p = Prefs.get(this)
-        fun summary(q: Quality) = "${q.label} · about ${q.mbPerMin} MB a minute" +
-            if (q == Quality.UHD) " (falls back if your phone can't)" else ""
-        val row = navRow("Quality", summary(Quality.of(p.getString(Prefs.REC_QUALITY, Quality.HD.id)))) {}
-        row.setOnClickListener {
-            val cur = Quality.of(p.getString(Prefs.REC_QUALITY, Quality.HD.id))
-            val next = Quality.values()[(cur.ordinal + 1) % Quality.values().size]
-            p.edit().putString(Prefs.REC_QUALITY, next.id).apply()
-            val texts = (row as LinearLayout).getChildAt(0) as LinearLayout
-            (texts.getChildAt(1) as? android.widget.TextView)?.text = summary(next)
-        }
-        return row
+        val q = Quality.of(Prefs.get(this).getString(Prefs.REC_QUALITY, Quality.HD.id))
+        return navRow("Quality", "${q.label}, about ${q.mbPerMin} MB a minute") { go(Page.REC_QUALITY) }
     }
 
-    /** Sound for Halo's recordings; tap to go round Phone sound → Microphone → No sound. */
     private fun recSoundRow(): View {
-        val opts = listOf(
-            "device" to "Phone sound (games, videos, music)",
-            "mic" to "Microphone",
-            "none" to "No sound",
-        )
-        val p = Prefs.get(this)
-        fun current() = opts.firstOrNull { it.first == p.getString(Prefs.REC_AUDIO, "device") } ?: opts[0]
-        val row = navRow("Sound", current().second) {}
-        row.setOnClickListener {
-            val i = opts.indexOf(current())
-            val next = opts[(i + 1) % opts.size]
-            p.edit().putString(Prefs.REC_AUDIO, next.first).apply()
-            val texts = (row as LinearLayout).getChildAt(0) as LinearLayout
-            (texts.getChildAt(1) as? android.widget.TextView)?.text = next.second
+        val cur = RecSound.of(Prefs.get(this).getString(Prefs.REC_AUDIO, "device"))
+        return navRow("Sound", cur.title) { go(Page.REC_SOUND) }
+    }
+
+    private enum class RecSound(val id: String, val title: String, val about: String, val icon: Int) {
+        DEVICE("device", "Phone sound", "What your phone plays: games, videos and music. Some apps, like Netflix, don't allow their sound to be recorded.", R.drawable.ic_speaker),
+        MIC("mic", "Microphone", "Your voice and whatever is around you, for tutorials and commentary.", R.drawable.ic_mic),
+        NONE("none", "No sound", "Picture only. The smallest files.", R.drawable.ic_mic_off);
+
+        companion object {
+            fun of(id: String?) = values().firstOrNull { it.id == id } ?: DEVICE
         }
-        return row
+    }
+
+    /**
+     * A big choice card: icon tile, title, a line about it, and small facts
+     * under it. The picked one has a white ring and a filled check.
+     */
+    private fun optionCard(icon: Int, title: String, about: String, facts: List<String>, picked: Boolean, onPick: () -> Unit): View {
+        val c = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = GradientDrawable().apply {
+                setColor(if (picked) Color.rgb(28, 28, 31) else cardFill)
+                setStroke(dp(if (picked) 2 else 1), if (picked) text1 else cardStroke)
+                cornerRadius = dp(24).toFloat()
+            }
+            isClickable = true
+            setOnClickListener {
+                it.animate().scaleX(0.97f).scaleY(0.97f).setDuration(80).withEndAction {
+                    it.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(android.view.animation.OvershootInterpolator(2.5f)).start()
+                }.start()
+                onPick()
+            }
+        }
+        c.addView(android.widget.ImageView(this).apply {
+            setImageResource(icon)
+            imageTintList = ColorStateList.valueOf(if (picked) Color.BLACK else text1)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply {
+                setColor(if (picked) text1 else Color.rgb(38, 38, 42))
+                cornerRadius = dp(14).toFloat()
+            }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(16) })
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(label(title, 17f, text1, true))
+        texts.addView(label(about, 13f, text2, false).apply {
+            setLineSpacing(0f, 1.2f)
+            setPadding(0, dp(4), 0, 0)
+        })
+        if (facts.isNotEmpty()) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(10), 0, 0)
+            }
+            for (f in facts) row.addView(label(f, 11.5f, text1, true).apply {
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                background = GradientDrawable().apply {
+                    setColor(Color.argb(22, 255, 255, 255))
+                    cornerRadius = dp(10).toFloat()
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+            texts.addView(row)
+        }
+        c.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        c.addView(android.widget.ImageView(this).apply {
+            setImageResource(if (picked) R.drawable.ic_check else 0)
+            imageTintList = ColorStateList.valueOf(Color.BLACK)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                if (picked) setColor(text1) else setStroke(dp(2), Color.argb(70, 255, 255, 255))
+            }
+        }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginStart = dp(10) })
+        c.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+        return c
+    }
+
+    private fun recQualityPage(col: LinearLayout) {
+        pageHeader(col, "Quality", "Sharper video means bigger files")
+        val p = Prefs.get(this)
+        val cur = Quality.of(p.getString(Prefs.REC_QUALITY, Quality.HD.id))
+        val b = windowManager.maximumWindowMetrics.bounds
+        val about = mapOf(
+            Quality.SD to "Small files that are easy to send. Great for sharing on WhatsApp.",
+            Quality.HD to "Sharp and smooth. The best balance for most recordings.",
+            Quality.UHD to "The sharpest your phone can make. Big files; if your phone can't record 4K, Halo uses the best it can.",
+        )
+        for (q in Quality.values()) {
+            val (w, h, _) = Quality.sizeFor(q, b.width(), b.height())
+            col.addView(optionCard(
+                R.drawable.ic_record,
+                q.label,
+                about[q].orEmpty(),
+                listOf("about ${q.mbPerMin} MB a minute", "${w} × ${h}"),
+                q == cur,
+            ) {
+                p.edit().putString(Prefs.REC_QUALITY, q.id).apply()
+                render()
+            })
+        }
+        col.addView(footnote("Sizes are for a busy screen like a game or a video. Recording chats or menus makes much smaller files."))
+    }
+
+    private fun recSoundPage(col: LinearLayout) {
+        pageHeader(col, "Sound", "What your recordings hear")
+        val p = Prefs.get(this)
+        val cur = RecSound.of(p.getString(Prefs.REC_AUDIO, "device"))
+        val micOk = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        for (s in RecSound.values()) {
+            val facts = if (s != RecSound.NONE && !micOk) listOf("Asks for permission the first time") else emptyList()
+            col.addView(optionCard(s.icon, s.title, s.about, facts, s == cur) {
+                p.edit().putString(Prefs.REC_AUDIO, s.id).apply()
+                render()
+            })
+        }
     }
 
     private fun infoRow(title: String, summary: String): View = rowBase(title, summary).apply { isClickable = false }

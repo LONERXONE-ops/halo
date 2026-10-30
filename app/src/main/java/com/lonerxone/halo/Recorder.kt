@@ -485,9 +485,11 @@ class ScreenRecorder : Service() {
  * bit rate, which is what decides how big the files are.
  */
 enum class Quality(val id: String, val label: String, val bitrate: Int, val mbPerMin: Int) {
-    SD("720", "720p", 6_000_000, 45),
-    HD("1080", "1080p", 14_000_000, 105),
-    UHD("2160", "4K", 40_000_000, 300);
+    // Screens are mostly still between changes, so these rates stay sharp
+    // while keeping files small. MB a minute includes the sound.
+    SD("720", "720p", 2_500_000, 20),
+    HD("1080", "1080p", 5_000_000, 38),
+    UHD("2160", "4K", 14_000_000, 105);
 
     companion object {
         fun of(id: String?) = values().firstOrNull { it.id == id } ?: HD
