@@ -24,6 +24,7 @@ object Controls {
         Def("bluetooth", R.drawable.ic_bluetooth, "Bluetooth", listOf("bluetooth")),
         Def("airplane", R.drawable.ic_airplane, "Airplane mode", listOf("airplane", "flight mode", "aeroplane")),
         Def("screenshot", R.drawable.ic_screenshot, "Screenshot"),
+        Def("record", R.drawable.ic_record, "Screen record"),
         Def("torch", R.drawable.ic_flashlight, "Flashlight"),
         Def("dnd", R.drawable.ic_moon, "Do Not Disturb"),
         Def("rotate", R.drawable.ic_rotate, "Auto-rotate"),
@@ -33,7 +34,7 @@ object Controls {
 
     const val KEY = "nc_controls"
     const val MAX = 4
-    private const val DEFAULT = "data,airplane,screenshot,bluetooth"
+    private const val DEFAULT = "data,screenshot,record,bluetooth"
 
     fun chosenIds(c: Context): List<String> =
         Prefs.get(c).getString(KEY, DEFAULT)!!.split(',').filter { id -> ALL.any { it.id == id } }.distinct().take(MAX)

@@ -171,6 +171,7 @@ class HaloNotificationListener : NotificationListenerService() {
         IslandStore.forgetNote(sbn.key)
         if (IslandStore.notif?.key == sbn.key) IslandStore.dismissNotif()
         if (IslandStore.timer?.key == sbn.key) IslandStore.setTimer(null)
+        IslandStore.rec?.let { if (!it.own && it.key == sbn.key) IslandStore.setRec(null) }
         if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
         if (IslandStore.transfer?.key == sbn.key) IslandStore.setTransfer(null)
     }
@@ -361,6 +362,17 @@ class HaloNotificationListener : NotificationListenerService() {
     // Timers, downloads, navigation (ongoing notifications)
     // =====================================================================
 
+    private fun isScreenRecording(pkg: String, title: String, text: String): Boolean {
+        val words = (title + " " + text).lowercase()
+        if (words.contains("saved") || words.contains("finished")) return false
+        val known = pkg == "com.samsung.android.app.smartcapture" || pkg == "com.google.android.apps.screenrecorder" ||
+            pkg.contains("screenrecord", true) || pkg.contains("screenrecorder", true)
+        val said = words.contains("screen record") || words.contains("recording screen") || words.contains("recording your screen") ||
+            words.contains("screen recorder")
+        // System UI's recorder (Pixel / AOSP) says so in its text.
+        return said || (known && (words.contains("record") || words.isBlank()))
+    }
+
     private fun isClockApp(pkg: String) =
         pkg == "com.sec.android.app.clockpackage" || pkg == "com.google.android.deskclock" || pkg.contains("clock", true)
 
@@ -372,6 +384,35 @@ class HaloNotificationListener : NotificationListenerService() {
         val prefs = Prefs.get(this)
         val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
+
+        // Another app's screen recorder (Samsung's, a Pixel's, AZ…): a red dot and timer.
+        if (sbn.isOngoing && pkg != packageName && isScreenRecording(pkg, title, text)) {
+            if (!prefs.getBoolean(Prefs.RECORDING, true)) return true
+            // Halo's own recorder wins if both somehow run.
+            if (IslandStore.rec?.own == true) return true
+            fun find(vararg words: String) = n.actions?.firstOrNull { a ->
+                val t = a.title?.toString()?.lowercase().orEmpty()
+                words.any { t.contains(it) }
+            }?.actionIntent
+            val pause = find("pause")
+            val resume = find("resume", "continue")
+            val stop = find("stop", "end", "finish", "done")
+            val paused = resume != null && pause == null
+            val now = android.os.SystemClock.elapsedRealtime()
+            val prev = IslandStore.rec?.takeIf { it.key == sbn.key }
+            val chrono = ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) && n.`when` > 0L
+            val info = when {
+                // The recorder shows a running clock: use its start time.
+                chrono && !paused -> RecInfo(sbn.key, own = false, runningSince = now - (System.currentTimeMillis() - n.`when`).coerceAtLeast(0L), bankedMs = 0L, paused = false)
+                prev == null -> RecInfo(sbn.key, own = false, runningSince = if (paused) 0L else now, bankedMs = 0L, paused = paused)
+                prev.paused == paused -> prev
+                paused -> prev.copy(paused = true, bankedMs = prev.elapsedMs(), runningSince = 0L)
+                else -> prev.copy(paused = false, runningSince = now)
+            }
+            IslandStore.setRec(info.copy(appName = appName(pkg), pauseIntent = pause, resumeIntent = resume, stopIntent = stop, contentIntent = n.contentIntent))
+            Debug.lastNotification = "${appName(pkg)} — screen recording"
+            return true
+        }
 
         // Navigation
         if (pkg == "com.google.android.apps.maps" && sbn.isOngoing) {

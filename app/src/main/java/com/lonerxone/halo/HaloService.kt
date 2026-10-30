@@ -237,6 +237,39 @@ class HaloService : AccessibilityService(), IslandView.Host {
     }
 
     @Suppress("DEPRECATION", "MissingPermission")
+    // ----- Screen recording -----
+
+    override fun recPause() {
+        val r = IslandStore.rec ?: return
+        if (r.own) {
+            ScreenRecorder.pauseOrResume(this)
+        } else {
+            send(if (r.paused) r.resumeIntent else r.pauseIntent)
+        }
+    }
+
+    override fun recStop() {
+        val r = IslandStore.rec ?: return
+        if (r.own) {
+            ScreenRecorder.stop(this)
+        } else if (r.stopIntent != null) {
+            send(r.stopIntent)
+        } else {
+            send(r.contentIntent)
+        }
+    }
+
+    /** Record button: starts Halo's recorder, or stops the one running. */
+    private fun recordTap() {
+        val r = IslandStore.rec
+        if (r != null) {
+            recStop()
+            return
+        }
+        // The panel has just closed; let it get out of the way first.
+        main.postDelayed({ RecordActivity.launch(this) }, 250L)
+    }
+
     override fun endCall(intent: PendingIntent?) {
         if (intent != null && Launch.send(this, intent)) return
         try {
@@ -521,6 +554,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         // second sits in the round bubble beside it (like the iPhone split).
         val live = buildList<IslandView.Content> {
             IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }?.let { add(IslandView.Content.Call(it)) }
+            // Halo's own recording always shows (it's how you stop it); another app's follows the setting.
+            IslandStore.rec?.takeIf { it.own || p.getBoolean(Prefs.RECORDING, true) }?.let { add(IslandView.Content.Rec(it)) }
             IslandStore.timer?.takeIf { p.getBoolean(Prefs.TIMERS, true) }?.let { add(IslandView.Content.Timer(it)) }
             // Halo Launcher's own player is on screen: the island steps back so only one shows.
             IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) && !launcherShowsMusic }?.let { add(IslandView.Content.Music(it)) }
@@ -589,6 +624,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.INK, max(0f, c.transfer.progress)) { send(c.transfer.contentIntent) }
         is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f) { send(c.nav.contentIntent) }
         is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.INK, -1f) { torchOff() }
+        is IslandView.Content.Rec -> IslandView.Bubble("r", null, R.drawable.ic_record, Colors.RED, -1f) { recStop() }
         else -> null
     }
 
@@ -708,6 +744,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
     // ----- Quick toggles in the notification center -----
 
     override fun quickStates(): List<Quick> = buildList {
+        if (IslandStore.rec != null) add(Quick("rec", R.drawable.ic_record, "Recording"))
         if (IslandStore.torch != null) add(Quick("torch", R.drawable.ic_flashlight, "Flashlight"))
         if (dndOn()) add(Quick("dnd", R.drawable.ic_moon, "Do Not Disturb"))
         when (ringerMode()) {
@@ -721,6 +758,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
     override fun quickAction(id: String) {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         when (id) {
+            "rec" -> recStop()
             "torch" -> torchOff()
             "dnd" -> if (nm.isNotificationPolicyAccessGranted) {
                 nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
@@ -754,6 +792,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             "bluetooth" -> globalOn(android.provider.Settings.Global.BLUETOOTH_ON)
             "airplane" -> airplaneOn()
             "torch" -> IslandStore.torch != null
+            "record" -> IslandStore.rec != null
             "dnd" -> dndOn()
             "rotate" -> try {
                 android.provider.Settings.System.getInt(contentResolver, android.provider.Settings.System.ACCELEROMETER_ROTATION, 0) == 1
@@ -782,6 +821,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             // The panel has just closed; give it a moment so it's not in the picture.
             "screenshot" -> main.postDelayed({ performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) }, 450L)
             "torch" -> if (IslandStore.torch != null) torchOff() else torchOn()
+            "record" -> recordTap()
             "dnd" -> if (nm.isNotificationPolicyAccessGranted) {
                 nm.setInterruptionFilter(if (dndOn()) NotificationManager.INTERRUPTION_FILTER_ALL else NotificationManager.INTERRUPTION_FILTER_PRIORITY)
             } else {

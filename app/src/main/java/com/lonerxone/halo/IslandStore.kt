@@ -41,6 +41,38 @@ data class MusicInfo(
     }
 }
 
+/**
+ * A screen recording in progress: Halo's own recorder, or another app's
+ * (Samsung's, a Pixel's…) picked up from its ongoing notification.
+ */
+data class RecInfo(
+    val key: String,
+    val own: Boolean,
+    /** elapsedRealtime when the current stretch of recording began; 0 while paused or counting down. */
+    val runningSince: Long,
+    /** Time already recorded before [runningSince]. */
+    val bankedMs: Long,
+    val paused: Boolean,
+    /** elapsedRealtime when the 3-2-1 countdown ends; 0 when not counting down. */
+    val countdownUntil: Long = 0L,
+    val appName: String = "Halo",
+    /** For another app's recorder: its buttons. */
+    val pauseIntent: PendingIntent? = null,
+    val resumeIntent: PendingIntent? = null,
+    val stopIntent: PendingIntent? = null,
+    val contentIntent: PendingIntent? = null,
+) {
+    fun elapsedMs(): Long =
+        if (paused || runningSince == 0L) bankedMs else bankedMs + (SystemClock.elapsedRealtime() - runningSince)
+
+    /** 3, 2, 1 during the countdown, else 0. */
+    fun countdown(): Int {
+        if (countdownUntil == 0L) return 0
+        val left = countdownUntil - SystemClock.elapsedRealtime()
+        return if (left <= 0L) 0 else ((left + 999L) / 1000L).toInt()
+    }
+}
+
 /** A short system alert (charging, test) that grows out of the island. */
 data class Pop(
     val id: Int,
@@ -195,6 +227,14 @@ object IslandStore {
         private set
     var nav: NavInfo? = null
         private set
+    var rec: RecInfo? = null
+        private set
+
+    fun setRec(r: RecInfo?) {
+        rec = r
+        dispatch()
+    }
+
     /** Camera id of the flashlight while it is on, else null. */
     var torch: String? = null
         private set
@@ -380,6 +420,10 @@ object IslandStore {
 object Prefs {
     /** Show the island on the lock screen (a padlock that opens when you unlock). */
     const val LOCK_MODE = "lock_mode"
+    /** Show screen recordings (Halo's and other apps') on the island. */
+    const val RECORDING = "recording"
+    /** Sound in Halo's screen recordings: "device" (what the phone plays), "mic", or "none". */
+    const val REC_AUDIO = "rec_audio"
     const val MUSIC = "music"
     const val CHARGING = "charging"
     const val NOTIFS = "notifs"

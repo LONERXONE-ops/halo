@@ -349,6 +349,12 @@ class MainActivity : Activity() {
             switchRow("Navigation", "Next turn from Google Maps", Prefs.NAV),
             switchRow("Flashlight", "Stays on the island while it's on", Prefs.TORCH),
         ))
+        col.addView(sectionTitle("Screen recording"))
+        col.addView(group(
+            navRow("Record your screen", "Starts after a 3-2-1 on the island. Saved to Movies/Halo") { RecordActivity.launch(this) },
+            recSoundRow(),
+            switchRow("Other recorders on the island", "Samsung's (or any) screen recorder shows a red dot and timer too", Prefs.RECORDING),
+        ))
         col.addView(sectionTitle("Alerts"))
         col.addView(group(
             switchRow("Messages", "WhatsApp, SMS and app alerts", Prefs.NOTIFS),
@@ -1148,6 +1154,26 @@ class MainActivity : Activity() {
             imageTintList = ColorStateList.valueOf(Color.argb(110, 255, 255, 255))
         }, LinearLayout.LayoutParams(dp(20), dp(20)))
         row.setOnClickListener { onClick() }
+        return row
+    }
+
+    /** Sound for Halo's recordings; tap to go round Phone sound → Microphone → No sound. */
+    private fun recSoundRow(): View {
+        val opts = listOf(
+            "device" to "Phone sound (games, videos, music)",
+            "mic" to "Microphone",
+            "none" to "No sound",
+        )
+        val p = Prefs.get(this)
+        fun current() = opts.firstOrNull { it.first == p.getString(Prefs.REC_AUDIO, "device") } ?: opts[0]
+        val row = navRow("Sound", current().second) {}
+        row.setOnClickListener {
+            val i = opts.indexOf(current())
+            val next = opts[(i + 1) % opts.size]
+            p.edit().putString(Prefs.REC_AUDIO, next.first).apply()
+            val texts = (row as LinearLayout).getChildAt(0) as LinearLayout
+            (texts.getChildAt(1) as? android.widget.TextView)?.text = next.second
+        }
         return row
     }
 

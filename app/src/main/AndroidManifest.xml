@@ -34,9 +34,15 @@
     <!-- Ringer and Do Not Disturb state for the silent-mode pop -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- "Bars follow the beat": Android's audio visualizer is gated behind these.
-         Halo reads the phone's sound output only; it never records the microphone. -->
+         Halo reads the phone's sound output only. The microphone is used only when you
+         record your screen with "Microphone" chosen as the sound. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Halo's screen recorder: a foreground service holding the screen capture
+         (and the microphone, only when you pick "Microphone" as the sound). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- "Halo handles pop-ups": turns Android's heads-up banners off/on. Granted once over ADB. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
 
@@ -77,6 +83,18 @@
         <activity
             android:name=".AppsActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".RecordActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Halo.Invisible" />
+
+        <service
+            android:name=".ScreenRecorder"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
 
         <receiver
             android:name=".InstallReceiver"

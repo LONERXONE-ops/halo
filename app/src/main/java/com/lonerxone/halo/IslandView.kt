@@ -79,6 +79,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         fun isMuted(): Boolean
         fun answerCall(intent: PendingIntent?)
         fun endCall(intent: PendingIntent?)
+        /** Screen recording: pause / resume, and stop. */
+        fun recPause()
+        fun recStop()
     }
 
     enum class Mode { HIDDEN, IDLE, COMPACT, EXPANDED, PANEL }
@@ -95,6 +98,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         data class Torch(val cameraId: String) : Content()
         /** The lock screen: a padlock; [unlocked] = the moment it springs open. */
         data class Lock(val unlocked: Boolean) : Content()
+        /** A screen recording (Halo's or another app's): red dot and timer. */
+        data class Rec(val rec: RecInfo) : Content()
     }
 
     /** On the lock screen: the notification center stays shut (your notifications are private). */
@@ -358,11 +363,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // =====================================================================
 
     private fun canExpand(c: Content) =
-        c is Content.Music || c is Content.Call || c is Content.Timer || c is Content.Transfer || c is Content.Nav ||
+        c is Content.Music || c is Content.Call || c is Content.Timer || c is Content.Transfer || c is Content.Nav || c is Content.Rec ||
             (c is Content.Popup && c.pop.kind == "charge")
 
     private fun needsTicker() =
-        mode != Mode.HIDDEN && (mode == Mode.EXPANDED || mode == Mode.PANEL || content is Content.Call || content is Content.Timer)
+        mode != Mode.HIDDEN && (mode == Mode.EXPANDED || mode == Mode.PANEL || content is Content.Call || content is Content.Timer || content is Content.Rec)
 
     private fun desiredMode(): Mode {
         if (hidden) return Mode.HIDDEN
@@ -386,7 +391,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Music -> "m:" + c.info.trackKey
             is Content.Popup -> "p:" + c.pop.id
             is Content.Note -> "n:" + c.note.id
-            // One key for locked and unlocked, so the padlock opens in place.
             // Locked and unlocked are two looks: switching rebuilds, so the island
             // springs wider for the tick, like a moment of its own.
             is Content.Lock -> "lock:" + c.unlocked
@@ -395,6 +399,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Transfer -> "d:" + c.transfer.key
             is Content.Nav -> "g:" + c.nav.key
             is Content.Torch -> "f:" + c.cameraId
+            is Content.Rec -> "r:" + c.rec.key + ":" + c.rec.paused + ":" + (c.rec.countdownUntil > 0L)
         }
     }
 
@@ -465,6 +470,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     is Content.Nav -> compactNav(c.nav)
                     is Content.Torch -> compactTorch().also { glowColor = Colors.INK; glow = 0.5f }
                     is Content.Lock -> compactLock(c)
+                    is Content.Rec -> compactRec(c.rec).also { glowColor = Colors.RED; glow = if (c.rec.paused) 0f else 0.45f }
                     else -> Sides(null, null)
                 }
                 val w = compactWidthFor(sides)
@@ -486,6 +492,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         is Content.Timer -> buildExpandedTimer(c.timer, w.toInt(), top)
                         is Content.Transfer -> buildExpandedTransfer(c.transfer, w.toInt(), top)
                         is Content.Nav -> buildExpandedNav(c.nav, w.toInt(), top)
+                        is Content.Rec -> buildExpandedRec(c.rec, w.toInt(), top).also { glowColor = Colors.RED; glow = 0.4f }
                         is Content.Popup -> buildCharge(w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.6f }
                         else -> View(context)
                     }
@@ -1445,6 +1452,102 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         postDelayed({ haptic() }, 70L)
     }
 
+    // ----- Screen recording -----
+
+    /**
+     * Compact: a red dot with a soft red ripple on the left, the time on the
+     * right. Counting down, the right side shows 3, 2, 1, each landing with
+     * a pop. Paused: the dot goes still and grey.
+     */
+    private fun compactRec(r: RecInfo): Sides {
+        val dotBox = FrameLayout(context).apply { clipChildren = false }
+        if (!r.paused) dotBox.addView(PulseView(context).apply {
+            color = Colors.RED
+            strength = 0.8f
+        }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        val dot = View(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (r.paused) Colors.GREY else Colors.RED)
+            }
+        }
+        dotBox.addView(dot, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.CENTER))
+        dot.scaleX = 0f
+        dot.scaleY = 0f
+        dot.animate().scaleX(1f).scaleY(1f).setStartDelay(100L).setDuration(420L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3.5f)).start()
+        val counting = r.countdownUntil > 0L
+        val tv = text(if (counting) 15f else 12.5f, if (r.paused) Colors.SILVER else Color.WHITE, true).apply {
+            gravity = Gravity.CENTER
+            if (!counting) fontFeatureSettings = "tnum"
+        }
+        timerText = tv
+        return Sides(dotBox, tv, dp(22))
+    }
+
+    /**
+     * Open: "Recording" with the app's name, a big running time, then
+     * Pause / Resume and a red Stop. A countdown shows its number big
+     * instead, with Cancel.
+     */
+    private fun buildExpandedRec(r: RecInfo, w: Int, top: Float): View {
+        val col = card()
+        val dot = View(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (r.paused) Colors.GREY else Colors.RED)
+            }
+        }
+        val tag = hRow()
+        tag.addView(dot, LinearLayout.LayoutParams(dp(9), dp(9)))
+        tag.addView(spaced(text(12f, if (r.paused) white70 else Colors.RED, true).apply {
+            text = when {
+                r.countdownUntil > 0L -> "Starting"
+                r.paused -> "Paused"
+                else -> "Recording"
+            }
+        }, 7))
+        if (!r.paused) wobbleDot(dot)
+        col.addView(cameraRow(tag, text(12f, white55, false).apply { text = if (r.own) "Screen" else r.appName }, w, top))
+        val b = body()
+        val row = hRow()
+        val big = text(40f, if (r.paused) Colors.SILVER else Color.WHITE, false).apply {
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            fontFeatureSettings = "tnum"
+        }
+        timerText = big
+        row.addView(big, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val canPause = r.own || (if (r.paused) r.resumeIntent else r.pauseIntent) != null
+        if (canPause && r.countdownUntil == 0L) {
+            row.addView(roundButton(if (r.paused) R.drawable.ic_play else R.drawable.ic_pause, Colors.GRAPHITE) {
+                host.recPause()
+            }.apply { setColorFilter(Color.WHITE) })
+            row.addView(View(context), LinearLayout.LayoutParams(dp(12), 1))
+        }
+        row.addView(roundButton(if (r.countdownUntil > 0L) R.drawable.ic_close else R.drawable.ic_stop, Colors.RED) {
+            host.recStop()
+            expanded = false
+            refresh()
+        }.apply { setColorFilter(Color.WHITE) })
+        b.addView(row)
+        col.addView(b)
+        return col
+    }
+
+    /** A recording dot that gently breathes. */
+    private fun wobbleDot(v: View) {
+        val anim = android.animation.ObjectAnimator.ofFloat(v, View.ALPHA, 1f, 0.35f).apply {
+            duration = 900L
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.REVERSE
+        }
+        // Runs only while on screen, so it never keeps going in the background.
+        v.addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = anim.start()
+            override fun onViewDetachedFromWindow(view: View) = anim.cancel()
+        })
+    }
+
     private fun compactTimer(): Sides {
         val tv = text(12.5f, Colors.SILVER, true)
         timerText = tv
@@ -2110,7 +2213,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     haptic()
                     bounce(it)
                     // Screenshots and Quick Settings taps need the panel out of the way.
-                    if (st.def.id == "screenshot" || st.def.tile.isNotEmpty()) closePanel()
+                    if (st.def.id == "screenshot" || st.def.id == "record" || st.def.tile.isNotEmpty()) closePanel()
                     host.controlTap(st.def.id)
                 }
             }, LinearLayout.LayoutParams(dp(31), dp(31)).apply { marginStart = dp(5) })
@@ -2156,7 +2259,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
         val list = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(2), dp(12), dp(12))
+            setPadding(dp(12), dp(4), dp(12), dp(14))
         }
         IslandStore.music?.let { list.addView(miniPlayer(it)) }
         if (items.isEmpty()) {
@@ -2183,7 +2286,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         for ((pkg, group) in groups) {
             if (group.size == 1 || pkg in openGroups) {
                 if (group.size > 1) list.addView(groupHeader(pkg, group))
-                for (item in group) panelCard(item).also { cards += it; list.addView(it) }
+                group.forEachIndexed { i, item ->
+                    panelCard(item).also { v ->
+                        // One app's cards sit close together; different apps get more air.
+                        (v.layoutParams as LinearLayout.LayoutParams).topMargin = dp(if (i == 0 && group.size > 1) 8 else if (i > 0) 6 else 12)
+                        cards += v
+                        list.addView(v)
+                    }
+                }
             } else {
                 stackedCard(pkg, group).also { cards += it; list.addView(it) }
             }
@@ -2320,7 +2430,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Above a fanned-out group: the app's name and "Show less". */
     private fun groupHeader(pkg: String, group: List<PanelItem>): View {
-        val row = hRow().apply { setPadding(dp(6), dp(14), dp(4), 0) }
+        val row = hRow().apply { setPadding(dp(6), dp(18), dp(4), 0) }
         row.addView(text(12.5f, white70, true).apply { text = group.first().appName }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(text(12f, Color.WHITE, true).apply {
             text = "Show less"
@@ -2356,7 +2466,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 leftMargin = dp(10 * i)
                 rightMargin = dp(10 * i)
                 topMargin = dp(10)
-                bottomMargin = -dp(7 * i)
+                bottomMargin = -dp(8 * i)
             })
         }
         val front = panelCard(group.first())
@@ -2380,7 +2490,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         front.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         box.addView(front)
         box.clipChildren = false
-        box.setPadding(0, 0, 0, dp(7 * behind))
+        box.setPadding(0, 0, 0, dp(8 * behind))
         box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = lp.topMargin }
         return box
     }
@@ -2406,7 +2516,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val accent = if (hasAccent) raw else Colors.INK
         val cardView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(14))
+            setPadding(dp(16), dp(14), dp(16), dp(15))
             val glow = GradientDrawable().apply {
                 gradientType = GradientDrawable.RADIAL_GRADIENT
                 gradientRadius = dpf(190f)
@@ -2434,7 +2544,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         cardView.addView(meta)
         cardView.addView(messageRow(item.rich, big = false), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(11) })
         if (item.canReply) cardView.addView(replyBar(item, accent), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)).apply { topMargin = dp(12) })
-        cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
         swipeToDismiss(cardView) { host.dismissNotification(item.key) }
         return cardView
     }
@@ -2634,6 +2744,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 c.call.ringing -> "Ringing"
                 c.call.startedAt > 0 -> fmt(System.currentTimeMillis() - c.call.startedAt)
                 else -> "On call"
+            }
+            is Content.Rec -> {
+                val r = c.rec
+                val n = r.countdown()
+                if (r.countdownUntil > 0L) {
+                    val label = if (n > 0) n.toString() else "●"
+                    if (tv.text != label) {
+                        tv.text = label
+                        // Each number lands with a little pop.
+                        tv.scaleX = 1.6f
+                        tv.scaleY = 1.6f
+                        tv.alpha = 0.3f
+                        tv.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(380L)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
+                        if (n > 0) haptic()
+                    }
+                } else {
+                    tv.text = fmt(r.elapsedMs())
+                }
             }
             is Content.Timer -> {
                 val t = c.timer
