@@ -203,8 +203,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         locked = now
         if (was && !now) {
             // Just unlocked: show the padlock opening, then settle back.
-            unlockUntil = android.os.SystemClock.uptimeMillis() + 1300L
-            main.postDelayed({ push() }, 1350L)
+            unlockUntil = android.os.SystemClock.uptimeMillis() + 1500L
+            main.postDelayed({ push() }, 1550L)
         }
     }
 

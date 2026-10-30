@@ -334,3 +334,50 @@ class BatteryGlyph(context: Context) : View(context) {
         c.drawRoundRect(r, 1.6f * d, 1.6f * d, p)
     }
 }
+
+/**
+ * A tick that draws itself on: [progress] 0..1 traces the stroke from the
+ * short leg to the tip, so it reads as being "written" rather than faded in.
+ */
+class CheckGlyph(context: Context) : View(context) {
+    var progress = 0f
+        set(v) {
+            field = v.coerceIn(0f, 1f)
+            invalidate()
+        }
+    var color = Color.WHITE
+        set(v) {
+            field = v
+            invalidate()
+        }
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val full = android.graphics.Path()
+    private val part = android.graphics.Path()
+    private val measure = android.graphics.PathMeasure()
+    private var builtFor = 0
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        if (s <= 0f) return
+        val key = width * 31 + height
+        if (key != builtFor) {
+            builtFor = key
+            val ox = (width - s) / 2f
+            val oy = (height - s) / 2f
+            full.reset()
+            full.moveTo(ox + s * 0.2f, oy + s * 0.53f)
+            full.lineTo(ox + s * 0.42f, oy + s * 0.74f)
+            full.lineTo(ox + s * 0.82f, oy + s * 0.3f)
+            measure.setPath(full, false)
+        }
+        paint.color = color
+        paint.strokeWidth = s * 0.13f
+        part.reset()
+        measure.getSegment(0f, measure.length * progress, part, true)
+        c.drawPath(part, paint)
+    }
+}

@@ -387,7 +387,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Popup -> "p:" + c.pop.id
             is Content.Note -> "n:" + c.note.id
             // One key for locked and unlocked, so the padlock opens in place.
-            is Content.Lock -> "lock"
+            // Locked and unlocked are two looks: switching rebuilds, so the island
+            // springs wider for the tick, like a moment of its own.
+            is Content.Lock -> "lock:" + c.unlocked
             is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name
             is Content.Timer -> "t:" + c.timer.key + ":" + (c.timer.anchor == 0L) + ":" + c.timer.actions.size
             is Content.Transfer -> "d:" + c.transfer.key
@@ -418,6 +420,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         chargeAnim?.cancel()
         chargeAnim = null
         lockGlyph = null
+        unlockCheck = null
     }
 
     private fun refresh() {
@@ -511,7 +514,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Same activity, same mode: update what changed without redrawing the shape. */
     private fun bindInPlace() {
         when (val c = content) {
-            is Content.Lock -> if (c.unlocked) animateUnlock()
+            is Content.Lock -> Unit
             is Content.Music -> {
                 val info = c.info
                 wave?.playing = info.playing
@@ -1325,9 +1328,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private var lockGlyph: LockGlyph? = null
 
+    private var unlockCheck: CheckGlyph? = null
+
     /**
-     * The lock screen: a padlock beside the camera. When the phone locks it
-     * drops in and the shackle snaps shut with a little wobble.
+     * Locked: a padlock beside the camera that drops in and clicks shut.
+     * Unlocked: the island springs a little wider, the padlock pops open and
+     * turns green, and a tick draws itself on the right, then it all tucks
+     * away. Everything moves on the view's own layer (scale, rotation,
+     * alpha) so nothing re-lays out mid-animation.
      */
     private fun compactLock(c: Content.Lock): Sides {
         val g = LockGlyph(context).apply {
@@ -1336,22 +1344,24 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         lockGlyph = g
         if (c.unlocked) {
+            val tick = CheckGlyph(context).apply { color = Colors.GREEN }
+            unlockCheck = tick
             post { animateUnlock() }
-        } else {
-            g.scaleX = 0.3f
-            g.scaleY = 0.3f
-            g.translationY = -dpf(6f)
-            g.animate().scaleX(1f).scaleY(1f).translationY(0f).setStartDelay(90L).setDuration(380L)
-                .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
-            // The shackle clicks shut, then a quick wobble.
-            android.animation.ValueAnimator.ofFloat(0.7f, 0f).apply {
-                startDelay = 260L
-                duration = 220L
-                interpolator = android.view.animation.OvershootInterpolator(4f)
-                addUpdateListener { g.open = (it.animatedValue as Float).coerceAtLeast(-0.08f) }
-                doOnEndCompat { wobble(g, 7f) }
-                start()
-            }
+            return Sides(g, tick, dp(18), dp(20), dp(20))
+        }
+        g.scaleX = 0.3f
+        g.scaleY = 0.3f
+        g.translationY = -dpf(6f)
+        g.animate().scaleX(1f).scaleY(1f).translationY(0f).setStartDelay(90L).setDuration(380L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3f)).withLayer().start()
+        // The shackle clicks shut, then a quick wobble.
+        android.animation.ValueAnimator.ofFloat(0.7f, 0f).apply {
+            startDelay = 260L
+            duration = 220L
+            interpolator = android.view.animation.OvershootInterpolator(4f)
+            addUpdateListener { g.open = (it.animatedValue as Float).coerceAtLeast(-0.08f) }
+            doOnEndCompat { wobble(g, 7f) }
+            start()
         }
         return Sides(g, null, dp(18))
     }
@@ -1391,35 +1401,48 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     /**
-     * Unlocked: a quick jiggle, the shackle pops open with a spring, the
-     * padlock flashes green and puffs up, then the island settles back.
+     * The unlock moment (timed like DroidBubble's: content in ~130 ms, the
+     * tick ~110 ms after, a soft bouncy spring): the shackle pops open with
+     * a spring while the padlock flashes green, then the tick draws itself
+     * on and lands with a bounce. One tick of vibration as it opens.
      */
     private fun animateUnlock() {
         val g = lockGlyph ?: return
         if (g.tag == "done") return
         g.tag = "done"
         g.open = 0f
-        wobble(g, 10f)
         android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            startDelay = 140L
-            duration = 340L
-            interpolator = android.view.animation.OvershootInterpolator(3.4f)
+            startDelay = 60L
+            duration = 320L
+            interpolator = android.view.animation.OvershootInterpolator(3f)
             addUpdateListener { g.open = it.animatedValue as Float }
             start()
         }
         android.animation.ValueAnimator.ofArgb(Color.WHITE, Colors.GREEN).apply {
-            startDelay = 160L
-            duration = 200L
-            addUpdateListener {
-                g.color = it.animatedValue as Int
-                g.invalidate()
-            }
+            startDelay = 80L
+            duration = 180L
+            addUpdateListener { g.color = it.animatedValue as Int; g.invalidate() }
             start()
         }
-        g.animate().scaleX(1.3f).scaleY(1.3f).setStartDelay(150L).setDuration(130L).setInterpolator(DecelerateInterpolator()).withEndAction {
-            g.animate().scaleX(1f).scaleY(1f).setStartDelay(0L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
-        }.start()
-        postDelayed({ haptic() }, 160L)
+        g.scaleX = 0.85f
+        g.scaleY = 0.85f
+        g.animate().scaleX(1f).scaleY(1f).setStartDelay(60L).setDuration(420L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3.4f)).withLayer().start()
+        unlockCheck?.let { t ->
+            t.progress = 0f
+            t.scaleX = 0.4f
+            t.scaleY = 0.4f
+            t.animate().scaleX(1f).scaleY(1f).setStartDelay(170L).setDuration(420L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).withLayer().start()
+            android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                startDelay = 170L
+                duration = 260L
+                interpolator = DecelerateInterpolator(1.6f)
+                addUpdateListener { t.progress = it.animatedValue as Float }
+                start()
+            }
+        }
+        postDelayed({ haptic() }, 70L)
     }
 
     private fun compactTimer(): Sides {
@@ -2370,17 +2393,31 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     /**
-     * One notification in the center: tinted with its app's colour, the app
-     * icon in a ring of that colour, name and time on one line, then the
-     * message. Tap to open, swipe either way to clear; it squishes under
-     * your finger and springs back.
+     * One notification in the center. A calm dark card with a soft glow of
+     * the app's colour coming from behind its icon in the top corner (not a
+     * tint over everything), a slim header (icon, app, time), the message,
+     * and for chats a reply bar that looks like a real text field with a
+     * send button in the app's colour. Tap to open, swipe either way to
+     * clear; it squishes under your finger and springs back.
      */
     private fun panelCard(item: PanelItem): View {
-        val accent = if (item.accent == 0 || item.accent == Color.BLACK) Colors.GRAPHITE else item.accent
+        val raw = item.accent
+        val hasAccent = raw != 0 && raw != Color.BLACK && raw != Color.WHITE
+        val accent = if (hasAccent) raw else Colors.INK
         val cardView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(14))
-            background = ShineDrawable(tint(Color.argb(238, 28, 28, 30), accent, 0.13f), dpf(24f), dpf(1.1f))
+            val glow = GradientDrawable().apply {
+                gradientType = GradientDrawable.RADIAL_GRADIENT
+                gradientRadius = dpf(190f)
+                setGradientCenter(0.08f, 0f)
+                colors = intArrayOf(
+                    Color.argb(if (hasAccent) 62 else 26, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Color.TRANSPARENT,
+                )
+                cornerRadius = dpf(24f)
+            }
+            background = android.graphics.drawable.LayerDrawable(arrayOf(ShineDrawable(Color.argb(242, 24, 24, 26), dpf(24f), dpf(1f)), glow))
             setOnClickListener {
                 haptic()
                 panelOpen = false
@@ -2389,47 +2426,59 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
         val meta = hRow()
-        val iconBox = FrameLayout(context).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setStroke(dp(1), Color.argb(170, Color.red(accent), Color.green(accent), Color.blue(accent)))
-                setColor(Color.argb(60, Color.red(accent), Color.green(accent), Color.blue(accent)))
-            }
-        }
-        iconBox.addView(roundImage(item.rich.appIcon, dpf(8f), Colors.GRAPHITE, R.drawable.ic_bell), FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER))
-        meta.addView(iconBox, LinearLayout.LayoutParams(dp(22), dp(22)))
-        meta.addView(spaced(text(12f, Color.argb(225, 255, 255, 255), true).apply { text = item.appName }, 8), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        meta.addView(roundImage(item.rich.appIcon, dpf(5f), Colors.GRAPHITE, R.drawable.ic_bell), LinearLayout.LayoutParams(dp(16), dp(16)))
+        meta.addView(spaced(text(12f, Color.argb(215, 255, 255, 255), true).apply { text = item.appName }, 7))
         val ago = DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
-        meta.addView(text(11.5f, white55, false).apply { text = ago })
+        meta.addView(spaced(text(11.5f, white55, false).apply { text = "·  $ago" }, 6), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        meta.addView(icon(R.drawable.ic_chevron, Color.argb(110, 255, 255, 255)), LinearLayout.LayoutParams(dp(14), dp(14)))
         cardView.addView(meta)
-        cardView.addView(messageRow(item.rich, big = false), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
-        if (item.canReply) {
-            // Reply sits under the message, in the app's colour.
-            val light = Color.red(accent) * 0.3 + Color.green(accent) * 0.59 + Color.blue(accent) * 0.11 > 150
-            cardView.addView(text(12.5f, if (light) Color.BLACK else Color.WHITE, true).apply {
-                text = "Reply"
-                gravity = Gravity.CENTER
-                setPadding(dp(14), dp(6), dp(14), dp(6))
-                background = GradientDrawable().apply {
-                    setColor(if (accent == Colors.GRAPHITE) Colors.INK else accent)
-                    cornerRadius = dpf(14f)
-                }
-                if (accent == Colors.GRAPHITE) setTextColor(Color.BLACK)
-                setOnClickListener {
-                    haptic()
-                    bounce(it)
-                    panelOpen = false
-                    refresh()
-                    host.openDetail(item.key)
-                }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(10)
-                marginStart = dp(53)
-            })
-        }
+        cardView.addView(messageRow(item.rich, big = false), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(11) })
+        if (item.canReply) cardView.addView(replyBar(item, accent), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)).apply { topMargin = dp(12) })
         cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
         swipeToDismiss(cardView) { host.dismissNotification(item.key) }
         return cardView
+    }
+
+    /**
+     * Looks like a text field: "Reply to <name>…" in a soft glass pill, with
+     * a round send button in the app's colour at the end. Tapping either
+     * opens the reply screen.
+     */
+    private fun replyBar(item: PanelItem, accent: Int): View {
+        val bar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), 0, dp(4), 0)
+            background = GradientDrawable().apply {
+                setColor(Color.argb(20, 255, 255, 255))
+                setStroke(dp(1), Color.argb(34, 255, 255, 255))
+                cornerRadius = dpf(19f)
+            }
+        }
+        val who = item.title.take(22)
+        bar.addView(text(13f, white55, false).apply { text = if (who.isNotBlank()) "Reply to $who…" else "Reply…" }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val light = Color.red(accent) * 0.3 + Color.green(accent) * 0.59 + Color.blue(accent) * 0.11 > 160
+        val send = ImageView(context).apply {
+            setImageResource(R.drawable.ic_send)
+            setColorFilter(if (light) Color.BLACK else Color.WHITE)
+            val pad = dp(7)
+            setPadding(pad, pad, pad, pad)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(accent)
+            }
+        }
+        bar.addView(send, LinearLayout.LayoutParams(dp(30), dp(30)))
+        bar.setOnClickListener {
+            haptic()
+            bounce(send)
+            postDelayed({
+                panelOpen = false
+                refresh()
+                host.openDetail(item.key)
+            }, 120L)
+        }
+        return bar
     }
 
     /** Drag a card sideways to dismiss it; a plain tap still opens it. */
