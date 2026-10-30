@@ -57,6 +57,9 @@ class MainActivity : Activity() {
     // Update state survives re-renders.
     private var latest: Updater.Release? = null
     private var updateStatus = "Not checked yet"
+    /** The update card's status line and button, updated in place while downloading. */
+    private var statusView: TextView? = null
+    private var progressView: TextView? = null
     private var downloading = -1f
     private var checkedThisSession = false
 
@@ -189,7 +192,15 @@ class MainActivity : Activity() {
         }
         setContentView(sv)
         scroll = sv
-        if (keepY > 0) sv.post { sv.scrollTo(0, keepY) }
+        // Put the page back where it was before its first frame is drawn (scrolling
+        // after a post showed one frame at the top: a jump).
+        if (keepY > 0) sv.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                sv.viewTreeObserver.removeOnPreDrawListener(this)
+                sv.scrollTo(0, keepY)
+                return true
+            }
+        })
         if (!samePage) {
             // A soft slide between pages.
             val dir = if (page == Page.HOME) -1 else 1
@@ -917,7 +928,7 @@ class MainActivity : Activity() {
         }
         val st = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         st.addView(label("Update status", 12f, text2, false))
-        st.addView(label(updateStatus, 15f, text1, true).apply { setPadding(0, dp(2), dp(8), 0) })
+        st.addView(label(updateStatus, 15f, text1, true).apply { setPadding(0, dp(2), dp(8), 0) }.also { statusView = it })
         row.addView(st, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val rel = latest
@@ -933,7 +944,7 @@ class MainActivity : Activity() {
                 newer && rel != null -> startUpdate(rel)
                 else -> checkUpdates()
             }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)))
+        }.also { progressView = it }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46)))
         c.addView(row)
 
         if (rel != null && rel.notes.isNotEmpty()) {
@@ -983,9 +994,19 @@ class MainActivity : Activity() {
         updateStatus = "Downloading ${rel.tag}"
         render()
         Updater.install(this, rel, progress = { f ->
+            val pct = (downloading * 100).toInt()
             downloading = if (f >= 1f) -1f else f
             updateStatus = if (f >= 1f) "Confirm the install" else "Downloading ${rel.tag}"
-            render()
+            // Download progress only changes two texts; rebuilding the whole
+            // page every percent is what made it flicker and jump.
+            val pv = progressView
+            if (f < 1f && pv != null && pv.isAttachedToWindow) {
+                val now = (f * 100).toInt()
+                if (now != pct) pv.text = "Downloading $now%"
+                statusView?.text = updateStatus
+            } else {
+                render()
+            }
         }, failed = { msg ->
             downloading = -1f
             updateStatus = "Failed: ${msg.take(40)}"
