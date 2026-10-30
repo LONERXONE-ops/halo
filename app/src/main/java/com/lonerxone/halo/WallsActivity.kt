@@ -123,7 +123,7 @@ class WallsActivity : Activity() {
             setOnClickListener { finish() }
         }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { bottomMargin = dp(22) })
         head.addView(label(if (island) "Island wallpapers" else "Notification wallpapers", 28f, Color.WHITE, true))
-        head.addView(label(if (island) "Wide desktop pictures, shown in the island's shape" else "Tall phone pictures for behind your notifications", 14f, Color.rgb(142, 142, 150), false).apply {
+        head.addView(label(if (island) "Desktop wallpapers for the island" else "Phone wallpapers for behind your notifications", 14f, Color.rgb(142, 142, 150), false).apply {
             setPadding(0, dp(4), 0, 0)
         })
         col.addView(head)
@@ -141,8 +141,8 @@ class WallsActivity : Activity() {
 
         val frame = FrameLayout(this)
         grid = GridView(this).apply {
-            numColumns = if (island) 1 else 3
-            verticalSpacing = dp(if (island) 14 else 10)
+            numColumns = if (island) 2 else 3
+            verticalSpacing = dp(10)
             horizontalSpacing = dp(10)
             stretchMode = GridView.STRETCH_COLUMN_WIDTH
             selector = android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
@@ -237,7 +237,8 @@ class WallsActivity : Activity() {
                 val list = (0 until data.length()).map { i ->
                     val o = data.getJSONObject(i)
                     val th = o.getJSONObject("thumbs")
-                    Wall(o.getString("id"), th.optString("large", th.optString("original")), o.getString("path"))
+                    // "original" keeps the picture's real shape ("large" is a zoomed-in crop).
+                    Wall(o.getString("id"), th.optString("original", th.optString("large")), o.getString("path"))
                 }
                 list to (j.optJSONObject("meta")?.optInt("last_page", 1) ?: 1)
             } catch (_: Exception) {
@@ -283,15 +284,15 @@ class WallsActivity : Activity() {
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, o: Outline) {
-                    o.setRoundRect(0, 0, v.width, v.height, if (island) v.height / 2f else dpf(18f))
+                    o.setRoundRect(0, 0, v.width, v.height, dpf(14f))
                 }
             }
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val w = MeasureSpec.getSize(widthMeasureSpec)
-            // The island when open is about 3.3 times as wide as it is tall; cards are 9:16.
-            val h = if (island) (w / 3.3f).toInt() else (w * 16f / 9f).toInt()
+            // As the wallpapers really are: desktop 16:9, phone 9:16.
+            val h = if (island) (w * 9f / 16f).toInt() else (w * 16f / 9f).toInt()
             setMeasuredDimension(w, h)
         }
     }
@@ -352,7 +353,7 @@ class WallsActivity : Activity() {
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, o: Outline) {
-                    o.setRoundRect(0, 0, v.width, v.height, if (island) v.height / 2f else dpf(30f))
+                    o.setRoundRect(0, 0, v.width, v.height, dpf(22f))
                 }
             }
             thumbs.get(w.thumb)?.let { setImageBitmap(it) }
@@ -362,16 +363,8 @@ class WallsActivity : Activity() {
         val sw = resources.displayMetrics.widthPixels - dp(40)
         val frame = FrameLayout(this)
         frame.addView(img, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (island) {
-            // The camera, so you can see how it sits.
-            frame.addView(View(this).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.BLACK)
-                }
-            }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER_HORIZONTAL or Gravity.TOP).apply { topMargin = dp(12) })
-        }
-        box.addView(frame, if (island) LinearLayout.LayoutParams(sw, (sw / 3.3f).toInt()) else LinearLayout.LayoutParams((sw * 0.62f).toInt(), (sw * 0.62f * 16f / 9f).toInt()))
+        // The whole wallpaper as it is: 16:9 for the island, 9:16 for notifications.
+        box.addView(frame, if (island) LinearLayout.LayoutParams(sw, (sw * 9f / 16f).toInt()) else LinearLayout.LayoutParams((sw * 0.62f).toInt(), (sw * 0.62f * 16f / 9f).toInt()))
         val state = label("Getting the full picture…", 13f, Color.rgb(160, 160, 168), false).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(16), 0, dp(16))
@@ -422,8 +415,7 @@ class WallsActivity : Activity() {
                 }
                 full = b
                 img.setImageBitmap(b)
-                state.text = "Looks like this on your island"
-                if (!island) state.text = "Looks like this behind your notifications"
+                state.text = if (island) "The island shows the middle of it" else "Fills the space behind your notifications"
                 set.isEnabled = true
                 set.animate().alpha(1f).setDuration(200L).start()
             }
