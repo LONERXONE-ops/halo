@@ -228,6 +228,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     /** The dialer's own Answer button; if it has none, Android's call service answers. */
     @Suppress("DEPRECATION", "MissingPermission")
+    @android.annotation.SuppressLint("MissingPermission") // wrapped in try/catch: SecurityException is handled
     override fun answerCall(intent: PendingIntent?) {
         if (intent != null && Launch.send(this, intent)) return
         try {
@@ -270,6 +271,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         main.postDelayed({ RecordActivity.launch(this) }, 250L)
     }
 
+    @android.annotation.SuppressLint("MissingPermission") // wrapped in try/catch: SecurityException is handled
     override fun endCall(intent: PendingIntent?) {
         if (intent != null && Launch.send(this, intent)) return
         try {
