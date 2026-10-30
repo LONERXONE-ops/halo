@@ -424,6 +424,8 @@ object Prefs {
     const val RECORDING = "recording"
     /** Sound in Halo's screen recordings: "device" (what the phone plays), "mic", or "none". */
     const val REC_AUDIO = "rec_audio"
+    /** Recording quality: "720", "1080" or "2160" (4K). */
+    const val REC_QUALITY = "rec_quality"
     const val MUSIC = "music"
     const val CHARGING = "charging"
     const val NOTIFS = "notifs"

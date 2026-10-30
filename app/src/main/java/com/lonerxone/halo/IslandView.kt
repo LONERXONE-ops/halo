@@ -406,6 +406,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun clearRefs() {
         recPulse?.cancel()
         recPulse = null
+        recCount?.cancel()
+        recCount = null
         wave = null
         artImage = null
         playButton = null
@@ -484,6 +486,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             Mode.EXPANDED, Mode.PANEL -> {
                 val w = expandedW()
                 val top = gapTop() + offsetY
+                // Rebuilding the open panel (a group fanned out, a card cleared):
+                // swap instantly and keep your place, no fade-out/fade-in blink.
+                panelQuiet = previous == Mode.PANEL && m == Mode.PANEL
+                if (panelQuiet) {
+                    savedPanelY = panelScrollView?.scrollY ?: 0
+                    pendingSlide = 1
+                }
                 val view = if (m == Mode.PANEL) {
                     buildPanel(w.toInt(), top)
                 } else {
@@ -557,6 +566,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             else -> {}
         }
     }
+
+    private var panelQuiet = false
+    private var savedPanelY = 0
+    private var panelScrollView: ScrollView? = null
 
     /** Apps whose stacked notifications you've fanned out in the panel. */
     private val openGroups = HashSet<String>()
@@ -1469,6 +1482,20 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Makes the island's red edge breathe while recording. */
     private var recPulse: android.animation.ValueAnimator? = null
+    private var recCount: android.animation.ValueAnimator? = null
+
+    /** 3, 2, 1: each new number lands with a pop and a tick. */
+    private fun showCount(tv: TextView, n: Int) {
+        val label = if (n > 0) n.toString() else "●"
+        if (tv.text == label) return
+        tv.text = label
+        tv.scaleX = 1.7f
+        tv.scaleY = 1.7f
+        tv.alpha = 0.2f
+        tv.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(340L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
+        if (n > 0) haptic()
+    }
 
     /**
      * Compact recording.
@@ -1486,10 +1513,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             box.addView(ring, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
             val left = (r.countdownUntil - SystemClock.elapsedRealtime()).coerceIn(0L, 3_000L)
             ring.progress = left / 3_000f
-            android.animation.ValueAnimator.ofFloat(ring.progress, 0f).apply {
-                duration = left
+            // Ring and number read the same clock every frame, so each third
+            // of the ring drains exactly as its number shows.
+            recCount = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = left + 100L
                 interpolator = android.view.animation.LinearInterpolator()
-                addUpdateListener { ring.progress = it.animatedValue as Float }
+                addUpdateListener {
+                    val now = (r.countdownUntil - SystemClock.elapsedRealtime()).coerceIn(0L, 3_000L)
+                    ring.progress = now / 3_000f
+                    timerText?.let { tv -> showCount(tv, r.countdown()) }
+                }
                 start()
             }
         } else if (!r.paused) {
@@ -2359,8 +2392,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 topMargin = dp(12)
             })
         }
-        // In: the cards rise into place one after another.
-        cards.take(8).forEachIndexed { i, v ->
+        // In: the cards rise into place one after another (only when the panel opens).
+        if (!panelQuiet) cards.take(8).forEachIndexed { i, v ->
             v.alpha = 0f
             v.translationY = dpf(26f)
             v.scaleX = 0.92f
@@ -2376,6 +2409,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             overScrollMode = View.OVER_SCROLL_NEVER
             isFillViewport = true
             addView(list)
+        }
+        panelScrollView = scroll
+        if (panelQuiet) {
+            val y = savedPanelY
+            scroll.post { scroll.scrollTo(0, y) }
         }
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, max(room, dp(90)))))
         return col
@@ -2788,17 +2826,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val r = c.rec
                 val n = r.countdown()
                 if (r.countdownUntil > 0L) {
-                    val label = if (n > 0) n.toString() else "●"
-                    if (tv.text != label) {
-                        tv.text = label
-                        // Each number lands with a little pop.
-                        tv.scaleX = 1.6f
-                        tv.scaleY = 1.6f
-                        tv.alpha = 0.3f
-                        tv.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(380L)
-                            .setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
-                        if (n > 0) haptic()
-                    }
+                    showCount(tv, n)
                 } else {
                     tv.text = fmt(r.elapsedMs())
                 }

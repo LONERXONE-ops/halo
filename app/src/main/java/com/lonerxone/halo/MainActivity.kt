@@ -352,6 +352,7 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Screen recording"))
         col.addView(group(
             navRow("Record your screen", "Starts after a 3-2-1 on the island. Saved to Movies/Halo") { RecordActivity.launch(this) },
+            recQualityRow(),
             recSoundRow(),
             switchRow("Other recorders on the island", "Samsung's (or any) screen recorder shows a red dot and timer too", Prefs.RECORDING),
         ))
@@ -385,7 +386,7 @@ class MainActivity : Activity() {
     private fun controlsCard(): View {
         val c = card().apply { setPadding(dp(16), dp(16), dp(16), dp(14)) }
         val chosen = Controls.chosenIds(this).toMutableList()
-        c.addView(label("Pick up to ${Controls.MAX}. Mobile data, Wi-Fi, Bluetooth, airplane mode, location and hotspot are switched through Quick Settings, which Android only lets the system change directly, so you'll see it open and close for a moment.", 12.5f, text2, false).apply {
+        c.addView(label("Pick up to ${Controls.MAX}. When all ${Controls.MAX} are picked, tapping another swaps it in for the last one. Mobile data, Wi-Fi, Bluetooth, airplane mode, location and hotspot are switched through Quick Settings, which Android only lets the system change directly, so you'll see it open and close for a moment.", 12.5f, text2, false).apply {
             setLineSpacing(0f, 1.15f)
             setPadding(dp(2), 0, dp(2), dp(12))
         })
@@ -407,8 +408,11 @@ class MainActivity : Activity() {
                     } else if (chosen.size < Controls.MAX) {
                         chosen.add(d.id)
                     } else {
-                        android.widget.Toast.makeText(this@MainActivity, "Up to ${Controls.MAX}: remove one first", android.widget.Toast.LENGTH_SHORT).show()
-                        return@setOnClickListener
+                        // Full: swap. The new one takes the place of the last one you picked.
+                        val out = chosen.removeAt(chosen.size - 1)
+                        chosen.add(d.id)
+                        val outName = Controls.ALL.firstOrNull { it.id == out }?.label ?: out
+                        android.widget.Toast.makeText(this@MainActivity, "Swapped $outName for ${d.label}", android.widget.Toast.LENGTH_SHORT).show()
                     }
                     Controls.set(this@MainActivity, chosen)
                     render()
@@ -1154,6 +1158,22 @@ class MainActivity : Activity() {
             imageTintList = ColorStateList.valueOf(Color.argb(110, 255, 255, 255))
         }, LinearLayout.LayoutParams(dp(20), dp(20)))
         row.setOnClickListener { onClick() }
+        return row
+    }
+
+    /** Quality for Halo's recordings; tap to go round 720p → 1080p → 4K. Shows roughly how big a minute is. */
+    private fun recQualityRow(): View {
+        val p = Prefs.get(this)
+        fun summary(q: Quality) = "${q.label} · about ${q.mbPerMin} MB a minute" +
+            if (q == Quality.UHD) " (falls back if your phone can't)" else ""
+        val row = navRow("Quality", summary(Quality.of(p.getString(Prefs.REC_QUALITY, Quality.HD.id)))) {}
+        row.setOnClickListener {
+            val cur = Quality.of(p.getString(Prefs.REC_QUALITY, Quality.HD.id))
+            val next = Quality.values()[(cur.ordinal + 1) % Quality.values().size]
+            p.edit().putString(Prefs.REC_QUALITY, next.id).apply()
+            val texts = (row as LinearLayout).getChildAt(0) as LinearLayout
+            (texts.getChildAt(1) as? android.widget.TextView)?.text = summary(next)
+        }
         return row
     }
 

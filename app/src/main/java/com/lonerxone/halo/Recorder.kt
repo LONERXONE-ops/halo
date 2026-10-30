@@ -173,20 +173,15 @@ class ScreenRecorder : Service() {
     private fun startCapture(useMic: Boolean, deviceSound: Boolean) {
         val p = projection ?: return
         if (stopping) return
-        // Size: the real screen, with the short side capped at 1080 and both sides even.
+        // Size from the quality you picked, in your screen's shape.
         val wm = getSystemService(WindowManager::class.java)
         val bounds = wm.maximumWindowMetrics.bounds
-        var w = bounds.width()
-        var h = bounds.height()
-        val short = minOf(w, h)
-        if (short > 1080) {
-            val f = 1080f / short
-            w = (w * f).toInt()
-            h = (h * f).toInt()
+        val q = Quality.of(Prefs.get(this).getString(Prefs.REC_QUALITY, Quality.HD.id))
+        val (w, h, used) = Quality.sizeFor(q, bounds.width(), bounds.height())
+        if (used != q) {
+            IslandStore.showPop("${q.label} not supported", "Using ${used.label}", Colors.ORANGE, R.drawable.ic_info, 2_400L)
         }
-        w -= w % 2
-        h -= h % 2
-        val dpi = resources.displayMetrics.densityDpi
+        val dpi = (resources.displayMetrics.densityDpi * (minOf(w, h).toFloat() / minOf(bounds.width(), bounds.height()))).toInt().coerceAtLeast(120)
 
         val name = "Halo_" + android.text.format.DateFormat.format("yyyyMMdd_HHmmss", System.currentTimeMillis()) + ".mp4"
         val values = ContentValues().apply {
@@ -227,7 +222,7 @@ class ScreenRecorder : Service() {
             mr.setVideoSize(w, h)
             mr.setVideoFrameRate(FPS)
             // About 0.2 bits per pixel per frame: sharp text and smooth games without huge files.
-            mr.setVideoEncodingBitRate((w.toLong() * h * FPS / 5).toInt().coerceIn(4_000_000, 16_000_000))
+            mr.setVideoEncodingBitRate(used.bitrate)
             if (vtmp != null) mr.setOutputFile(vtmp) else mr.setOutputFile(fd.fileDescriptor)
             mr.prepare()
         } catch (e: Exception) {
@@ -480,6 +475,52 @@ class ScreenRecorder : Service() {
 
         fun stop(c: Context) {
             c.startService(Intent(c, ScreenRecorder::class.java).setAction(ACTION_STOP))
+        }
+    }
+}
+
+/**
+ * Recording quality. The size follows your screen's shape: 720p and 1080p
+ * set the short side; 4K sets the long side to 3840. Each has its own
+ * bit rate, which is what decides how big the files are.
+ */
+enum class Quality(val id: String, val label: String, val bitrate: Int, val mbPerMin: Int) {
+    SD("720", "720p", 6_000_000, 45),
+    HD("1080", "1080p", 14_000_000, 105),
+    UHD("2160", "4K", 40_000_000, 300);
+
+    companion object {
+        fun of(id: String?) = values().firstOrNull { it.id == id } ?: HD
+
+        /** Width, height, and the quality actually used (lower if this phone's encoder can't do it). */
+        fun sizeFor(q: Quality, screenW: Int, screenH: Int): Triple<Int, Int, Quality> {
+            var cur = q
+            while (true) {
+                val short = minOf(screenW, screenH).toFloat()
+                val long = maxOf(screenW, screenH).toFloat()
+                val f = when (cur) {
+                    SD -> 720f / short
+                    HD -> 1080f / short
+                    UHD -> 3840f / long
+                }
+                var w = (screenW * f).toInt()
+                var h = (screenH * f).toInt()
+                w -= w % 16
+                h -= h % 16
+                if (supported(w, h) || cur == SD) return Triple(w, h, cur)
+                cur = if (cur == UHD) HD else SD
+            }
+        }
+
+        private fun supported(w: Int, h: Int): Boolean = try {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } &&
+                    info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities.let { v ->
+                        v.isSizeSupported(w, h) || v.isSizeSupported(h, w)
+                    }
+            }
+        } catch (_: Exception) {
+            true
         }
     }
 }
