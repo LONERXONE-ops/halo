@@ -342,7 +342,8 @@ class MainActivity : Activity() {
         col.addView(group(
             switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC),
             switchRowDefault("Bars follow the beat", "The music bars move with the real sound", Prefs.BEAT, false),
-            switchRow("Calls", "Caller, timer, end-call button", Prefs.CALLS),
+            switchRow("Calls", "Caller photo, Accept / Decline, Mute, Speaker and End", Prefs.CALLS),
+            switchRow("Lock screen", "A padlock on the lock screen that springs open when you unlock", Prefs.LOCK_MODE),
             switchRow("Timers & stopwatch", "Countdown from the Clock app", Prefs.TIMERS),
             switchRow("Downloads & installs", "Progress ring for files and apps", Prefs.TRANSFERS),
             switchRow("Navigation", "Next turn from Google Maps", Prefs.NAV),

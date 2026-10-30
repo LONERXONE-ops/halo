@@ -105,6 +105,11 @@ data class CallInfo(
     val contentIntent: PendingIntent?,
     val answer: PendingIntent?,
     val hangUp: PendingIntent?,
+    /** The calling app (Phone, WhatsApp…) and its name. */
+    val app: String = "",
+    val appName: String = "Phone",
+    /** The app's other call buttons (Speaker, Mute, Hold…), label → action. */
+    val extras: List<Pair<String, PendingIntent>> = emptyList(),
 )
 
 /** A running or paused timer / stopwatch from the clock app. */
@@ -373,6 +378,8 @@ object IslandStore {
 }
 
 object Prefs {
+    /** Show the island on the lock screen (a padlock that opens when you unlock). */
+    const val LOCK_MODE = "lock_mode"
     const val MUSIC = "music"
     const val CHARGING = "charging"
     const val NOTIFS = "notifs"

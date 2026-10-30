@@ -66,7 +66,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
-                Intent.ACTION_SCREEN_OFF -> locked = true
+                Intent.ACTION_SCREEN_OFF -> setLocked(true)
                 Intent.ACTION_SCREEN_ON -> ensureListener()
                 Intent.ACTION_BATTERY_CHANGED -> {
                     onBattery(intent)
@@ -87,7 +87,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 Intent.ACTION_AIRPLANE_MODE_CHANGED -> {
                     if (connectivityOn()) {
                         val on = intent.getBooleanExtra("state", false)
-                        IslandStore.showPop("Airplane mode", if (on) "On" else "Off", Colors.INK, R.drawable.ic_airplane, 2_200L)
+                        IslandStore.showPop("Airplane mode", if (on) "On" else "Off", 0xFFFF9F0A.toInt(), R.drawable.ic_airplane, 2_200L, kind = "toggle")
                     }
                     return
                 }
@@ -99,7 +99,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     }
                     if (connectivityOn()) {
                         val on = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
-                        IslandStore.showPop("Power saving", if (on) "On" else "Off", Colors.GREEN, R.drawable.ic_leaf, 2_200L)
+                        IslandStore.showPop("Power saving", if (on) "On" else "Off", 0xFFFFD60A.toInt(), R.drawable.ic_leaf, 2_200L, kind = "toggle")
                     }
                     return
                 }
@@ -107,7 +107,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     onBudsBattery(intent)
                     return
                 }
-                else -> locked = keyguard().isKeyguardLocked
+                else -> setLocked(keyguard().isKeyguardLocked)
             }
             push()
         }
@@ -189,6 +189,58 @@ class HaloService : AccessibilityService(), IslandView.Host {
         main.postDelayed({ LauncherLink.sendNow(this) }, 400L)
     }
 
+    // ----- Lock screen -----
+
+    /** Until when the "unlocked" moment shows (the padlock springing open). */
+    private var unlockUntil = 0L
+
+    private fun setLocked(now: Boolean) {
+        val was = locked
+        locked = now
+        if (was && !now) {
+            // Just unlocked: show the padlock opening, then settle back.
+            unlockUntil = android.os.SystemClock.uptimeMillis() + 1300L
+            main.postDelayed({ push() }, 1350L)
+        }
+    }
+
+    // ----- Calls -----
+
+    override fun toggleMute(): Boolean {
+        val am = getSystemService(AUDIO_SERVICE) as AudioManager
+        return try {
+            am.isMicrophoneMute = !am.isMicrophoneMute
+            am.isMicrophoneMute
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    override fun isMuted(): Boolean = try {
+        (getSystemService(AUDIO_SERVICE) as AudioManager).isMicrophoneMute
+    } catch (_: Exception) {
+        false
+    }
+
+    /** The dialer's own Answer button; if it has none, Android's call service answers. */
+    @Suppress("DEPRECATION", "MissingPermission")
+    override fun answerCall(intent: PendingIntent?) {
+        if (intent != null && Launch.send(this, intent)) return
+        try {
+            getSystemService(android.telecom.TelecomManager::class.java)?.acceptRingingCall()
+        } catch (_: Exception) {
+        }
+    }
+
+    @Suppress("DEPRECATION", "MissingPermission")
+    override fun endCall(intent: PendingIntent?) {
+        if (intent != null && Launch.send(this, intent)) return
+        try {
+            getSystemService(android.telecom.TelecomManager::class.java)?.endCall()
+        } catch (_: Exception) {
+        }
+    }
+
     /** The launcher's music card is on screen (so the island hides its music). */
     private var launcherShowsMusic = false
 
@@ -226,7 +278,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             locked
         }
         if (now != locked) {
-            locked = now
+            setLocked(now)
             push()
         }
     }
@@ -489,7 +541,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 second = live.firstOrNull()
             }
             else -> {
-                main = live.firstOrNull() ?: IslandView.Content.None
+                main = live.firstOrNull() ?: when {
+                    locked && p.getBoolean(Prefs.LOCK_MODE, true) -> IslandView.Content.Lock(false)
+                    android.os.SystemClock.uptimeMillis() < unlockUntil -> IslandView.Content.Lock(true)
+                    else -> IslandView.Content.None
+                }
                 second = live.getOrNull(1)
             }
         }
@@ -498,7 +554,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
         // Landscape is fine: the camera is on the side then, so the island sits at
         // the top centre (CameraFinder ignores cutouts that aren't on the top edge).
-        val hide = locked || hideFs
+        // Lock screen mode: the island stays on the lock screen (a padlock when
+        // nothing else is going on) and opens it when you unlock.
+        val lockMode = p.getBoolean(Prefs.LOCK_MODE, true)
+        val hide = (locked && !lockMode) || hideFs
+        v.onLockScreen = locked
         // Nothing else running beside the pill? Show a small bell there so the
         // notification panel stays one tap away while music (or a timer) plays.
         val bubble = second?.let { bubbleFor(it) } ?: if (
@@ -547,18 +607,18 @@ class HaloService : AccessibilityService(), IslandView.Host {
         lastBattery = pct
         if (prev < 0 || !popsOn()) return
         when {
-            !plugged && prev > 15 && pct <= 15 -> IslandStore.showPop("Low battery", "$pct%", Colors.INK, R.drawable.ic_battery_low, 3_500L)
-            !plugged && prev > 5 && pct <= 5 -> IslandStore.showPop("Battery", "$pct%", Colors.INK, R.drawable.ic_battery_low, 4_000L)
-            plugged && prev < 100 && pct >= 100 -> IslandStore.showPop("Charged", "100%", Colors.GREEN, R.drawable.ic_battery_full, 3_000L)
+            !plugged && prev > 15 && pct <= 15 -> IslandStore.showPop("Low battery", "$pct%", Colors.RED, R.drawable.ic_battery_low, 3_500L, kind = "battery")
+            !plugged && prev > 5 && pct <= 5 -> IslandStore.showPop("Battery", "$pct%", Colors.RED, R.drawable.ic_battery_low, 4_000L, kind = "battery")
+            plugged && prev < 100 && pct >= 100 -> IslandStore.showPop("Charged", "100%", Colors.GREEN, R.drawable.ic_battery_full, 3_000L, kind = "battery")
         }
     }
 
     private fun onRinger(i: Intent) {
         if (!popsOn()) return
         when (i.getIntExtra(AudioManager.EXTRA_RINGER_MODE, -1)) {
-            AudioManager.RINGER_MODE_SILENT -> IslandStore.showPop("Silent", "On", Colors.INK, R.drawable.ic_bell_off, 2_000L)
-            AudioManager.RINGER_MODE_VIBRATE -> IslandStore.showPop("Vibrate", "On", Colors.INK, R.drawable.ic_vibrate, 2_000L)
-            AudioManager.RINGER_MODE_NORMAL -> IslandStore.showPop("Ring", "On", Colors.INK, R.drawable.ic_bell, 2_000L)
+            AudioManager.RINGER_MODE_SILENT -> IslandStore.showPop("Silent", "On", Colors.RED, R.drawable.ic_bell_off, 2_000L, kind = "toggle")
+            AudioManager.RINGER_MODE_VIBRATE -> IslandStore.showPop("Vibrate", "On", 0xFFBF5AF2.toInt(), R.drawable.ic_vibrate, 2_000L, kind = "toggle")
+            AudioManager.RINGER_MODE_NORMAL -> IslandStore.showPop("Ring", "On", Colors.INK, R.drawable.ic_bell, 2_000L, kind = "toggle")
         }
     }
 
@@ -588,7 +648,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         lastBt = now
         lastBudsName = info
         if (dndOn()) return
-        IslandStore.showPop("Connected", info.take(18), Colors.INK, R.drawable.ic_headphones, 3_000L)
+        IslandStore.showPop("Connected", info.take(18), Colors.BLUE, R.drawable.ic_bluetooth, 3_000L, kind = "device")
     }
 
     /** Do Not Disturb is on: background news (Wi-Fi, earbuds) waits; things you just did still show. */
@@ -882,7 +942,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             // The callback fires straight away for the current network; that is not news.
             if (now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn() || dndOn()) return
             lastWifi = now
-            IslandStore.showPop("Wi-Fi", "Connected", Colors.INK, R.drawable.ic_wifi, 2_200L)
+            IslandStore.showPop("Wi-Fi", "Connected", Colors.BLUE, R.drawable.ic_wifi, 2_200L, kind = "device")
         }
     }
 
@@ -905,7 +965,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (level !in 0..100) return
         if (System.currentTimeMillis() - lastBt > 20_000L || dndOn()) return
         val name = lastBudsName ?: return
-        IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.INK else Colors.INK, R.drawable.ic_headphones, 3_000L)
+        IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.RED else Colors.BLUE, R.drawable.ic_headphones, 3_000L, kind = "battery")
         lastBudsName = null
     }
 
@@ -913,7 +973,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (!popsOn()) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
         val on = nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
-        IslandStore.showPop("Do Not Disturb", if (on) "On" else "Off", Colors.INK, R.drawable.ic_moon, 2_000L)
+        IslandStore.showPop("Do Not Disturb", if (on) "On" else "Off", 0xFF5E5CE6.toInt(), R.drawable.ic_moon, 2_000L, kind = "toggle")
     }
 
     private fun onCharging() {

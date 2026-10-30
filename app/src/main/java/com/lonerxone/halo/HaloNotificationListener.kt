@@ -315,11 +315,13 @@ class HaloNotificationListener : NotificationListenerService() {
 
         var answer: android.app.PendingIntent? = null
         var hangUp: android.app.PendingIntent? = null
+        val extras = ArrayList<Pair<String, android.app.PendingIntent>>()
         n.actions?.forEach { a ->
             val t = a.title?.toString()?.lowercase().orEmpty()
             when {
                 t.contains("answer") || t.contains("accept") -> answer = a.actionIntent
                 t.contains("decline") || t.contains("reject") || t.contains("end") || t.contains("hang") -> hangUp = a.actionIntent
+                a.actionIntent != null && !a.title.isNullOrBlank() -> extras += a.title.toString() to a.actionIntent
             }
         }
         if (ringing && n.actions != null && n.actions.size >= 2) {
@@ -347,6 +349,9 @@ class HaloNotificationListener : NotificationListenerService() {
                 contentIntent = n.contentIntent,
                 answer = answer,
                 hangUp = hangUp,
+                app = sbn.packageName,
+                appName = appName(sbn.packageName),
+                extras = if (ringing) emptyList() else extras.take(2),
             ),
         )
         Debug.lastNotification = "call: ${name.ifEmpty { "unknown" }} (${if (ringing) "ringing" else "active"})"

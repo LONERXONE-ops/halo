@@ -203,3 +203,134 @@ object BitmapFx {
         }
     }
 }
+
+/**
+ * Soft rings that ripple out from the middle (behind a caller's photo while
+ * it rings or while you talk). Runs only while it's on screen.
+ */
+class PulseView(context: Context) : View(context) {
+    var color = Color.WHITE
+    /** 0 = still, 1 = full strength. */
+    var strength = 1f
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private var anim: android.animation.ValueAnimator? = null
+    private var phase = 0f
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        anim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1800L
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener {
+                phase = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        anim?.cancel()
+        anim = null
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r0 = minOf(width, height) * 0.3f
+        val r1 = minOf(width, height) / 2f - 2f
+        for (k in 0 until 2) {
+            val t = (phase + k * 0.5f) % 1f
+            val r = r0 + (r1 - r0) * t
+            p.strokeWidth = 2.5f * resources.displayMetrics.density * (1f - t * 0.6f)
+            p.color = Color.argb((150 * (1f - t) * strength).toInt().coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+            c.drawCircle(cx, cy, r, p)
+        }
+    }
+}
+
+/**
+ * A padlock drawn in code. [open] 0 = locked, 1 = unlocked: the shackle
+ * lifts and swings open (animate it for the unlock moment).
+ */
+class LockGlyph(context: Context) : View(context) {
+    var open = 0f
+        set(v) {
+            field = v
+            invalidate()
+        }
+    var color = Color.WHITE
+    private val body = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shackle = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val rect = android.graphics.RectF()
+    private val path = android.graphics.Path()
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val s = minOf(w, h)
+        val ox = (w - s) / 2f
+        val oy = (h - s) / 2f
+        body.color = color
+        shackle.color = color
+        shackle.strokeWidth = s * 0.12f
+        // Body: a rounded block in the lower half.
+        rect.set(ox + s * 0.16f, oy + s * 0.46f, ox + s * 0.84f, oy + s * 0.94f)
+        c.drawRoundRect(rect, s * 0.12f, s * 0.12f, body)
+        // Shackle: an arch over the body that lifts and pivots on its left leg as it opens.
+        c.save()
+        val lift = s * 0.12f * open
+        val pivotX = ox + s * 0.3f
+        val pivotY = oy + s * 0.48f
+        c.translate(0f, -lift)
+        c.rotate(-28f * open, pivotX, pivotY)
+        rect.set(ox + s * 0.3f, oy + s * 0.1f, ox + s * 0.7f, oy + s * 0.62f)
+        path.reset()
+        path.moveTo(ox + s * 0.3f, oy + s * 0.48f)
+        path.arcTo(rect, 180f, 180f)
+        path.lineTo(ox + s * 0.7f, oy + s * 0.48f - s * 0.1f * open)
+        c.drawPath(path, shackle)
+        c.restore()
+    }
+}
+
+/** A small battery: outline, a cap, and a fill in [color] for [level] (0..1). */
+class BatteryGlyph(context: Context) : View(context) {
+    var level = 1f
+        set(v) {
+            field = v.coerceIn(0f, 1f)
+            invalidate()
+        }
+    var color = Color.WHITE
+    var charging = false
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val r = android.graphics.RectF()
+
+    override fun onDraw(c: Canvas) {
+        val d = resources.displayMetrics.density
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val cap = 2f * d
+        // Outline
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 1.3f * d
+        p.color = Color.argb(140, 255, 255, 255)
+        r.set(p.strokeWidth, p.strokeWidth, w - cap - p.strokeWidth, h - p.strokeWidth)
+        c.drawRoundRect(r, 3f * d, 3f * d, p)
+        // Cap
+        p.style = Paint.Style.FILL
+        r.set(w - cap, h * 0.32f, w, h * 0.68f)
+        c.drawRoundRect(r, d, d, p)
+        // Fill
+        p.color = color
+        val inset = 2.6f * d
+        val fw = (w - cap - inset * 2) * level
+        r.set(inset, inset, inset + fw, h - inset)
+        c.drawRoundRect(r, 1.6f * d, 1.6f * d, p)
+    }
+}
