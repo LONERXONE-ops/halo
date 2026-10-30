@@ -616,15 +616,23 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         val fresh = groupViews(pkg, group, open)
         fresh.forEachIndexed { i, v -> list.addView(v, idx + i) }
-        // Folding: the old cards stay on screen for a moment as ghosts, sliding up into the stack.
+        // Folding: the old views stay on screen as ghosts. The header fades,
+        // the first card turns into the stack, and the others slide up behind
+        // it one after another, shrinking a little and fading, like cards
+        // being tucked back into a pile.
+        val firstCardTop = old.getOrNull(1)?.top ?: anchorTop
         if (!open) {
+            val ease = android.view.animation.PathInterpolator(0.25f, 0.1f, 0.2f, 1f)
             old.forEachIndexed { i, v ->
-                if (i == 0) return@forEachIndexed
                 list.overlay.add(v)
-                v.animate().translationY((anchorTop - v.top).toFloat()).alpha(0f).scaleX(0.94f).scaleY(0.94f)
-                    .setStartDelay(((old.size - i) * 18L).coerceAtMost(90L)).setDuration(240L)
-                    .setInterpolator(DecelerateInterpolator(2f))
-                    .withEndAction { list.overlay.remove(v) }.start()
+                when (i) {
+                    0 -> v.animate().alpha(0f).setDuration(160L).setInterpolator(ease)
+                    // The stack (which looks the same) takes its place straight away.
+                    1 -> v.animate().alpha(0f).setDuration(90L).setInterpolator(ease)
+                    else -> v.animate().translationY((anchorTop - v.top).toFloat() + dpf(8f) * min(i - 1, 2))
+                        .alpha(0f).scaleX(0.92f).scaleY(0.92f)
+                        .setStartDelay(((i - 2) * 25L).coerceAtMost(100L)).setDuration(380L).setInterpolator(ease)
+                }.withEndAction { list.overlay.remove(v) }.start()
             }
         }
         // Keep the panel the same kind of thing so a later refresh doesn't rebuild it.
@@ -640,12 +648,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     val d = (was - v.top).toFloat()
                     if (abs(d) < 1f) continue
                     v.translationY = d
-                    v.animate().translationY(0f).setStartDelay(0L).setDuration(340L).setInterpolator(spring).start()
+                    v.animate().translationY(0f).setStartDelay(if (open) 0L else 60L).setDuration(if (open) 380L else 440L)
+                        .setInterpolator(if (open) spring else android.view.animation.PathInterpolator(0.25f, 0.1f, 0.2f, 1f)).start()
                 }
                 // The new views come out of the stack.
                 var k = 0
                 for (v in fresh) {
-                    val from = (anchorTop - v.top).toFloat() + if (open && k > 0) dpf(8f) * min(k, 2) else 0f
+                    // Opening: out from under the stack. Folding: the stack slides up from where the first card was.
+                    val from = if (open) (anchorTop - v.top).toFloat() + if (k > 0) dpf(8f) * min(k, 2) else 0f else (firstCardTop - v.top).toFloat()
                     v.translationY = from
                     val isHeader = (v.tag as? String)?.startsWith("gh:") == true
                     if (open && (k > 0 || isHeader)) {
@@ -654,8 +664,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         v.scaleY = 0.94f
                     }
                     v.animate().translationY(0f).alpha(1f).scaleX(1f).scaleY(1f)
-                        .setStartDelay(if (open) k * 32L else 40L).setDuration(if (open) 380L else 300L)
-                        .setInterpolator(spring).start()
+                        .setStartDelay(if (open) k * 40L else 0L).setDuration(if (open) 420L else 440L)
+                        .setInterpolator(if (open) spring else android.view.animation.PathInterpolator(0.25f, 0.1f, 0.2f, 1f)).start()
                     if (!isHeader) k++
                 }
                 return true
@@ -2565,6 +2575,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             isFillViewport = true
+            // Cards fade out as they scroll under the top (and bottom) instead of being cut off.
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(30))
             addView(list)
         }
         panelScrollView = scroll
