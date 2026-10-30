@@ -330,7 +330,7 @@ class ScreenRecorder : Service() {
             }
             main.post {
                 if (saved && uri != null) {
-                    IslandStore.showPop("Recording saved", "Gallery", Colors.GREEN, R.drawable.ic_check, 2_600L)
+                    IslandStore.showPop("Saved to gallery", "", Colors.GREEN, R.drawable.ic_record, 2_600L, kind = "saved")
                     savedNotice(uri)
                 }
                 stopForeground(STOP_FOREGROUND_REMOVE)

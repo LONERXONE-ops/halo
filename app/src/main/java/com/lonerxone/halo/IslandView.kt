@@ -404,6 +404,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun clearRefs() {
+        recPulse?.cancel()
+        recPulse = null
         wave = null
         artImage = null
         playButton = null
@@ -470,7 +472,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     is Content.Nav -> compactNav(c.nav)
                     is Content.Torch -> compactTorch().also { glowColor = Colors.INK; glow = 0.5f }
                     is Content.Lock -> compactLock(c)
-                    is Content.Rec -> compactRec(c.rec).also { glowColor = Colors.RED; glow = if (c.rec.paused) 0f else 0.45f }
+                    is Content.Rec -> compactRec(c.rec).also { glowColor = Colors.RED; if (c.rec.paused || c.rec.countdownUntil > 0L) glow = 0.2f }
                     else -> Sides(null, null)
                 }
                 val w = compactWidthFor(sides)
@@ -1284,6 +1286,17 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     start()
                 }
             }
+            pop.kind == "saved" -> FrameLayout(context).apply {
+                val tick = CheckGlyph(context).apply { color = accent }
+                addView(tick, FrameLayout.LayoutParams(dp(20), dp(20)))
+                android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                    startDelay = 260L
+                    duration = 320L
+                    interpolator = DecelerateInterpolator(1.6f)
+                    addUpdateListener { tick.progress = it.animatedValue as Float }
+                    start()
+                }
+            }
             pop.kind == "toggle" -> {
                 val on = pop.value.equals("On", true)
                 text(11.5f, if (on) Color.BLACK else Colors.SILVER, true).apply {
@@ -1454,35 +1467,71 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     // ----- Screen recording -----
 
+    /** Makes the island's red edge breathe while recording. */
+    private var recPulse: android.animation.ValueAnimator? = null
+
     /**
-     * Compact: a red dot with a soft red ripple on the left, the time on the
-     * right. Counting down, the right side shows 3, 2, 1, each landing with
-     * a pop. Paused: the dot goes still and grey.
+     * Compact recording.
+     *  - Counting down: a red ring around the dot drains smoothly over the
+     *    3 seconds while 3, 2, 1 pop in on the right.
+     *  - Recording: the dot lands with a bounce, a red ripple spreads from
+     *    it, and the island's edge glows red and gently breathes.
+     *  - Paused: everything goes still and grey.
      */
     private fun compactRec(r: RecInfo): Sides {
-        val dotBox = FrameLayout(context).apply { clipChildren = false }
-        if (!r.paused) dotBox.addView(PulseView(context).apply {
-            color = Colors.RED
-            strength = 0.8f
-        }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        val counting = r.countdownUntil > 0L
+        val box = FrameLayout(context).apply { clipChildren = false }
+        if (counting) {
+            val ring = ProgressRing(context).apply { color = Colors.RED }
+            box.addView(ring, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+            val left = (r.countdownUntil - SystemClock.elapsedRealtime()).coerceIn(0L, 3_000L)
+            ring.progress = left / 3_000f
+            android.animation.ValueAnimator.ofFloat(ring.progress, 0f).apply {
+                duration = left
+                interpolator = android.view.animation.LinearInterpolator()
+                addUpdateListener { ring.progress = it.animatedValue as Float }
+                start()
+            }
+        } else if (!r.paused) {
+            box.addView(PulseView(context).apply {
+                color = Colors.RED
+                strength = 1f
+            }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        }
         val dot = View(context).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(if (r.paused) Colors.GREY else Colors.RED)
             }
         }
-        dotBox.addView(dot, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.CENTER))
+        box.addView(dot, FrameLayout.LayoutParams(dp(if (counting) 8 else 11), dp(if (counting) 8 else 11), Gravity.CENTER))
         dot.scaleX = 0f
         dot.scaleY = 0f
-        dot.animate().scaleX(1f).scaleY(1f).setStartDelay(100L).setDuration(420L)
-            .setInterpolator(android.view.animation.OvershootInterpolator(3.5f)).start()
-        val counting = r.countdownUntil > 0L
-        val tv = text(if (counting) 15f else 12.5f, if (r.paused) Colors.SILVER else Color.WHITE, true).apply {
+        dot.animate().scaleX(1f).scaleY(1f).setStartDelay(90L).setDuration(460L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(4f)).withLayer().start()
+        val tv = text(if (counting) 16f else 13f, if (r.paused) Colors.SILVER else Color.WHITE, true).apply {
             gravity = Gravity.CENTER
-            if (!counting) fontFeatureSettings = "tnum"
+            fontFeatureSettings = "tnum"
         }
         timerText = tv
-        return Sides(dotBox, tv, dp(22))
+        if (!counting && !r.paused) {
+            // Recording just began (or resumed): a bright flash on the edge, then a slow breathe.
+            haptic()
+            recPulse = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 1_600L
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                addUpdateListener {
+                    glow = 0.25f + 0.55f * (it.animatedValue as Float)
+                    invalidate()
+                }
+                startDelay = 450L
+                start()
+            }
+            glow = 1f
+        }
+        return Sides(box, tv, dp(26))
     }
 
     /**
@@ -1499,15 +1548,20 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
         val tag = hRow()
-        tag.addView(dot, LinearLayout.LayoutParams(dp(9), dp(9)))
+        val dotBox = FrameLayout(context).apply { clipChildren = false }
+        if (!r.paused) dotBox.addView(PulseView(context).apply {
+            color = Colors.RED
+            strength = 0.9f
+        }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
+        dotBox.addView(dot, FrameLayout.LayoutParams(dp(9), dp(9), Gravity.CENTER))
+        tag.addView(dotBox, LinearLayout.LayoutParams(dp(18), dp(18)))
         tag.addView(spaced(text(12f, if (r.paused) white70 else Colors.RED, true).apply {
             text = when {
                 r.countdownUntil > 0L -> "Starting"
                 r.paused -> "Paused"
                 else -> "Recording"
             }
-        }, 7))
-        if (!r.paused) wobbleDot(dot)
+        }, 4))
         col.addView(cameraRow(tag, text(12f, white55, false).apply { text = if (r.own) "Screen" else r.appName }, w, top))
         val b = body()
         val row = hRow()
@@ -1532,20 +1586,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         b.addView(row)
         col.addView(b)
         return col
-    }
-
-    /** A recording dot that gently breathes. */
-    private fun wobbleDot(v: View) {
-        val anim = android.animation.ObjectAnimator.ofFloat(v, View.ALPHA, 1f, 0.35f).apply {
-            duration = 900L
-            repeatCount = android.animation.ValueAnimator.INFINITE
-            repeatMode = android.animation.ValueAnimator.REVERSE
-        }
-        // Runs only while on screen, so it never keeps going in the background.
-        v.addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(view: View) = anim.start()
-            override fun onViewDetachedFromWindow(view: View) = anim.cancel()
-        })
     }
 
     private fun compactTimer(): Sides {
@@ -2454,44 +2494,43 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * the stack to fan them out.
      */
     private fun stackedCard(pkg: String, group: List<PanelItem>): View {
-        val box = FrameLayout(context)
+        val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val front = panelCard(group.first()) as LinearLayout
+        // "+N more" goes in the header (where the arrow was), so the stack
+        // doesn't grow an extra row of empty space.
+        val meta = front.getChildAt(0) as LinearLayout
+        meta.removeViewAt(meta.childCount - 1)
+        meta.addView(text(11.5f, Color.WHITE, true).apply {
+            text = "+${group.size - 1}"
+            gravity = Gravity.CENTER
+            setPadding(dp(9), dp(3), dp(9), dp(3))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(46, 255, 255, 255))
+                cornerRadius = dpf(10f)
+            }
+        })
+        front.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        box.addView(front)
+        // The cards behind peek out underneath as two slim, narrower edges.
         val behind = minOf(group.size - 1, 2)
-        for (i in behind downTo 1) {
+        for (i in 1..behind) {
             box.addView(View(context).apply {
                 background = GradientDrawable().apply {
-                    setColor(tint(Color.argb(235 - i * 45, 34 + i * 4, 34 + i * 4, 36 + i * 4), group.first().accent, 0.16f))
-                    cornerRadius = dpf(20f)
+                    setColor(tint(Color.argb(if (i == 1) 215 else 160, 34, 34, 37), group.first().accent, 0.12f))
+                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, dpf(14f), dpf(14f), dpf(14f), dpf(14f))
                 }
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                leftMargin = dp(10 * i)
-                rightMargin = dp(10 * i)
-                topMargin = dp(10)
-                bottomMargin = -dp(8 * i)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply {
+                marginStart = dp(14 * i)
+                marginEnd = dp(14 * i)
             })
         }
-        val front = panelCard(group.first())
-        (front as LinearLayout).addView(text(12f, Color.WHITE, true).apply {
-            text = "+${group.size - 1} more"
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            background = GradientDrawable().apply {
-                setColor(Colors.GRAPHITE)
-                cornerRadius = dpf(11f)
-            }
-            setOnClickListener {
-                haptic()
-                openGroups.add(pkg)
-                refresh()
-            }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(10)
-            gravity = Gravity.END
-        })
-        val lp = front.layoutParams as LinearLayout.LayoutParams
-        front.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        box.addView(front)
-        box.clipChildren = false
-        box.setPadding(0, 0, 0, dp(8 * behind))
-        box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = lp.topMargin }
+        // Tap anywhere on the stack to fan it out.
+        front.setOnClickListener {
+            haptic()
+            openGroups.add(pkg)
+            refresh()
+        }
+        box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
         return box
     }
 
