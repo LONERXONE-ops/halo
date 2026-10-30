@@ -173,6 +173,9 @@ class MainActivity : Activity() {
             else -> 0
         }
         val sv = ScrollView(this).apply {
+            // Fades out at the edges instead of cutting things off.
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength((32 * resources.displayMetrics.density).toInt())
             isFillViewport = true
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS

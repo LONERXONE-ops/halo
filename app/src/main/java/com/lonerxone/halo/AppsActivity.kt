@@ -97,6 +97,9 @@ class AppsActivity : Activity() {
         col.addView(card)
 
         val scroll = ScrollView(this).apply {
+            // Fades out at the edges instead of cutting things off.
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength((32 * resources.displayMetrics.density).toInt())
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(bgTop, bgBottom))
             addView(col)
             setOnApplyWindowInsetsListener { v, insets ->

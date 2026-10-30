@@ -54,6 +54,8 @@ class NotificationActivity : Activity() {
     private val shownSigs = ArrayList<String>()
     /** What you sent from here (the app echoes it back in its next notification). */
     private val sentTexts = HashSet<String>()
+    /** "Sending… / Sent" under your newest message. */
+    private var sendStatus: TextView? = null
 
     /**
      * Who, when and what. Not the photo's link: apps hand out a fresh link to
@@ -128,12 +130,19 @@ class NotificationActivity : Activity() {
             if (m.text.toString().trim() in sentTexts) continue
             val b = bubble(m, mine = false)
             list.addView(b)
+            // A new message blows up from its tail (bottom left), with a little spring.
             b.alpha = 0f
-            b.translationY = dpf(24f)
-            b.scaleX = 0.9f
-            b.scaleY = 0.9f
-            b.pivotX = 0f
-            b.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(added * 60L).setDuration(460L).setInterpolator(Springy(0.4f)).start()
+            b.translationY = dpf(18f)
+            b.scaleX = 0.55f
+            b.scaleY = 0.55f
+            b.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(v: View, l: Int, t: Int, rr: Int, bb: Int, ol: Int, ot: Int, orr: Int, ob: Int) {
+                    v.removeOnLayoutChangeListener(this)
+                    v.pivotX = dpf(8f)
+                    v.pivotY = (bb - t).toFloat()
+                }
+            })
+            b.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(60L + added * 70L).setDuration(420L).setInterpolator(Springy(0.5f)).withLayer().start()
             added++
         }
         if (added > 0) {
@@ -411,6 +420,9 @@ class NotificationActivity : Activity() {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             isFillViewport = false
+            // Messages fade out as they scroll under the top and bottom edges, never cut off.
+            isVerticalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(34))
             addView(list)
             // Grows/shrinks with the keyboard: always keep the newest message in view.
             addOnLayoutChangeListener { v, _, t, _, b, _, ot, _, ob -> if (b - t != ob - ot) (v as ScrollView).post { v.fullScroll(View.FOCUS_DOWN) } }
@@ -469,20 +481,55 @@ class NotificationActivity : Activity() {
                     if (sendReply(latest, typed)) {
                         sentTexts += typed
                         val mine = bubble(Msg(null, typed, null, null), mine = true)
+                        sendStatus?.let { old -> list.removeView(old) }
                         list.addView(mine)
-                        // Your message pops up from the reply box.
-                        mine.alpha = 0f
-                        mine.translationY = dpf(30f)
-                        mine.scaleX = 0.85f
-                        mine.scaleY = 0.85f
-                        mine.pivotX = (resources.displayMetrics.widthPixels - basePad).toFloat()
-                        mine.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(420L).setInterpolator(Springy(0.45f)).start()
+                        val status = label("Sending…", 11.5f, text2, false).apply {
+                            gravity = Gravity.END
+                            setPadding(0, dp(3), dp(6), 0)
+                            alpha = 0f
+                        }
+                        sendStatus = status
+                        list.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                         input.setText("")
+                        // Your message lifts off the reply box and flies up into
+                        // the chat, growing from its tail (bottom right).
+                        mine.alpha = 0f
+                        mine.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                            override fun onLayoutChange(v: View, l: Int, t: Int, rr: Int, bb: Int, ol: Int, ot: Int, orr: Int, ob: Int) {
+                                v.removeOnLayoutChangeListener(this)
+                                val a = IntArray(2)
+                                val b = IntArray(2)
+                                input.getLocationOnScreen(a)
+                                v.getLocationOnScreen(b)
+                                v.pivotX = (rr - l).toFloat() - dpf(8f)
+                                v.pivotY = (bb - t).toFloat()
+                                v.translationY = (a[1] - b[1]).toFloat().coerceIn(dpf(20f), dpf(260f))
+                                v.scaleX = 0.7f
+                                v.scaleY = 0.7f
+                                v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(440L).setInterpolator(Springy(0.45f)).withLayer().start()
+                                status.animate().alpha(1f).setStartDelay(200L).setDuration(200L).start()
+                            }
+                        })
                         scroll.post { scroll.smoothScrollTo(0, list.height) }
-                        send.animate().translationX(dpf(14f)).alpha(0.2f).setDuration(120L).withEndAction {
-                            send.translationX = -dpf(10f)
-                            send.animate().translationX(0f).alpha(0.45f).setDuration(320L).setInterpolator(Springy(0.5f)).start()
+                        // Delivered to the app: "Sent", with a quick pop.
+                        ui.postDelayed({
+                            if (sendStatus === status) {
+                                status.text = "Sent ✓"
+                                status.setTextColor(text1)
+                                status.scaleX = 0.8f
+                                status.scaleY = 0.8f
+                                status.pivotX = status.width.toFloat()
+                                status.animate().scaleX(1f).scaleY(1f).setDuration(320L).setInterpolator(Springy(0.6f)).start()
+                            }
+                        }, 650L)
+                        // The paper plane takes off up and right, then glides back in from below.
+                        send.animate().translationX(dpf(18f)).translationY(-dpf(18f)).rotation(-20f).alpha(0f).setDuration(150L).withEndAction {
+                            send.translationX = -dpf(8f)
+                            send.translationY = dpf(14f)
+                            send.rotation = 0f
+                            send.animate().translationX(0f).translationY(0f).alpha(0.45f).setDuration(360L).setInterpolator(Springy(0.5f)).start()
                         }.start()
+                        window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
                     } else {
                         Toast.makeText(this, "Couldn't send. Open the app to reply.", Toast.LENGTH_SHORT).show()
                     }

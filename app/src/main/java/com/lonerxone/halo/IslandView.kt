@@ -810,6 +810,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         for (s in springs) if (s.step(dt)) moving = true
         if (!revealed && shapeProgress() >= 0.6f) reveal()
         slot?.translationY = v(6) - t(6)
+        fitOutgoing()
         updateClip()
         if (moving) {
             Choreographer.getInstance().postFrameCallback(frameCallback)
@@ -1128,7 +1129,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         slot?.let { old ->
             old.animate().cancel()
             // Swiping between alerts: the old one has already slid away.
-            if (slide != 0) removeView(old) else old.animate().alpha(0f).scaleX(0.96f).scaleY(0.96f).setDuration(110L).withLayer().withEndAction { removeView(old) }.start()
+            if (slide != 0) {
+                removeView(old)
+            } else {
+                // What was showing shrinks with the island as it changes shape
+                // (never sliced off by its edge) while it fades out quickly.
+                outgoing?.let { o -> removeView(o) }
+                outgoing = old
+                outW = old.width.coerceAtLeast(1)
+                outH = old.height.coerceAtLeast(1)
+                outCy = old.top + old.height / 2f + old.translationY
+                old.clipToOutline = false
+                old.animate().alpha(0f).setDuration(130L).setInterpolator(DecelerateInterpolator(1.5f)).withLayer().withEndAction {
+                    removeView(old)
+                    if (outgoing === old) outgoing = null
+                }.start()
+            }
         }
         slot = null
         if (view == null) {
@@ -1176,6 +1192,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             s.scaleY = 1f
             revealed = true
         }
+    }
+
+    private var outgoing: View? = null
+    private var outW = 1
+    private var outH = 1
+    private var outCy = 0f
+
+    /** Keeps the outgoing content inside the island's live shape: scaled down with it, centred on it. */
+    private fun fitOutgoing() {
+        val o = outgoing ?: return
+        if (v(0) < 1f || v(1) < 1f) return
+        val sc = min(1f, min(v(0) / outW, v(1) / outH)).coerceAtLeast(0.2f)
+        o.scaleX = sc
+        o.scaleY = sc
+        o.translationY = v(6) - (o.top + o.height / 2f)
+        o.translationX = clampCx(v(10), v(0)) - (o.left + o.width / 2f)
     }
 
     private fun reveal() {
@@ -2491,6 +2523,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         }
         val chipScroll = android.widget.HorizontalScrollView(context).apply {
+            // Fades out at the edges instead of cutting things off.
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength((24 * resources.displayMetrics.density).toInt())
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(chips)
