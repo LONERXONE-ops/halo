@@ -300,7 +300,39 @@ class MainActivity : Activity() {
             },
             iconRow(R.drawable.ic_info, Colors.GRAPHITE, "About", "Creator, privacy, diagnostics") { go(Page.ABOUT) },
         ))
+        gap(col)
+        col.addView(group(iconRow(R.drawable.ic_update, Colors.RED, "Back to default settings", "Every setting as it was when you installed Halo. Your pictures stay.") { confirmReset() }))
         credit(col)
+    }
+
+    /**
+     * Puts every setting back as it was on a fresh install: what shows on the
+     * island, look and feel, buttons, recording options, camera fit. Your
+     * pictures and the apps you blocked from popping up are kept.
+     */
+    private fun confirmReset() {
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Back to default settings?")
+            .setMessage("Every Halo setting goes back to how it was when you installed it. Your island and notification pictures stay.")
+            .setPositiveButton("Reset") { _, _ ->
+                val p = Prefs.get(this)
+                val keep = listOf(Prefs.ISLAND_PIC, Prefs.PANEL_PIC, Prefs.BLOCKED)
+                val saved = keep.associateWith { p.all[it] }
+                val e = p.edit().clear()
+                for ((k, v) in saved) when (v) {
+                    is Long -> e.putLong(k, v)
+                    is Int -> e.putInt(k, v)
+                    is Boolean -> e.putBoolean(k, v)
+                    is String -> e.putString(k, v)
+                    is Set<*> -> e.putStringSet(k, v.filterIsInstance<String>().toSet())
+                }
+                e.apply()
+                HaloService.instance?.reloadPrefs()
+                Toast.makeText(this, "Halo is back to its default settings", Toast.LENGTH_SHORT).show()
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /** A little preview of the island itself, with the service state and a test button. */
