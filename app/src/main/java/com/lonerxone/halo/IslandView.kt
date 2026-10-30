@@ -182,6 +182,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         style = Paint.Style.STROKE
         strokeWidth = dpf(1f)
     }
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shadowRect = RectF()
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpf(1.5f)
@@ -568,7 +570,128 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private var panelQuiet = false
+    private var panelList: LinearLayout? = null
+    private var panelGroups: Map<String, List<PanelItem>> = emptyMap()
+    private var panelChromeH = 0
+    private var panelRoom = 0
+
+    /** The views for one app's notifications: a stack, or a header and every card. */
+    private fun groupViews(pkg: String, group: List<PanelItem>, open: Boolean): List<View> {
+        if (group.size == 1) return listOf(panelCard(group[0]).apply { tag = "g:$pkg" })
+        if (!open) return listOf(stackedCard(pkg, group).apply { tag = "g:$pkg" })
+        val out = ArrayList<View>()
+        out += groupHeader(pkg, group).apply { tag = "gh:$pkg" }
+        group.forEachIndexed { i, item ->
+            out += panelCard(item).also { v ->
+                // One app's cards sit close together; different apps get more air.
+                (v.layoutParams as LinearLayout.LayoutParams).topMargin = dp(if (i == 0) 8 else 6)
+                v.tag = "gc:$pkg"
+            }
+        }
+        return out
+    }
+
+    /**
+     * Fan a stack out, or fold it back, right where it is (no rebuild).
+     * Everything is measured before and after (FLIP): the cards slide out
+     * from under the stack one after another and settle with a little
+     * bounce; the cards below glide down to make room; the island grows
+     * with them. Folding runs it backwards: the cards slide up into the
+     * stack and fade, and everything below glides up.
+     */
+    private fun toggleGroup(pkg: String, open: Boolean) {
+        val list = panelList ?: return
+        val group = panelGroups[pkg] ?: return
+        val idx = (0 until list.childCount).firstOrNull { (list.getChildAt(it).tag as? String)?.endsWith(":$pkg") == true } ?: return
+        haptic()
+        // Before: where every view is now.
+        val before = HashMap<View, Int>()
+        for (i in 0 until list.childCount) list.getChildAt(i).let { before[it] = it.top + it.translationY.toInt() }
+        val old = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.endsWith(":$pkg") == true }
+        val anchorTop = old.first().top
+        if (open) openGroups.add(pkg) else openGroups.remove(pkg)
+        for (v in old) {
+            v.animate().cancel()
+            list.removeView(v)
+        }
+        val fresh = groupViews(pkg, group, open)
+        fresh.forEachIndexed { i, v -> list.addView(v, idx + i) }
+        // Folding: the old cards stay on screen for a moment as ghosts, sliding up into the stack.
+        if (!open) {
+            old.forEachIndexed { i, v ->
+                if (i == 0) return@forEachIndexed
+                list.overlay.add(v)
+                v.animate().translationY((anchorTop - v.top).toFloat()).alpha(0f).scaleX(0.94f).scaleY(0.94f)
+                    .setStartDelay(((old.size - i) * 18L).coerceAtMost(90L)).setDuration(240L)
+                    .setInterpolator(DecelerateInterpolator(2f))
+                    .withEndAction { list.overlay.remove(v) }.start()
+            }
+        }
+        // Keep the panel the same kind of thing so a later refresh doesn't rebuild it.
+        builtKey = mode.name + "/" + contentKey(mode)
+        list.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                list.viewTreeObserver.removeOnPreDrawListener(this)
+                val spring = android.view.animation.OvershootInterpolator(1.15f)
+                // Everything that was already there glides from where it was.
+                for (i in 0 until list.childCount) {
+                    val v = list.getChildAt(i)
+                    val was = before[v] ?: continue
+                    val d = (was - v.top).toFloat()
+                    if (abs(d) < 1f) continue
+                    v.translationY = d
+                    v.animate().translationY(0f).setStartDelay(0L).setDuration(340L).setInterpolator(spring).start()
+                }
+                // The new views come out of the stack.
+                var k = 0
+                for (v in fresh) {
+                    val from = (anchorTop - v.top).toFloat() + if (open && k > 0) dpf(8f) * min(k, 2) else 0f
+                    v.translationY = from
+                    val isHeader = (v.tag as? String)?.startsWith("gh:") == true
+                    if (open && (k > 0 || isHeader)) {
+                        v.alpha = 0f
+                        v.scaleX = 0.94f
+                        v.scaleY = 0.94f
+                    }
+                    v.animate().translationY(0f).alpha(1f).scaleX(1f).scaleY(1f)
+                        .setStartDelay(if (open) k * 32L else 40L).setDuration(if (open) 380L else 300L)
+                        .setInterpolator(spring).start()
+                    if (!isHeader) k++
+                }
+                return true
+            }
+        })
+        resizePanel()
+    }
+
+    /** The list changed size: the island grows or shrinks to fit (up to its limit), smoothly. */
+    private fun resizePanel() {
+        if (mode != Mode.PANEL) return
+        val list = panelList ?: return
+        val scroll = panelScrollView ?: return
+        val s = slot ?: return
+        val w = expandedW()
+        list.measure(MeasureSpec.makeMeasureSpec(w.toInt(), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        val sh = min(list.measuredHeight, panelRoom)
+        val h = (panelChromeH + sh).toFloat()
+        if (abs(h - t(1)) < 1f) return
+        scroll.layoutParams = scroll.layoutParams.apply { height = sh }
+        val cy = cyFor(Mode.PANEL, h)
+        val growing = h > t(1)
+        // Growing: the content is laid out at the new size first and revealed as the shape opens.
+        s.layoutParams = (s.layoutParams as LayoutParams).apply {
+            height = h.toInt()
+            topMargin = (cy - h / 2f).toInt()
+        }
+        val r = min(dpf(32f), h / 2f)
+        animateTo(w, h, r, 1f, glassStrength, if (lowPower) 0f else 1f, 1f, cy, grow = growing)
+    }
+
     private var savedPanelY = 0
+    private companion object {
+        /** Groups built right away when the panel opens; the rest follow a moment later. */
+        const val FIRST_GROUPS = 6
+    }
     private var panelScrollView: ScrollView? = null
 
     /** Apps whose stacked notifications you've fanned out in the panel. */
@@ -745,10 +868,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val glass = v(4).coerceIn(0f, 1f)
 
         val shadow = v(5).coerceIn(0f, 1f)
-        if (shadow > 0.02f) {
+        // A real blurred shadow is costly to redraw every frame at a new size
+        // (that's what made slower phones stutter as the island opened). While
+        // the shape moves, a few soft layers stand in for it; the blur comes
+        // back once it settles.
+        if (shadow > 0.02f && !animating) {
             fillPaint.setShadowLayer(dpf(22f), 0f, dpf(8f), Color.argb((150 * shadow * a).toInt(), 0, 0, 0))
         } else {
             fillPaint.clearShadowLayer()
+            if (shadow > 0.02f) {
+                for (i in 1..3) {
+                    val g = dpf(5f) * i
+                    shadowRect.set(rect.left - g * 0.6f, rect.top + g * 0.4f, rect.right + g * 0.6f, rect.bottom + g * 1.3f)
+                    shadowPaint.color = Color.argb((34 * shadow * a / i).toInt(), 0, 0, 0)
+                    canvas.drawRoundRect(shadowRect, r + g, r + g, shadowPaint)
+                }
+            }
         }
         val fillAlpha = 255 - (80 * glass).toInt()
         fillPaint.color = Color.argb((fillAlpha * a).toInt(), (16 * glass).toInt(), (16 * glass).toInt(), (20 * glass).toInt())
@@ -2373,47 +2508,47 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             wobble(bell, 14f)
         }
         // Grouped by app, newest app first. One notification from an app is
-        // a plain card; more stack up behind it with "+N more" until you tap
-        // to fan them out.
+        // a plain card; more stack up behind it with "+N" until you tap to fan
+        // them out. Only the first few groups are built straight away so the
+        // panel opens without a hitch; the rest are added a moment later.
         val groups = LinkedHashMap<String, MutableList<PanelItem>>()
         for (item in items) groups.getOrPut(item.packageName) { ArrayList() }.add(item)
-        val cards = ArrayList<View>()
-        for ((pkg, group) in groups) {
-            if (group.size == 1 || pkg in openGroups) {
-                if (group.size > 1) list.addView(groupHeader(pkg, group))
-                group.forEachIndexed { i, item ->
-                    panelCard(item).also { v ->
-                        // One app's cards sit close together; different apps get more air.
-                        (v.layoutParams as LinearLayout.LayoutParams).topMargin = dp(if (i == 0 && group.size > 1) 8 else if (i > 0) 6 else 12)
-                        cards += v
-                        list.addView(v)
-                    }
-                }
-            } else {
-                stackedCard(pkg, group).also { cards += it; list.addView(it) }
-            }
-        }
+        panelGroups = groups
+        panelList = list
+        val entries = groups.entries.toList()
+        val now = entries.take(FIRST_GROUPS)
+        val later = entries.drop(FIRST_GROUPS)
+        for ((pkg, group) in now) for (v in groupViews(pkg, group, pkg in openGroups)) list.addView(v)
         if (items.size > 1) {
             list.addView(pillButton("Clear all", Colors.GRAPHITE, Color.WHITE) {
                 if (clearing) return@pillButton
                 clearing = true
                 haptic()
                 // Sweep every card off to the right, one after another, then close.
+                val cards = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.startsWith("g") == true }
                 cards.forEachIndexed { i, v ->
                     v.animate().translationX(v.width.toFloat() * 1.1f).alpha(0f)
-                        .setStartDelay(i * 45L).setDuration(220L)
+                        .setStartDelay(i.coerceAtMost(8) * 40L).setDuration(200L)
                         .setInterpolator(android.view.animation.AccelerateInterpolator(1.4f)).start()
                 }
                 postDelayed({
                     host.clearAll()
                     clearing = false
                     closePanel()
-                }, 220L + cards.size.coerceAtMost(8) * 45L)
+                }, 200L + cards.size.coerceAtMost(8) * 40L)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 topMargin = dp(12)
-            })
+            }.also { it })
+            list.getChildAt(list.childCount - 1).tag = "clear"
         }
+        if (later.isNotEmpty()) postDelayed({
+            if (panelList !== list) return@postDelayed
+            var at = (0 until list.childCount).firstOrNull { list.getChildAt(it).tag == "clear" } ?: list.childCount
+            for ((pkg, group) in later) for (v in groupViews(pkg, group, pkg in openGroups)) list.addView(v, at++)
+            resizePanel()
+        }, 420L)
+        val cards = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.let { t -> t.startsWith("g:") || t.startsWith("gc:") } == true }
         // In: the cards rise into place one after another (only when the panel opens).
         if (!panelQuiet) cards.take(8).forEachIndexed { i, v ->
             v.alpha = 0f
@@ -2437,7 +2572,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             val y = savedPanelY
             scroll.post { scroll.scrollTo(0, y) }
         }
-        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, max(room, dp(90)))))
+        panelChromeH = col.measuredHeight
+        panelRoom = max(room, dp(90))
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, panelRoom)))
         return col
     }
 
@@ -2539,11 +2676,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 setColor(Colors.GRAPHITE)
                 cornerRadius = dpf(11f)
             }
-            setOnClickListener {
-                haptic()
-                openGroups.remove(pkg)
-                refresh()
-            }
+            setOnClickListener { toggleGroup(pkg, open = false) }
         })
         return row
     }
@@ -2585,11 +2718,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             })
         }
         // Tap anywhere on the stack to fan it out.
-        front.setOnClickListener {
-            haptic()
-            openGroups.add(pkg)
-            refresh()
-        }
+        front.setOnClickListener { toggleGroup(pkg, open = true) }
         box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
         return box
     }
