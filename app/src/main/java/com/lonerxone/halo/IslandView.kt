@@ -906,7 +906,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // pill; the idle circle over the camera stays pure black).
         val edge = v(9).coerceIn(0f, 1f)
         if (mode != Mode.IDLE && mode != Mode.HIDDEN) {
-            val grow = ((rect.height() - idleD()) / max(1f, compactH() - idleD())).coerceIn(0f, 1f)
+            val grow = growth()
             val shine = a * grow * max(edge, 0.6f)
             if (shine > 0.02f) drawShine(canvas, r, shine)
         } else if (edge > 0.02f) {
@@ -971,9 +971,23 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * fades in as the pill grows out of the camera, so the idle circle stays
      * pure black. The notification center uses its own (portrait) picture.
      */
+    /**
+     * How far the island has grown out of the camera circle, 0..1, from
+     * whichever grew more: its height or its width. Height alone failed on
+     * phones whose pill is no taller than the camera circle (a big lens or a
+     * small island size): the pill never counted as grown, so the picture and
+     * the shine never showed there.
+     */
+    private fun growth(): Float {
+        val d = idleD()
+        val byH = (rect.height() - d) / max(dpf(6f), compactH() - d)
+        val byW = (rect.width() - d) / dpf(36f)
+        return max(byH, byW).coerceIn(0f, 1f)
+    }
+
     private fun drawPicture(canvas: Canvas, r: Float, a: Float) {
         if (mode == Mode.IDLE || mode == Mode.HIDDEN) return
-        val grow = ((rect.height() - idleD()) / max(1f, compactH() - idleD())).coerceIn(0f, 1f)
+        val grow = growth()
         val f = a * grow
         if (f <= 0.01f) return
         if (mode == Mode.PANEL) {
