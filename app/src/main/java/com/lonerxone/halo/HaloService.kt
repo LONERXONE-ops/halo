@@ -69,6 +69,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 Intent.ACTION_SCREEN_OFF -> setLocked(true)
                 Intent.ACTION_SCREEN_ON -> {
                     ensureListener()
+                    watchCalls()
                     // Screen wakes on the lock screen: the padlock drops in and clicks shut.
                     if (locked) island?.replayLock()
                 }
@@ -117,9 +118,54 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
     }
 
+    /** Listens to the phone line so the island knows the moment a call is answered or ends. */
+    private var callWatch: Any? = null
+
+    private fun watchCalls() {
+        if (callWatch != null) return
+        if (checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        val tm = getSystemService(android.telephony.TelephonyManager::class.java) ?: return
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                val cb = object : android.telephony.TelephonyCallback(), android.telephony.TelephonyCallback.CallStateListener {
+                    override fun onCallStateChanged(state: Int) {
+                        main.post { IslandStore.setPhoneState(state) }
+                    }
+                }
+                tm.registerTelephonyCallback(mainExecutor, cb)
+                callWatch = cb
+            } else {
+                @Suppress("DEPRECATION")
+                val l = object : android.telephony.PhoneStateListener() {
+                    @Deprecated("Deprecated in Java")
+                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                        IslandStore.setPhoneState(state)
+                    }
+                }
+                @Suppress("DEPRECATION")
+                tm.listen(l, android.telephony.PhoneStateListener.LISTEN_CALL_STATE)
+                callWatch = l
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun unwatchCalls() {
+        val tm = getSystemService(android.telephony.TelephonyManager::class.java) ?: return
+        try {
+            val w = callWatch
+            if (android.os.Build.VERSION.SDK_INT >= 31 && w is android.telephony.TelephonyCallback) tm.unregisterTelephonyCallback(w)
+            @Suppress("DEPRECATION")
+            if (w is android.telephony.PhoneStateListener) tm.listen(w, android.telephony.PhoneStateListener.LISTEN_NONE)
+        } catch (_: Exception) {
+        }
+        callWatch = null
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        watchCalls()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         locked = keyguard().isKeyguardLocked
@@ -330,6 +376,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
     }
 
     override fun onDestroy() {
+        unwatchCalls()
         teardown()
         super.onDestroy()
     }

@@ -311,8 +311,15 @@ class HaloNotificationListener : NotificationListenerService() {
         val name = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val detail = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val chrono = ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) || n.`when` in 1 until System.currentTimeMillis() - 1500
-        val ringing = !ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) &&
-            (n.fullScreenIntent != null || detail.contains("incoming", true))
+        // Ringing means there's still something to answer. A running clock, or
+        // buttons like Hang up / Speaker / Mute without an Answer, mean the
+        // call is already picked up (Samsung's dialer keeps its full-screen
+        // intent for a while after you answer, which used to fool this).
+        val titles = n.actions?.map { it.title?.toString()?.lowercase().orEmpty() }.orEmpty()
+        val hasAnswer = titles.any { it.contains("answer") || it.contains("accept") }
+        val inCall = titles.any { it.contains("hang") || it.contains("end call") || it.contains("speaker") || it.contains("mute") || it.contains("hold") }
+        val ringing = !ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) && !(inCall && !hasAnswer) &&
+            (hasAnswer || n.fullScreenIntent != null || detail.contains("incoming", true))
 
         var answer: android.app.PendingIntent? = null
         var hangUp: android.app.PendingIntent? = null

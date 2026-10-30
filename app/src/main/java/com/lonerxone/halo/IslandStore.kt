@@ -284,10 +284,57 @@ object IslandStore {
         dispatch()
     }
 
+    /** The phone line's state from Android (TelephonyManager.CALL_STATE_*); -1 = unknown (no permission). */
+    var phoneState = -1
+        private set
+
+    /**
+     * Calls are told apart by two sources that don't always agree: the
+     * calling app's notification, and the phone line itself. Samsung's
+     * dialer keeps its "incoming call" notification look for a moment after
+     * you answer, so the line wins: once the line is off the hook, the call
+     * is answered, full stop. The timer starts when it was answered and
+     * doesn't restart when the notification updates.
+     */
     fun setCall(c: CallInfo?) {
-        call = c
+        call = reconcile(c, call)
         dispatch()
     }
+
+    fun setPhoneState(state: Int) {
+        if (state == phoneState) return
+        phoneState = state
+        val c = call
+        when {
+            c == null -> {}
+            // Answered (here or on the phone's own screen).
+            state == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK && c.ringing ->
+                call = c.copy(ringing = false, answer = null, startedAt = System.currentTimeMillis())
+            // Hung up or missed: a phone call's notification can linger a second, so drop it now.
+            state == android.telephony.TelephonyManager.CALL_STATE_IDLE && isDialer(c.app) -> call = null
+        }
+        dispatch()
+    }
+
+    private fun reconcile(new: CallInfo?, old: CallInfo?): CallInfo? {
+        new ?: return null
+        var c = new
+        if (c.ringing && phoneState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK && isDialer(c.app)) {
+            c = c.copy(ringing = false, answer = null)
+        }
+        if (!c.ringing) {
+            val keep = old?.takeIf { it.key == c.key && !it.ringing && it.startedAt > 0L }?.startedAt
+            c = when {
+                c.startedAt > 0L -> c
+                keep != null -> c.copy(startedAt = keep)
+                else -> c.copy(startedAt = System.currentTimeMillis())
+            }
+        }
+        return c
+    }
+
+    fun isDialer(pkg: String): Boolean =
+        pkg.contains("incallui", true) || pkg.contains("dialer", true) || pkg == "com.android.phone" || pkg == "com.samsung.android.app.telephonyui"
 
     fun setTimer(t: TimerInfo?) {
         timer = t

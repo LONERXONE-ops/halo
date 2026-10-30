@@ -273,9 +273,13 @@ class LockGlyph(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
-        val s = minOf(w, h)
-        val ox = (w - s) / 2f
-        val oy = (h - s) / 2f
+        // Drawn a little smaller and sitting low in its box, so the shackle
+        // has room to spring up and swing open (with its overshoot) without
+        // being cut off at the top.
+        val s = minOf(w, h) * 0.84f
+        val ox = (w - s) / 2f + s * 0.06f
+        val oy = h - s * 0.97f
+        val open = open.coerceIn(-0.1f, 1.12f)
         body.color = color
         shackle.color = color
         shackle.strokeWidth = s * 0.12f
