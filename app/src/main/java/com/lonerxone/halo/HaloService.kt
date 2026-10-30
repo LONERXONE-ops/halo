@@ -67,7 +67,11 @@ class HaloService : AccessibilityService(), IslandView.Host {
             when (intent.action) {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
                 Intent.ACTION_SCREEN_OFF -> setLocked(true)
-                Intent.ACTION_SCREEN_ON -> ensureListener()
+                Intent.ACTION_SCREEN_ON -> {
+                    ensureListener()
+                    // Screen wakes on the lock screen: the padlock drops in and clicks shut.
+                    if (locked) island?.replayLock()
+                }
                 Intent.ACTION_BATTERY_CHANGED -> {
                     onBattery(intent)
                     return

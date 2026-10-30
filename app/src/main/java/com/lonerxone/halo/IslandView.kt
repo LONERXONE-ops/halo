@@ -414,6 +414,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         chargeBar = null
         chargeInfo = null
         chargeRing = null
+        chargeHow = null
+        chargeAnim?.cancel()
+        chargeAnim = null
         lockGlyph = null
     }
 
@@ -452,7 +455,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val h = compactH()
                 val sides = when (val c = content) {
                     is Content.Music -> compactMusic(c.info)
-                    is Content.Popup -> compactPop(c.pop).also { glowColor = tone(c.pop); glow = 1f }
+                    is Content.Popup -> compactPop(c.pop).also { glowColor = if (c.pop.accent == 0) tone(c.pop) else c.pop.accent; glow = 1f }
                     is Content.Call -> compactCall(c.call).also { glowColor = Colors.GREEN; glow = 0.55f }
                     is Content.Timer -> compactTimer()
                     is Content.Transfer -> compactTransfer(c.transfer)
@@ -579,8 +582,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun bubbleOnly() {
         val show = bubble != null && mode == Mode.COMPACT
         val before = t(7)
-        springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
-        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.8f, 0.85f)
+        springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.6f)
         if (before != t(7)) {
             updateTouchArea()
             startFrames()
@@ -596,8 +599,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      */
     private fun animateTo(w: Float, h: Float, r: Float, a: Float, glass: Float, shadow: Float, edge: Float, cy: Float, grow: Boolean) {
         val scale = animScale()
-        k = if (scale <= 0f) 460f else 460f / (scale * scale)
-        zeta = if (grow) 0.8f else 0.92f
+        // Snappier and bouncier: a quick lively overshoot opening, and a
+        // small settle-bounce closing too, so nothing ever feels stiff.
+        k = if (scale <= 0f) 540f else 540f / (scale * scale)
+        zeta = if (grow) 0.62f else 0.78f
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
         if (springs[10].value == 0f) springs[10].snap(notchCx())
@@ -607,7 +612,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[0].to(w, if (grow) k * 1.15f else k, zeta)
         springs[1].to(h, if (grow) k else k * 1.2f, zeta)
         springs[2].to(r, k, zeta)
-        springs[3].to(a, k * 1.8f, 0.95f)
+        springs[3].to(a, k * 1.8f, 0.9f)
         springs[4].to(glass, k, 1f)
         springs[5].to(shadow, k * 0.8f, 1f)
         springs[6].to(cy, k, zeta)
@@ -617,8 +622,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[11].to(coverTarget(), k * 0.22f, 1f)
         springs[9].to(edge, k, 1f)
         val show = bubble != null && mode == Mode.COMPACT
-        springs[7].to(if (show) 1f else 0f, k * 0.8f, 0.85f)
-        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.8f, 0.85f)
+        springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.6f)
         updateTouchArea()
 
         if (scale <= 0f || !isAttachedToWindow) {
@@ -991,8 +996,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         slot = s
         revealed = false
         // Settles in from a touch smaller, so content blooms with the shape instead of just appearing.
-        s.scaleX = 0.97f
-        s.scaleY = 0.97f
+        s.scaleX = 0.92f
+        s.scaleY = 0.92f
         updateClip()
         if (slide != 0) {
             // Swiped in: the new alert is already exactly where the swipe left it.
@@ -1005,7 +1010,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun reveal() {
         revealed = true
-        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(DecelerateInterpolator(1.8f))?.setDuration(260L)?.withLayer()?.start()
+        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(320L)?.withLayer()?.start()
     }
 
     /** The island's current shape on screen (in this view), for clipping its contents. */
@@ -1171,8 +1176,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun bounce(v: View) {
-        v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(70L).withEndAction {
-            v.animate().scaleX(1f).scaleY(1f).setDuration(140L).start()
+        v.animate().scaleX(0.86f).scaleY(0.86f).setDuration(70L).setInterpolator(DecelerateInterpolator()).withEndAction {
+            v.animate().scaleX(1f).scaleY(1f).setDuration(320L).setInterpolator(android.view.animation.OvershootInterpolator(3.2f)).start()
         }.start()
     }
 
@@ -1232,6 +1237,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun compactPop(pop: Pop): Sides {
         val accent = if (pop.accent == 0) Colors.INK else pop.accent
         val left = hRow()
+        val badgeBox = FrameLayout(context).apply { clipChildren = false }
+        // A soft ring of the pop's colour ripples out from behind the icon.
+        badgeBox.addView(PulseView(context).apply {
+            color = accent
+            strength = 0.7f
+        }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
         val badge = ImageView(context).apply {
             setImageResource(if (pop.icon != 0) pop.icon else R.drawable.ic_info)
             setColorFilter(accent)
@@ -1242,16 +1253,26 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 setColor(Color.argb(56, Color.red(accent), Color.green(accent), Color.blue(accent)))
             }
         }
-        left.addView(badge, LinearLayout.LayoutParams(dp(22), dp(22)))
+        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        left.addView(badgeBox, LinearLayout.LayoutParams(dp(26), dp(26)))
         left.addView(spaced(text(12.5f, Color.WHITE, true).apply { text = pop.title; maxWidth = dp(110) }, 7))
         val pct = pop.value.removeSuffix("%").toIntOrNull()
         val right: View = when {
             (pop.kind == "battery" || pop.kind == "charge") && pct != null -> hRow().apply {
                 addView(text(12.5f, accent, true).apply { text = pop.value })
-                addView(BatteryGlyph(context).apply {
-                    level = pct / 100f
+                val glyph = BatteryGlyph(context).apply {
+                    level = 0f
                     color = accent
-                }, LinearLayout.LayoutParams(dp(24), dp(12)).apply { marginStart = dp(6) })
+                }
+                addView(glyph, LinearLayout.LayoutParams(dp(24), dp(12)).apply { marginStart = dp(6) })
+                // The battery fills up to the level.
+                android.animation.ValueAnimator.ofFloat(0f, pct / 100f).apply {
+                    startDelay = 220L
+                    duration = 600L
+                    interpolator = DecelerateInterpolator(2f)
+                    addUpdateListener { glyph.level = it.animatedValue as Float }
+                    start()
+                }
             }
             pop.kind == "toggle" -> {
                 val on = pop.value.equals("On", true)
@@ -1271,12 +1292,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
         // In: the icon pops, the right side slides in a moment later.
-        badge.scaleX = 0.3f
-        badge.scaleY = 0.3f
-        badge.animate().scaleX(1f).scaleY(1f).setStartDelay(120L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(2f)).start()
+        badge.scaleX = 0.2f
+        badge.scaleY = 0.2f
+        badge.rotation = -40f
+        badge.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(110L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(3.2f)).start()
         right.alpha = 0f
-        right.translationX = dpf(10f)
-        right.animate().alpha(1f).translationX(0f).setStartDelay(200L).setDuration(300L).setInterpolator(DecelerateInterpolator(2f)).start()
+        right.scaleX = 0.6f
+        right.scaleY = 0.6f
+        right.translationX = dpf(12f)
+        right.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).setStartDelay(190L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
         return Sides(left, right)
     }
 
@@ -1301,32 +1325,101 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private var lockGlyph: LockGlyph? = null
 
-    /** The lock screen: a small padlock beside the camera. */
+    /**
+     * The lock screen: a padlock beside the camera. When the phone locks it
+     * drops in and the shackle snaps shut with a little wobble.
+     */
     private fun compactLock(c: Content.Lock): Sides {
         val g = LockGlyph(context).apply {
             color = Color.WHITE
-            open = if (c.unlocked) 1f else 0f
+            open = if (c.unlocked) 0f else 0.7f
         }
         lockGlyph = g
-        if (c.unlocked) post { animateUnlock() }
+        if (c.unlocked) {
+            post { animateUnlock() }
+        } else {
+            g.scaleX = 0.3f
+            g.scaleY = 0.3f
+            g.translationY = -dpf(6f)
+            g.animate().scaleX(1f).scaleY(1f).translationY(0f).setStartDelay(90L).setDuration(380L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+            // The shackle clicks shut, then a quick wobble.
+            android.animation.ValueAnimator.ofFloat(0.7f, 0f).apply {
+                startDelay = 260L
+                duration = 220L
+                interpolator = android.view.animation.OvershootInterpolator(4f)
+                addUpdateListener { g.open = (it.animatedValue as Float).coerceAtLeast(-0.08f) }
+                doOnEndCompat { wobble(g, 7f) }
+                start()
+            }
+        }
         return Sides(g, null, dp(18))
     }
 
-    /** Unlocked: the shackle springs open, a quick tick, then the island settles back. */
-    private fun animateUnlock() {
+    /** The screen just woke on the lock screen: play the padlock's drop-in again. */
+    fun replayLock() {
         val g = lockGlyph ?: return
-        if (g.open >= 0.99f && g.tag == "done") return
-        g.tag = "done"
-        android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 520L
-            interpolator = android.view.animation.OvershootInterpolator(2.2f)
-            addUpdateListener { g.open = (it.animatedValue as Float) }
+        if (g.tag == "done") return
+        g.animate().cancel()
+        g.scaleX = 0.3f
+        g.scaleY = 0.3f
+        g.open = 0.7f
+        g.animate().scaleX(1f).scaleY(1f).setStartDelay(60L).setDuration(380L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+        android.animation.ValueAnimator.ofFloat(0.7f, 0f).apply {
+            startDelay = 220L
+            duration = 220L
+            interpolator = android.view.animation.OvershootInterpolator(4f)
+            addUpdateListener { g.open = (it.animatedValue as Float).coerceAtLeast(-0.08f) }
+            doOnEndCompat { wobble(g, 7f) }
             start()
         }
-        g.animate().scaleX(1.15f).scaleY(1.15f).setDuration(140L).withEndAction {
-            g.animate().scaleX(1f).scaleY(1f).setDuration(260L).setInterpolator(DecelerateInterpolator(2f)).start()
+    }
+
+    /** A quick decaying side-to-side shake. */
+    private fun wobble(v: View, deg: Float) {
+        android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, deg, -deg * 0.7f, deg * 0.4f, -deg * 0.15f, 0f).apply {
+            duration = 300L
+            start()
+        }
+    }
+
+    private fun android.animation.Animator.doOnEndCompat(action: () -> Unit) {
+        addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(animation: android.animation.Animator) = action()
+        })
+    }
+
+    /**
+     * Unlocked: a quick jiggle, the shackle pops open with a spring, the
+     * padlock flashes green and puffs up, then the island settles back.
+     */
+    private fun animateUnlock() {
+        val g = lockGlyph ?: return
+        if (g.tag == "done") return
+        g.tag = "done"
+        g.open = 0f
+        wobble(g, 10f)
+        android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            startDelay = 140L
+            duration = 340L
+            interpolator = android.view.animation.OvershootInterpolator(3.4f)
+            addUpdateListener { g.open = it.animatedValue as Float }
+            start()
+        }
+        android.animation.ValueAnimator.ofArgb(Color.WHITE, Colors.GREEN).apply {
+            startDelay = 160L
+            duration = 200L
+            addUpdateListener {
+                g.color = it.animatedValue as Int
+                g.invalidate()
+            }
+            start()
+        }
+        g.animate().scaleX(1.3f).scaleY(1.3f).setStartDelay(150L).setDuration(130L).setInterpolator(DecelerateInterpolator()).withEndAction {
+            g.animate().scaleX(1f).scaleY(1f).setStartDelay(0L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
         }.start()
-        haptic()
+        postDelayed({ haptic() }, 160L)
     }
 
     private fun compactTimer(): Sides {
@@ -1847,49 +1940,55 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * percentage in the middle, and beside it how (wired, fast, wireless),
      * the watts, the temperature and when it'll be full.
      */
+    private var chargeHow: TextView? = null
+    private var chargeAnim: android.animation.ValueAnimator? = null
+
     private fun buildCharge(w: Int, top: Float): View {
         val col = card()
-        val tag = hRow(sized(icon(R.drawable.ic_bolt, Colors.GREEN), dp(14)), spaced(text(12f, white70, true).apply { text = "Charging" }, 6))
+        val how = text(12f, Colors.GREEN, true).apply { text = "Charging" }
+        chargeHow = how
+        val tag = hRow(sized(icon(R.drawable.ic_bolt, Colors.GREEN), dp(14)), spaced(how, 6))
         col.addView(cameraRow(tag, null, w, top))
-        val b = body().apply { setPadding(dp(18), dp(4), dp(18), dp(18)) }
+        val b = body().apply { setPadding(dp(18), dp(6), dp(18), dp(18)) }
         val row = hRow()
+        val size = dp(82)
         val ringBox = FrameLayout(context)
         val ring = ProgressRing(context).apply { color = Colors.GREEN }
         chargeRing = ring
-        ringBox.addView(ring, LayoutParams(dp(96), dp(96)))
-        val mid = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+        ringBox.addView(ring, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
+        val pct = text(19f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
         }
-        mid.addView(sized(icon(R.drawable.ic_bolt, Colors.GREEN), dp(16)))
-        val pct = text(24f, Color.WHITE, true)
         chargePct = pct
-        mid.addView(pct)
-        ringBox.addView(mid, LayoutParams(dp(96), dp(96)))
-        row.addView(ringBox, LinearLayout.LayoutParams(dp(96), dp(96)))
-        val info = text(13.5f, white70, false).apply {
-            maxLines = 5
-            setLineSpacing(0f, 1.3f)
+        ringBox.addView(pct, FrameLayout.LayoutParams(size, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        row.addView(ringBox, LinearLayout.LayoutParams(size, size))
+        val info = text(14f, Color.WHITE, false).apply {
+            maxLines = 4
+            setLineSpacing(0f, 1.35f)
             setPadding(dp(18), 0, 0, 0)
         }
         chargeInfo = info
         row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         b.addView(row)
-        // A slim line too, for a glance.
-        val bar = ProgressLine(context).apply { color = Colors.GREEN }
-        chargeBar = bar
-        b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)).apply { topMargin = dp(14) })
         col.addView(b)
         updateCharge()
-        // The ring fills up as the card opens.
+        // The ring fills up as the card opens, with a little spring at the end.
         val target = ring.progress
-        android.animation.ValueAnimator.ofFloat(0f, target).apply {
-            duration = 900L
-            startDelay = 150L
-            interpolator = DecelerateInterpolator(2f)
-            addUpdateListener { ring.progress = it.animatedValue as Float }
+        ring.progress = 0f
+        chargeAnim = android.animation.ValueAnimator.ofFloat(0f, target).apply {
+            duration = 950L
+            startDelay = 160L
+            interpolator = android.view.animation.OvershootInterpolator(1.1f)
+            addUpdateListener { ring.progress = (it.animatedValue as Float).coerceAtMost(1f) }
             start()
         }
+        ringBox.scaleX = 0.6f
+        ringBox.scaleY = 0.6f
+        ringBox.animate().scaleX(1f).scaleY(1f).setStartDelay(80L).setDuration(460L).setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
+        info.alpha = 0f
+        info.translationX = dpf(14f)
+        info.animate().alpha(1f).translationX(0f).setStartDelay(200L).setDuration(380L).setInterpolator(DecelerateInterpolator(2f)).start()
         return col
     }
 
@@ -1899,7 +1998,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         pctView.text = "$pct%"
         chargeBar?.fraction = pct / 100f
-        chargeRing?.progress = pct / 100f
+        if (chargeAnim?.isRunning != true) chargeRing?.progress = pct / 100f
         val sticky = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
         val plug = sticky?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val mv = sticky?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
@@ -1912,7 +2011,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             BatteryManager.BATTERY_PLUGGED_USB -> "USB"
             else -> if (watts >= 10f) "Fast charging" else "Charging"
         }
-        val parts = mutableListOf(how)
+        chargeHow?.text = how
+        val parts = mutableListOf<String>()
         if (watts in 0.5f..120f) parts += "%.1f W".format(watts)
         if (temp > 0f) parts += "%.0f°C".format(temp)
         val left = bm.computeChargeTimeRemaining()
@@ -2037,11 +2137,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         IslandStore.music?.let { list.addView(miniPlayer(it)) }
         if (items.isEmpty()) {
-            list.addView(text(14f, white55, false).apply {
+            val empty = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(0, dp(20), 0, dp(16))
+            }
+            val bell = icon(R.drawable.ic_bell, white55)
+            empty.addView(bell, LinearLayout.LayoutParams(dp(26), dp(26)))
+            empty.addView(text(14f, white55, false).apply {
                 text = "You're all caught up"
-                gravity = Gravity.CENTER
-                setPadding(0, dp(22), 0, dp(18))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                setPadding(0, dp(8), 0, 0)
+            })
+            list.addView(empty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            wobble(bell, 14f)
         }
         // Grouped by app, newest app first. One notification from an app is
         // a plain card; more stack up behind it with "+N more" until you tap
@@ -2081,9 +2189,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // In: the cards rise into place one after another.
         cards.take(8).forEachIndexed { i, v ->
             v.alpha = 0f
-            v.translationY = dpf(18f)
-            v.animate().alpha(1f).translationY(0f).setStartDelay(90L + i * 40L).setDuration(320L)
-                .setInterpolator(DecelerateInterpolator(2.2f)).start()
+            v.translationY = dpf(26f)
+            v.scaleX = 0.92f
+            v.scaleY = 0.92f
+            v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(80L + i * 45L).setDuration(460L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(1.4f)).start()
         }
         list.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
         col.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
@@ -2216,7 +2326,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         for (i in behind downTo 1) {
             box.addView(View(context).apply {
                 background = GradientDrawable().apply {
-                    setColor(Color.argb(235 - i * 40, 30 + i * 4, 30 + i * 4, 32 + i * 4))
+                    setColor(tint(Color.argb(235 - i * 45, 34 + i * 4, 34 + i * 4, 36 + i * 4), group.first().accent, 0.16f))
                     cornerRadius = dpf(20f)
                 }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
@@ -2252,12 +2362,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return box
     }
 
+    /** [base] with a little of [accent] mixed in, so each app's cards carry its colour. */
+    private fun tint(base: Int, accent: Int, f: Float): Int {
+        if (accent == 0) return base
+        fun ch(b: Int, a: Int) = (b + (a - b) * f).toInt().coerceIn(0, 255)
+        return Color.argb(Color.alpha(base), ch(Color.red(base), Color.red(accent)), ch(Color.green(base), Color.green(accent)), ch(Color.blue(base), Color.blue(accent)))
+    }
+
+    /**
+     * One notification in the center: tinted with its app's colour, the app
+     * icon in a ring of that colour, name and time on one line, then the
+     * message. Tap to open, swipe either way to clear; it squishes under
+     * your finger and springs back.
+     */
     private fun panelCard(item: PanelItem): View {
+        val accent = if (item.accent == 0 || item.accent == Color.BLACK) Colors.GRAPHITE else item.accent
         val cardView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(14))
-            // Nearly solid, so cards stay readable over any picture or wallpaper, with a Liquid Glass shine.
-            background = ShineDrawable(Color.argb(235, 30, 30, 32), dpf(22f), dpf(1.1f))
+            background = ShineDrawable(tint(Color.argb(238, 28, 28, 30), accent, 0.13f), dpf(24f), dpf(1.1f))
             setOnClickListener {
                 haptic()
                 panelOpen = false
@@ -2266,22 +2389,44 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
         }
         val meta = hRow()
-        meta.addView(sized(roundImage(item.rich.appIcon, dpf(4f), Colors.GRAPHITE, R.drawable.ic_bell), dp(15)))
-        val ago = DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
-        meta.addView(spaced(text(11.5f, white70, true).apply { text = item.appName }, 7))
-        meta.addView(spaced(text(11.5f, white55, false).apply { text = "·  $ago" }, 6), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (item.canReply) {
-            meta.addView(text(11.5f, Color.WHITE, true).apply {
-                text = "Reply"
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-                background = GradientDrawable().apply {
-                    setColor(Colors.GRAPHITE)
-                    cornerRadius = dpf(11f)
-                }
-            })
+        val iconBox = FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setStroke(dp(1), Color.argb(170, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                setColor(Color.argb(60, Color.red(accent), Color.green(accent), Color.blue(accent)))
+            }
         }
+        iconBox.addView(roundImage(item.rich.appIcon, dpf(8f), Colors.GRAPHITE, R.drawable.ic_bell), FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER))
+        meta.addView(iconBox, LinearLayout.LayoutParams(dp(22), dp(22)))
+        meta.addView(spaced(text(12f, Color.argb(225, 255, 255, 255), true).apply { text = item.appName }, 8), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val ago = DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+        meta.addView(text(11.5f, white55, false).apply { text = ago })
         cardView.addView(meta)
         cardView.addView(messageRow(item.rich, big = false), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        if (item.canReply) {
+            // Reply sits under the message, in the app's colour.
+            val light = Color.red(accent) * 0.3 + Color.green(accent) * 0.59 + Color.blue(accent) * 0.11 > 150
+            cardView.addView(text(12.5f, if (light) Color.BLACK else Color.WHITE, true).apply {
+                text = "Reply"
+                gravity = Gravity.CENTER
+                setPadding(dp(14), dp(6), dp(14), dp(6))
+                background = GradientDrawable().apply {
+                    setColor(if (accent == Colors.GRAPHITE) Colors.INK else accent)
+                    cornerRadius = dpf(14f)
+                }
+                if (accent == Colors.GRAPHITE) setTextColor(Color.BLACK)
+                setOnClickListener {
+                    haptic()
+                    bounce(it)
+                    panelOpen = false
+                    refresh()
+                    host.openDetail(item.key)
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(10)
+                marginStart = dp(53)
+            })
+        }
         cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
         swipeToDismiss(cardView) { host.dismissNotification(item.key) }
         return cardView
@@ -2312,6 +2457,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     // A touch during the entrance shouldn't freeze it half-faded.
                     v.alpha = 1f
                     v.translationY = 0f
+                    v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(110L).setInterpolator(DecelerateInterpolator()).start()
                     tracker?.recycle()
                     tracker = android.view.VelocityTracker.obtain().also { it.addMovement(e) }
                 }
@@ -2321,6 +2467,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     if (!dragging && abs(dx) > slop * 0.8f && abs(dx) > abs(dy) * 1.1f) {
                         dragging = true
                         v.isPressed = false
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                     }
                     if (dragging) {
@@ -2348,16 +2495,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                             .setInterpolator(android.view.animation.LinearInterpolator())
                             .withEndAction { collapse(v, onDismiss) }.start()
                     } else if (dragging) {
-                        v.animate().translationX(0f).alpha(1f).rotation(0f).setDuration(240L)
-                            .setInterpolator(DecelerateInterpolator(2f)).start()
-                    } else if (abs(e.rawY - downY) < slop) {
-                        v.performClick()
+                        v.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(420L)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
+                    } else {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(360L)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                        if (abs(e.rawY - downY) < slop) v.performClick()
                     }
                     dragging = false
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
-                    v.animate().translationX(0f).alpha(1f).rotation(0f).setDuration(180L).start()
+                    v.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(360L)
+                        .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
                     dragging = false
                     tracker?.recycle()
                     tracker = null
