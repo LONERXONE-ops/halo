@@ -1543,7 +1543,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
             ring.addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
                 override fun onViewAttachedToWindow(v: View) = v.postOnAnimation(loop)
-                override fun onViewDetachedFromWindow(v: View) = v.removeCallbacks(loop)
+                override fun onViewDetachedFromWindow(v: View) {
+                    v.removeCallbacks(loop)
+                }
             })
         } else if (!r.paused) {
             box.addView(PulseView(context).apply {
