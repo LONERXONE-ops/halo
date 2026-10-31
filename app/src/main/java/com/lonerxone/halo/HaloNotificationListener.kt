@@ -54,6 +54,50 @@ class HaloNotificationListener : NotificationListenerService() {
         false
     }
 
+    private class ShownClock(val base: Long?, val countDown: Boolean, val text: String?)
+
+    /**
+     * Builds the notification's own layout off screen and finds its running
+     * clock (a Chronometer): when it started or ends, and which way it counts.
+     * Falls back to any text in it that looks like a time.
+     */
+    private fun clockInViews(n: Notification): ShownClock? = try {
+        val rv = n.bigContentView ?: n.contentView ?: Notification.Builder.recoverBuilder(this, n).createContentView()
+        val root = android.widget.FrameLayout(this)
+        val v = rv.apply(this, root)
+        var found: ShownClock? = null
+        var timeText: String? = null
+        fun walk(x: android.view.View) {
+            if (found != null) return
+            when (x) {
+                is android.widget.Chronometer -> {
+                    found = ShownClock(x.base, x.isCountDown, x.text?.toString())
+                    return
+                }
+                is android.widget.TextView -> {
+                    val t = x.text?.toString().orEmpty()
+                    if (timeText == null && parseClock(t) != null) timeText = t
+                }
+                is android.view.ViewGroup -> for (i in 0 until x.childCount) walk(x.getChildAt(i))
+            }
+        }
+        walk(v)
+        found ?: timeText?.let { ShownClock(null, false, it) }
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** "1:02:03", "09:51" or "00:17,52" as milliseconds; null if it isn't a time. */
+    private fun parseClock(s: String): Long? {
+        val m = Regex("(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?:[.,](\\d{1,2}))?").find(s) ?: return null
+        val h = m.groupValues[1].toLongOrNull() ?: 0L
+        val mi = m.groupValues[2].toLong()
+        val se = m.groupValues[3].toLong()
+        if (se >= 60) return null
+        val cs = m.groupValues[4].let { if (it.isEmpty()) 0L else if (it.length == 1) it.toLong() * 100 else it.toLong() * 10 }
+        return ((h * 60 + mi) * 60 + se) * 1000 + cs
+    }
+
     @Suppress("DEPRECATION")
     private fun newestMessageTime(n: Notification): Long = try {
         val arr = n.extras?.getParcelableArray(Notification.EXTRA_MESSAGES)
@@ -441,19 +485,42 @@ class HaloNotificationListener : NotificationListenerService() {
         if (isClockApp(pkg) && sbn.isOngoing && n.category != Notification.CATEGORY_ALARM) {
             if (!prefs.getBoolean(Prefs.TIMERS, true)) return true
             val chrono = ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false)
-            val down = ex.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false)
             val actions = n.actions?.mapNotNull { a ->
                 val t = a.title?.toString() ?: return@mapNotNull null
                 val pi = a.actionIntent ?: return@mapNotNull null
                 t to pi
             } ?: emptyList()
+            val words = actions.joinToString(" ") { it.first.lowercase() }
+            // Samsung's Clock (and others) draw their own running clock in a
+            // custom layout instead of the standard one: read it from there.
+            val shown = clockInViews(n)
+            val down = ex.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false) || shown?.countDown == true ||
+                (shown == null && (title.contains("timer", true) || (words.contains("delete") || words.contains("cancel")) && !words.contains("lap")))
+            // Paused when it offers to resume (and not to pause or lap).
+            val paused = Regex("resume|continue|start").containsMatchIn(words) && !Regex("pause|lap").containsMatchIn(words)
+            val nowWall = System.currentTimeMillis()
+            val texts = listOf(title, text, ex.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty(), shown?.text.orEmpty())
+            val timeMs = texts.firstNotNullOfOrNull { parseClock(it) }
+            val prev = IslandStore.timer?.takeIf { it.key == sbn.key }
+            val anchor = when {
+                paused -> 0L
+                chrono && n.`when` > 0L -> n.`when`
+                // The custom layout's own clock: its base is in "time since boot"; turn it into a wall time.
+                shown?.base != null -> nowWall + (shown.base - android.os.SystemClock.elapsedRealtime())
+                // A time in its text, as of when it was posted.
+                timeMs != null -> if (down) sbn.postTime + timeMs else sbn.postTime - timeMs
+                prev != null && prev.anchor != 0L -> prev.anchor
+                down && n.`when` > nowWall -> n.`when`
+                !down && n.`when` in 1 until nowWall -> n.`when`
+                else -> 0L
+            }
             IslandStore.setTimer(
                 TimerInfo(
                     key = sbn.key,
-                    label = title.ifEmpty { if (down) "Timer" else "Stopwatch" },
-                    anchor = if (chrono) n.`when` else 0L,
+                    label = title.ifEmpty { if (down) "Timer" else "Stopwatch" }.let { if (Regex("\\d+:\\d{2}").containsMatchIn(it)) (if (down) "Timer" else "Stopwatch") else it },
+                    anchor = anchor,
                     countDown = down,
-                    pausedText = text.ifEmpty { "Paused" },
+                    pausedText = shown?.text?.takeIf { parseClock(it) != null } ?: texts.firstOrNull { parseClock(it) != null } ?: text.ifEmpty { "Paused" },
                     contentIntent = n.contentIntent,
                     actions = actions.take(3),
                 ),

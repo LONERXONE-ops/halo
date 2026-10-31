@@ -93,9 +93,18 @@ class ProgressLine(context: Context) : View(context) {
     var fraction: Float = 0f
         set(value) {
             if (dragging) return
-            field = value.coerceIn(0f, 1f)
+            val v = value.coerceIn(0f, 1f)
+            // Just after a seek the player may still report the old spot: stay
+            // where you let go until it catches up (no jump back and forth).
+            if (android.os.SystemClock.uptimeMillis() < holdUntil) {
+                if (kotlin.math.abs(v - held) > 0.02f) return
+                holdUntil = 0L
+            }
+            field = v
             invalidate()
         }
+    private var holdUntil = 0L
+    private var held = 0f
 
     /** Called with 0..1 when the user lets go after dragging. */
     var onSeek: ((Float) -> Unit)? = null
@@ -116,6 +125,9 @@ class ProgressLine(context: Context) : View(context) {
             android.view.MotionEvent.ACTION_UP -> {
                 setDragFraction(f)
                 dragging = false
+                fraction = f
+                held = f
+                holdUntil = android.os.SystemClock.uptimeMillis() + 2500L
                 seek(f)
                 invalidate()
             }

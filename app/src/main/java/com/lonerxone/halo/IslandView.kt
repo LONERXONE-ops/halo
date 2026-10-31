@@ -387,7 +387,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun contentKey(m: Mode): String {
-        if (m == Mode.PANEL) return "panel:" + host.quickStates().joinToString(",") { it.id + it.label } + "|" + openGroups.sorted().joinToString(",")
+        // The panel's mini player comes and goes with the song (play and pause update in place).
+        if (m == Mode.PANEL) return "panel:" + host.quickStates().joinToString(",") { it.id + it.label } + "|" + openGroups.sorted().joinToString(",") + "|" + (IslandStore.music?.trackKey ?: "")
         return when (val c = content) {
             is Content.None -> "none"
             is Content.Music -> "m:" + c.info.trackKey
@@ -533,6 +534,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Same activity, same mode: update what changed without redrawing the shape. */
     private fun bindInPlace() {
+        // Play or pause shows right everywhere it's drawn (the notification
+        // center's player too, whatever the island itself is showing).
+        if (mode == Mode.PANEL) IslandStore.music?.let { m -> playButton?.setImageResource(if (m.playing) R.drawable.ic_pause else R.drawable.ic_play) }
         when (val c = content) {
             is Content.Lock -> Unit
             is Content.Music -> {
@@ -920,6 +924,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val extra = when {
             mode == Mode.IDLE -> dpf(10f)
             content is Content.Note -> dpf(14f)
+            // Playing music: room around the pill to swipe for the next or previous song.
+            content is Content.Music && mode == Mode.COMPACT -> dpf(18f)
             else -> dpf(2f)
         }
         host.setTouchArea(
@@ -3196,8 +3202,28 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return dx * dx + dy * dy <= r * r
     }
 
+    private var skipped = false
+
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onDown(e: MotionEvent): Boolean = true
+        override fun onDown(e: MotionEvent): Boolean {
+            skipped = false
+            return true
+        }
+
+        // A clear sideways drag on the music pill skips too (no need to flick fast).
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+            if (skipped || e1 == null || mode != Mode.COMPACT || content !is Content.Music) return false
+            val dx = e2.x - e1.x
+            val dy = e2.y - e1.y
+            if (abs(dx) > dpf(30f) && abs(dx) > abs(dy) * 1.3f) {
+                val tc = currentMusic()?.controller?.transportControls ?: return false
+                skipped = true
+                haptic()
+                if (dx < 0) tc.skipToNext() else tc.skipToPrevious()
+                return true
+            }
+            return false
+        }
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             if (onBubble(e.x, e.y)) {
@@ -3241,6 +3267,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            if (skipped) return true
             val music = currentMusic()
             // Sideways on an alert is for moving between alerts (handled above), never dismiss or music.
             if (abs(velocityX) > abs(velocityY) && content is Content.Note) return true
