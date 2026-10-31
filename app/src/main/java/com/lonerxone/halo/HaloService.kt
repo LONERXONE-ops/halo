@@ -601,7 +601,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
         // Live activities, most important first. The first takes the pill; the
         // second sits in the round bubble beside it (like the iPhone split).
-        val live = buildList<IslandView.Content> {
+        val live0 = buildList<IslandView.Content> {
             IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }?.let { add(IslandView.Content.Call(it)) }
             // Halo's own recording always shows (it's how you stop it); another app's follows the setting.
             IslandStore.rec?.takeIf { it.own || p.getBoolean(Prefs.RECORDING, true) }?.let { add(IslandView.Content.Rec(it)) }
@@ -614,6 +614,14 @@ class HaloService : AccessibilityService(), IslandView.Host {
             // camera; it stays one tap away as a chip in the notification center.
             val torchAge = android.os.SystemClock.uptimeMillis() - IslandStore.torchSince
             IslandStore.torch?.takeIf { p.getBoolean(Prefs.TORCH, true) && torchAge < SETTLE_MS }?.let { add(IslandView.Content.Torch(it)) }
+        }
+        // The one you tapped in the bubble goes first (until it ends).
+        val focusKey = focus
+        val live = if (focusKey != null && live0.any { keyFor(it) == focusKey }) {
+            live0.sortedBy { if (keyFor(it) == focusKey) 0 else 1 }
+        } else {
+            focus = null
+            live0
         }
         this.main.removeCallbacks(settle)
         if (IslandStore.torch != null && torchAge() < SETTLE_MS) this.main.postDelayed(settle, SETTLE_MS - torchAge() + 50L)
@@ -666,14 +674,39 @@ class HaloService : AccessibilityService(), IslandView.Host {
         Debug.island = "on · ${v.mode.name.lowercase()}" + if (reasons.isEmpty()) "" else " · hidden: ${reasons.joinToString()}"
     }
 
+    /** Which live activity you brought forward by tapping its bubble ("m", "r"…), or null. */
+    private var focus: String? = null
+
+    private fun keyFor(c: IslandView.Content): String? = when (c) {
+        is IslandView.Content.Music -> "m"
+        is IslandView.Content.Call -> "c"
+        is IslandView.Content.Timer -> "t"
+        is IslandView.Content.Transfer -> "d"
+        is IslandView.Content.Nav -> "g"
+        is IslandView.Content.Torch -> "f"
+        is IslandView.Content.Rec -> "r"
+        else -> null
+    }
+
+    /**
+     * Tapping the bubble: like the iPhone, its activity swaps into the pill
+     * (growing out of the bubble while the other shrinks into it) and opens.
+     * Holding the bubble opens its app instead.
+     */
+    private fun bringForward(key: String) {
+        focus = key
+        island?.expandNext = true
+        push()
+    }
+
     private fun bubbleFor(c: IslandView.Content): IslandView.Bubble? = when (c) {
-        is IslandView.Content.Music -> IslandView.Bubble("m", c.info.art ?: c.info.appIcon, R.drawable.ic_note, c.info.accent, -1f) { openMusicApp(c.info) }
-        is IslandView.Content.Call -> IslandView.Bubble("c", null, R.drawable.ic_call, Colors.GREEN, -1f) { send(c.call.contentIntent) }
-        is IslandView.Content.Timer -> IslandView.Bubble("t", null, R.drawable.ic_timer, Colors.INK, -1f) { send(c.timer.contentIntent) }
-        is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.INK, max(0f, c.transfer.progress)) { send(c.transfer.contentIntent) }
-        is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f) { send(c.nav.contentIntent) }
-        is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.INK, -1f) { torchOff() }
-        is IslandView.Content.Rec -> IslandView.Bubble("r", null, R.drawable.ic_record, Colors.RED, -1f) { recStop() }
+        is IslandView.Content.Music -> IslandView.Bubble("m", c.info.art ?: c.info.appIcon, R.drawable.ic_note, c.info.accent, -1f, onHold = { openMusicApp(c.info) }) { bringForward("m") }
+        is IslandView.Content.Call -> IslandView.Bubble("c", null, R.drawable.ic_call, Colors.GREEN, -1f, onHold = { send(c.call.contentIntent) }) { bringForward("c") }
+        is IslandView.Content.Timer -> IslandView.Bubble("t", null, R.drawable.ic_timer, Colors.INK, -1f, onHold = { send(c.timer.contentIntent) }) { bringForward("t") }
+        is IslandView.Content.Transfer -> IslandView.Bubble("d", c.transfer.icon, R.drawable.ic_download, Colors.INK, max(0f, c.transfer.progress), onHold = { send(c.transfer.contentIntent) }) { bringForward("d") }
+        is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f, onHold = { send(c.nav.contentIntent) }) { bringForward("g") }
+        is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.INK, -1f, onHold = { torchOff() }) { torchOff() }
+        is IslandView.Content.Rec -> IslandView.Bubble("r", null, R.drawable.ic_record, Colors.RED, -1f, onHold = { recStop() }) { bringForward("r") }
         else -> null
     }
 

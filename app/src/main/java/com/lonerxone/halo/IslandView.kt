@@ -114,8 +114,28 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val progress: Float,
         /** A small companion (the bell), rather than a full second activity. */
         val small: Boolean = false,
+        /** Hold it: open the app behind it. */
+        val onHold: (() -> Unit)? = null,
         val onTap: () -> Unit,
     )
+
+    /** The same short key HaloService gives each kind's bubble ("m" music, "r" recording…). */
+    private fun keyOf(c: Content): String? = when (c) {
+        is Content.Music -> "m"
+        is Content.Call -> "c"
+        is Content.Timer -> "t"
+        is Content.Transfer -> "d"
+        is Content.Nav -> "g"
+        is Content.Torch -> "f"
+        is Content.Rec -> "r"
+        else -> null
+    }
+
+    /** Set by the service when you tap the bubble: the bubble's activity takes the pill and opens. */
+    var expandNext = false
+
+    /** Where the bubble was (centre x, size) when it was tapped: the new pill grows out of it. */
+    private var swapFrom: FloatArray? = null
 
     data class Geometry(val notch: Rect?, val screenW: Int, val screenH: Int, val statusBarH: Int)
 
@@ -254,8 +274,20 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     fun setState(newContent: Content, newBubble: Bubble?, hide: Boolean) {
         val wasCall = content is Content.Call
+        // The bubble's activity is becoming the main one (you tapped the bubble):
+        // remember where the bubble is so the pill grows out of it, and the old
+        // main one shrinks into the new bubble.
+        val oldBubble = bubble
+        val newKey = keyOf(newContent)
+        if (oldBubble != null && !oldBubble.small && newKey != null && newKey == oldBubble.key && v(7) > 0.3f && mode == Mode.COMPACT) {
+            swapFrom = floatArrayOf(bubbleCenterX(v(0), v(8)), v(8))
+        }
         if (!canExpand(newContent)) expanded = false
         if (newContent is Content.Call && !wasCall) expanded = false
+        if (expandNext) {
+            expandNext = false
+            if (canExpand(newContent)) expanded = true
+        }
         if (hide) panelOpen = false
         content = newContent
         bubble = newBubble
@@ -407,6 +439,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun clearRefs() {
+        removeCallbacks(timerTick)
+        timerRing = null
+        timerBar = null
+        timerEnds = null
+        timerHund = null
         recPulse?.cancel()
         recPulse = null
         recCount?.cancel()
@@ -813,7 +850,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val show = bubble != null && mode == Mode.COMPACT
         val before = t(7)
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
-        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.6f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.45f)
         if (before != t(7)) {
             updateTouchArea()
             startFrames()
@@ -835,6 +872,17 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         zeta = if (grow) 0.5f else 0.66f
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
+        // Swapping with the bubble: the new pill (or card) starts as the bubble,
+        // right where it was, and springs out; the new bubble pops up from small.
+        swapFrom?.let { sf ->
+            swapFrom = null
+            springs[0].snap(sf[1])
+            springs[1].snap(sf[1])
+            springs[2].snap(sf[1] / 2f)
+            springs[10].snap(sf[0])
+            springs[7].snap(0f)
+            springs[8].snap(sf[1] * 0.3f)
+        }
         if (springs[10].value == 0f) springs[10].snap(notchCx())
         startW[0] = v(0)
         startW[1] = v(1)
@@ -853,7 +901,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[9].to(edge, k, 1f)
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
-        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.6f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.45f)
         updateTouchArea()
 
         if (scale <= 0f || !isAttachedToWindow) {
@@ -973,6 +1021,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val fillAlpha = 255 - (80 * glass).toInt()
         fillPaint.color = Color.argb((fillAlpha * a).toInt(), (16 * glass).toInt(), (16 * glass).toInt(), (20 * glass).toInt())
         canvas.drawRoundRect(rect, r, r, fillPaint)
+        frameFor(v(8), bubbleCenterX(w, v(8)), v(6))
         drawPicture(canvas, r, a)
 
         // Liquid Glass shine: a soft sheen across the top and a rim that
@@ -1097,11 +1146,31 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
-    private fun paintCropped(canvas: Canvas, shader: BitmapShader, bmp: Bitmap, r: Float, alpha: Float) {
-        val s = max(rect.width() / bmp.width, rect.height() / bmp.height)
+    /**
+     * With a bubble beside the pill, your picture is one sheet behind both:
+     * it's cropped to the space the pill and bubble cover together, and each
+     * shows its own part of it (like two windows onto the same picture).
+     */
+    private val picFrame = RectF()
+    private var shareFrame = false
+
+    private fun frameFor(bubbleD: Float, bubbleX: Float, cy: Float) {
+        shareFrame = mode == Mode.COMPACT && bubble?.small == false && v(7) > 0.01f
+        if (!shareFrame) return
+        picFrame.set(rect)
+        picFrame.union(bubbleX - bubbleD / 2f, cy - bubbleD / 2f, bubbleX + bubbleD / 2f, cy + bubbleD / 2f)
+    }
+
+    private fun cropMatrix(bmp: Bitmap) {
+        val f = if (shareFrame) picFrame else rect
+        val s = max(f.width() / bmp.width, f.height() / bmp.height)
         picMatrix.reset()
         picMatrix.setScale(s, s)
-        picMatrix.postTranslate(rect.centerX() - bmp.width * s / 2f, rect.centerY() - bmp.height * s / 2f)
+        picMatrix.postTranslate(f.centerX() - bmp.width * s / 2f, f.centerY() - bmp.height * s / 2f)
+    }
+
+    private fun paintCropped(canvas: Canvas, shader: BitmapShader, bmp: Bitmap, r: Float, alpha: Float) {
+        cropMatrix(bmp)
         shader.setLocalMatrix(picMatrix)
         picPaint.shader = shader
         picPaint.alpha = (255 * alpha).toInt().coerceIn(0, 255)
@@ -1173,6 +1242,18 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val by = v(6)
         bubblePaint.alpha = (255 * ba).toInt()
         canvas.drawCircle(bx, by, d / 2f, bubblePaint)
+        // Your island picture continues into the bubble (the same sheet as the pill).
+        val ish = islandShader
+        val ibmp = islandPic
+        if (!b.small && b.image == null && ish != null && ibmp != null && shareFrame) {
+            cropMatrix(ibmp)
+            ish.setLocalMatrix(picMatrix)
+            picPaint.shader = ish
+            picPaint.alpha = (255 * ba).toInt()
+            canvas.drawCircle(bx, by, d / 2f, picPaint)
+            dimPaint.color = Color.argb((255 * picDim * ba).toInt().coerceIn(0, 255), 0, 0, 0)
+            canvas.drawCircle(bx, by, d / 2f, dimPaint)
+        }
 
         val inner = d / 2f - if (b.small) dpf(4f) else dpf(5f)
         val img = b.image
@@ -1200,6 +1281,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 dr.draw(canvas)
             }
         }
+        // The new Liquid Glass light on the bubble too.
+        bubbleRect.set(bx - d / 2f, by - d / 2f, bx + d / 2f, by + d / 2f)
+        GlassRim.draw(canvas, bubbleRect, d / 2f, d * 0.22f, ba * 0.9f)
         if (b.progress >= 0f) {
             bubbleRing.color = Colors.INK
             bubbleRing.alpha = (255 * ba).toInt()
@@ -1910,10 +1994,55 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return col
     }
 
+    /** On the pill: a ring that empties as a timer runs down (an icon for a stopwatch), and the time in steady digits. */
     private fun compactTimer(): Sides {
-        val tv = text(12.5f, Colors.SILVER, true)
+        val t = (content as? Content.Timer)?.timer
+        val tv = text(13f, if (t?.anchor == 0L) Colors.SILVER else Color.WHITE, true).apply { fontFeatureSettings = "tnum" }
         timerText = tv
-        return Sides(icon(R.drawable.ic_timer, Colors.INK), tv, dp(16))
+        val left: View = if (t != null && t.countDown) {
+            FrameLayout(context).apply {
+                val ring = ProgressRing(context).apply { color = Colors.ORANGE }
+                timerRing = ring
+                addView(ring, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+                addView(icon(R.drawable.ic_timer, Colors.ORANGE), LayoutParams(dp(11), dp(11), Gravity.CENTER))
+            }
+        } else {
+            icon(R.drawable.ic_timer, Colors.ORANGE)
+        }
+        updateTimer()
+        removeCallbacks(timerTick)
+        post(timerTick)
+        return Sides(left, tv, dp(if (t?.countDown == true) 20 else 16))
+    }
+
+    // ----- Timer and stopwatch -----
+    private var timerRing: ProgressRing? = null
+    private var timerBar: ProgressLine? = null
+    private var timerEnds: TextView? = null
+    private var timerHund: TextView? = null
+    /** The longest a timer has had left (its full length, as near as Halo can tell), by timer. */
+    private val timerTotals = HashMap<String, Long>()
+
+    /**
+     * Ticks exactly on the second the clock app does (not just "every half
+     * second", which drifted up to half a second off), and every frame for
+     * the hundredths while an open stopwatch runs.
+     */
+    private val timerTick = object : Runnable {
+        override fun run() {
+            val t = (content as? Content.Timer)?.timer ?: return
+            if (mode == Mode.HIDDEN) return
+            updateTimer()
+            if (t.anchor == 0L) return
+            if (timerHund != null && !t.countDown) {
+                postOnAnimation(this)
+                return
+            }
+            val now = System.currentTimeMillis()
+            val into = if (t.countDown) Math.floorMod(t.anchor - now, 1000L) else Math.floorMod(now - t.anchor, 1000L)
+            val wait = if (t.countDown) into + 4L else 1000L - into + 4L
+            postDelayed(this, wait.coerceIn(16L, 1004L))
+        }
     }
 
     private fun compactTransfer(t: TransferInfo): Sides {
@@ -2345,28 +2474,78 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
     }
 
+    /**
+     * The open timer or stopwatch: what it is and whether it's running, the
+     * time big in steady digits (a stopwatch also runs its hundredths), for a
+     * timer a bar that empties and when it ends, then the clock app's own
+     * buttons: the main one (Pause, Resume, Lap…) solid white, the rest glass.
+     */
     private fun buildExpandedTimer(t: TimerInfo, w: Int, top: Float): View {
         val col = card()
-        val tag = hRow(sized(icon(R.drawable.ic_timer, Colors.INK), dp(14)), spaced(text(12f, white70, true).apply { text = t.label }, 6))
-        col.addView(cameraRow(tag, text(12f, white55, false).apply { text = if (t.countDown) "Timer" else "Stopwatch" }, w, top))
+        val running = t.anchor != 0L
+        val kind = if (t.countDown) "Timer" else "Stopwatch"
+        val tag = hRow(sized(icon(R.drawable.ic_timer, Colors.ORANGE), dp(14)), spaced(text(12f, white70, true).apply { text = t.label.ifEmpty { kind } }, 6))
+        val state = text(11f, if (running) Color.BLACK else Color.WHITE, true).apply {
+            text = if (running) "Running" else "Paused"
+            setPadding(dp(9), dp(3), dp(9), dp(3))
+            background = GradientDrawable().apply {
+                setColor(if (running) Colors.ORANGE else Color.argb(60, 255, 255, 255))
+                cornerRadius = dpf(10f)
+            }
+        }
+        col.addView(cameraRow(tag, state, w, top))
         val b = body()
-        val big = text(44f, Colors.INK, false).apply {
+        val timeRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+        }
+        val big = text(48f, if (running) Color.WHITE else Colors.SILVER, false).apply {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-            setPadding(0, 0, 0, dp(10))
+            fontFeatureSettings = "tnum"
+            includeFontPadding = false
         }
         timerText = big
-        b.addView(big)
+        timeRow.addView(big)
+        if (!t.countDown && running) {
+            val hund = text(22f, Colors.ORANGE, false).apply {
+                typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                fontFeatureSettings = "tnum"
+                includeFontPadding = false
+                setPadding(dp(2), 0, 0, dp(5))
+            }
+            timerHund = hund
+            timeRow.addView(hund)
+        }
+        b.addView(timeRow)
+        if (t.countDown) {
+            val bar = ProgressLine(context).apply { color = Colors.ORANGE }
+            timerBar = bar
+            b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(12)).apply { topMargin = dp(10) })
+            val ends = text(12f, white55, false)
+            timerEnds = ends
+            b.addView(ends, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
+        }
         if (t.actions.isNotEmpty()) {
-            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-            for ((label, pi) in t.actions) {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(14), 0, 0)
+            }
+            val primary = Regex("pause|resume|continue|start|lap", RegexOption.IGNORE_CASE)
+            val mainIdx = t.actions.indexOfFirst { primary.containsMatchIn(it.first) }.let { if (it < 0) 0 else it }
+            t.actions.forEachIndexed { i, (label, pi) ->
+                val main = i == mainIdx
+                val danger = Regex("stop|cancel|delete|reset", RegexOption.IGNORE_CASE).containsMatchIn(label)
                 row.addView(
-                    pillButton(label, Color.argb(42, 255, 255, 255), Color.WHITE) { host.send(pi) },
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(10) },
+                    pillButton(label, if (main && !danger) Colors.INK else Color.argb(48, 255, 255, 255), if (main && !danger) Color.BLACK else Color.WHITE) { host.send(pi) },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) },
                 )
             }
             b.addView(row)
         }
         col.addView(b)
+        updateTimer()
+        removeCallbacks(timerTick)
+        post(timerTick)
         return col
     }
 
@@ -3151,10 +3330,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
             is Content.Timer -> {
                 val t = c.timer
+                val now = System.currentTimeMillis()
+                // Rounded the way the clock app shows it: a timer counts whole seconds down
+                // (10:00 until it really drops), a stopwatch counts them up.
+                val left = max(0L, t.anchor - now)
                 tv.text = when {
                     t.anchor == 0L -> t.pausedText
-                    t.countDown -> fmt(max(0L, t.anchor - System.currentTimeMillis() + 999L))
-                    else -> fmt(System.currentTimeMillis() - t.anchor)
+                    t.countDown -> fmt(left + 999L)
+                    else -> fmt(now - t.anchor)
+                }
+                timerHund?.text = if (t.anchor != 0L && !t.countDown) ",%02d".format(((now - t.anchor) % 1000L) / 10L) else ""
+                if (t.countDown && t.anchor != 0L) {
+                    val total = max(timerTotals[t.key] ?: 0L, left).coerceAtLeast(1L)
+                    timerTotals[t.key] = total
+                    val f = left.toFloat() / total
+                    timerRing?.progress = f
+                    timerBar?.fraction = f
+                    timerEnds?.text = "Ends at " + DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a", Date(t.anchor))
+                } else if (t.countDown) {
+                    timerEnds?.text = "Paused"
                 }
             }
             else -> {}
@@ -3253,6 +3447,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
 
         override fun onLongPress(e: MotionEvent) {
+            // Holding the bubble opens its app.
+            if (onBubble(e.x, e.y)) {
+                bubble?.onHold?.let {
+                    haptic()
+                    it()
+                    return
+                }
+            }
             val c = content
             if (c is Content.Note) {
                 haptic()
@@ -3534,6 +3736,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         animating = false
         removeCallbacks(ticker)
+        removeCallbacks(timerTick)
     }
 }
 
