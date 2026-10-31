@@ -66,7 +66,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
-                Intent.ACTION_SCREEN_OFF -> setLocked(true)
+                Intent.ACTION_SCREEN_OFF -> {
+                    setLocked(true)
+                    showLockScreen()
+                }
                 Intent.ACTION_SCREEN_ON -> {
                     ensureListener()
                     watchCalls()
@@ -169,6 +172,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         locked = keyguard().isKeyguardLocked
+        // The custom status bar's strip goes in first, so the island sits above it.
+        wm?.let { w -> geometry().let { g -> statusBar.attach(w, g.screenW, g.statusBarH) } }
         attach()
         IslandStore.addListener(storeListener)
         val filter = IntentFilter().apply {
@@ -235,6 +240,15 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 }
             }
             "queue_play" -> arg?.toLongOrNull()?.let { tc?.skipToQueueItem(it) }
+            // Halo Launcher's lock screen switched on or off in its settings.
+            "lockscreen" -> Prefs.get(this).edit().putBoolean(Prefs.LOCKSCREEN, arg == "1").apply()
+            // The lock screen asks to unlock and then open a notification.
+            "torch" -> try {
+                val cm = getSystemService(android.hardware.camera2.CameraManager::class.java)
+                val id = cm?.cameraIdList?.firstOrNull { cm.getCameraCharacteristics(it).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true }
+                if (id != null) cm.setTorchMode(id, arg == "1")
+            } catch (_: Exception) {
+            }
         }
         main.postDelayed({ LauncherLink.sendNow(this) }, 400L)
     }
@@ -362,9 +376,67 @@ class HaloService : AccessibilityService(), IslandView.Host {
         } catch (_: Exception) {
             locked
         }
+        var changed = false
         if (now != locked) {
             setLocked(now)
-            push()
+            changed = true
+        }
+        if (readWindows()) changed = true
+        if (changed) push()
+    }
+
+    /** The app in front, and whether the notification shade is pulled down (for the custom status bar). */
+    private var foreground: String? = null
+    private var shadeOpen = false
+
+    private fun readWindows(): Boolean {
+        if (!statusBar.on) return false
+        val ws = try {
+            windows
+        } catch (_: Exception) {
+            return false
+        }
+        val g = island?.geometry ?: return false
+        var top: android.view.accessibility.AccessibilityWindowInfo? = null
+        val b = android.graphics.Rect()
+        for (w in ws) {
+            if (w.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue
+            w.getBoundsInScreen(b)
+            // Skip the bars themselves and small floating things.
+            if (b.height() < g.screenH / 3) continue
+            if (top == null || w.layer > top.layer) top = w
+        }
+        val pkg = try {
+            top?.root?.packageName?.toString()
+        } catch (_: Exception) {
+            null
+        }
+        val sys = top?.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM || pkg?.contains("systemui") == true
+        val shade = sys && !locked
+        val fg = if (top?.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) pkg else foreground
+        if (shade == shadeOpen && fg == foreground) return false
+        shadeOpen = shade
+        foreground = fg
+        return true
+    }
+
+    val statusBar by lazy { StatusBarController(this) }
+
+    private val notifIcons = Runnable { statusBar.setNotifications(panelItems()) }
+
+    /**
+     * Halo Launcher's lock screen: put up the moment the screen goes off, so
+     * it's already there when you wake the phone (no flash of the stock one).
+     */
+    private fun showLockScreen() {
+        if (!Prefs.get(this).getBoolean(Prefs.LOCKSCREEN, false)) return
+        if (IslandStore.call != null || !LauncherLink.launcherInstalled(this)) return
+        try {
+            startActivity(
+                Intent().setClassName(LauncherLink.LAUNCHER, LauncherLink.LAUNCHER + ".LockActivity")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        } catch (_: Exception) {
         }
     }
 
@@ -399,6 +471,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         } catch (_: Exception) {
         }
         removeTouch()
+        statusBar.detach(wm)
         island?.let { v ->
             try {
                 wm?.removeView(v)
@@ -421,6 +494,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         landscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+        geometry().let { g -> statusBar.resize(wm, g.screenW, g.statusBarH) }
         val v = island ?: return
         v.geometry = geometry()
         drawLp?.let { p ->
@@ -647,7 +721,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
 
         val alert = main is IslandView.Content.Call || main is IslandView.Content.Note || main is IslandView.Content.Popup
-        val hideFs = fullscreen && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
+        // Halo Launcher (and its lock screen) hide the system bar themselves when
+        // Halo's own status bar is on: that isn't fullscreen.
+        val homeUp = foreground == LauncherLink.LAUNCHER
+        val hideFs = fullscreen && !homeUp && p.getBoolean(Prefs.HIDE_FULLSCREEN, true) && !alert
         // Landscape is fine: the camera is on the side then, so the island sits at
         // the top centre (CameraFinder ignores cutouts that aren't on the top edge).
         // Lock screen mode: the island stays on the lock screen (a padlock when
@@ -666,6 +743,12 @@ class HaloService : AccessibilityService(), IslandView.Host {
             null
         }
         v.setState(main, bubble, hide)
+        // The custom status bar: hidden in fullscreen, landscape and while the shade is down.
+        statusBar.show(!hideFs && !(fullscreen && !homeUp) && !landscape && !shadeOpen, clear = homeUp)
+        if (statusBar.on) {
+            this.main.removeCallbacks(notifIcons)
+            this.main.postDelayed(notifIcons, 250L)
+        }
         LauncherLink.schedule(this)
         val reasons = buildList {
             if (locked) add("locked")
@@ -1166,6 +1249,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
     // ---------------------------------------------------------------------
     // IslandView.Host
     // ---------------------------------------------------------------------
+
+    override fun islandSpan(left: Float, right: Float, visible: Boolean) {
+        statusBar.island(left, right, visible)
+    }
 
     override fun setTouchArea(area: Rect?) {
         val w = wm ?: return
