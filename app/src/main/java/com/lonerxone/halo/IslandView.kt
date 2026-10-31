@@ -1605,20 +1605,31 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     /**
-     * A status moment (charging, Wi-Fi, Bluetooth, power saving, silent…):
-     * the icon in a soft circle of its own colour on the left, and on the
-     * right either a little battery with the level, an On/Off pill, or the
-     * value. The icon pops in and the value slides in after it.
+     * Event capsules: a status moment (charging, Wi-Fi, Bluetooth, earbuds,
+     * power saving, silent, Do Not Disturb, saved…) as a little animated
+     * scene, not just an icon and a word:
+     *
+     * - the icon sits in a glowing badge of its own colour and acts out the
+     *   event (a bell rings, a bolt flashes, Wi-Fi arcs light up one by one,
+     *   a moon swings in, Bluetooth pulses);
+     * - On/Off things get a real little switch that flips with a springy
+     *   overshoot;
+     * - battery things fill up a battery to the level (with a bolt when
+     *   charging); earbuds fill a ring;
+     * - saved and done draw a tick.
+     *
+     * Everything comes in one after another with bounce: the badge pops,
+     * the title slides in, then the right side.
      */
     private fun compactPop(pop: Pop): Sides {
         val accent = if (pop.accent == 0) Colors.INK else pop.accent
         val left = hRow()
         val badgeBox = FrameLayout(context).apply { clipChildren = false }
-        // A soft ring of the pop's colour ripples out from behind the icon.
+        // A soft ring of the event's colour ripples out from behind the badge.
         badgeBox.addView(PulseView(context).apply {
             color = accent
-            strength = 0.7f
-        }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+            strength = 0.75f
+        }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
         val badge = ImageView(context).apply {
             setImageResource(if (pop.icon != 0) pop.icon else R.drawable.ic_info)
             setColorFilter(accent)
@@ -1626,69 +1637,153 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             setPadding(pad, pad, pad, pad)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.argb(56, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                setColor(Color.argb(60, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                setStroke(dp(1), Color.argb(90, Color.red(accent), Color.green(accent), Color.blue(accent)))
             }
         }
-        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
-        left.addView(badgeBox, LinearLayout.LayoutParams(dp(26), dp(26)))
-        left.addView(spaced(text(12.5f, Color.WHITE, true).apply { text = pop.title; maxWidth = dp(110) }, 7))
+        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(23), dp(23), Gravity.CENTER))
+        left.addView(badgeBox, LinearLayout.LayoutParams(dp(28), dp(28)))
+        val title = spaced(text(12.5f, Color.WHITE, true).apply { text = pop.title; maxWidth = dp(118) }, 7)
+        left.addView(title)
         val pct = pop.value.removeSuffix("%").toIntOrNull()
+        val isWifi = pop.icon == R.drawable.ic_wifi
         val right: View = when {
+            // Earbuds: a ring that fills to their battery.
+            pop.kind == "battery" && pop.icon == R.drawable.ic_headphones && pct != null -> hRow().apply {
+                addView(text(12.5f, accent, true).apply { text = pop.value; fontFeatureSettings = "tnum" })
+                val ring = ProgressRing(context).apply { color = accent; progress = 0f }
+                addView(ring, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(6) })
+                fill(pct / 100f) { ring.progress = it }
+            }
             (pop.kind == "battery" || pop.kind == "charge") && pct != null -> hRow().apply {
-                addView(text(12.5f, accent, true).apply { text = pop.value })
+                val num = text(12.5f, accent, true).apply { fontFeatureSettings = "tnum" }
+                addView(num)
                 val glyph = BatteryGlyph(context).apply {
                     level = 0f
                     color = accent
                 }
-                addView(glyph, LinearLayout.LayoutParams(dp(24), dp(12)).apply { marginStart = dp(6) })
-                // The battery fills up to the level.
-                android.animation.ValueAnimator.ofFloat(0f, pct / 100f).apply {
-                    startDelay = 220L
-                    duration = 600L
-                    interpolator = DecelerateInterpolator(2f)
-                    addUpdateListener { glyph.level = it.animatedValue as Float }
-                    start()
+                addView(glyph, LinearLayout.LayoutParams(dp(25), dp(12)).apply { marginStart = dp(6) })
+                // The battery fills to the level while the number counts up with it.
+                fill(pct / 100f) {
+                    glyph.level = it
+                    num.text = "${(it * 100).toInt()}%"
                 }
             }
-            pop.kind == "saved" -> FrameLayout(context).apply {
+            pop.kind == "saved" || pop.title == "Done" -> hRow().apply {
+                if (pop.value.isNotEmpty()) addView(text(12f, Colors.SILVER, true).apply { text = pop.value; maxWidth = dp(90) })
                 val tick = CheckGlyph(context).apply { color = accent }
-                addView(tick, FrameLayout.LayoutParams(dp(20), dp(20)))
-                android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-                    startDelay = 260L
-                    duration = 320L
-                    interpolator = DecelerateInterpolator(1.6f)
-                    addUpdateListener { tick.progress = it.animatedValue as Float }
-                    start()
-                }
+                addView(tick, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginStart = dp(6) })
+                fill(1f, delay = 300L, ms = 340L) { tick.progress = it }
             }
             pop.kind == "toggle" -> {
                 val on = pop.value.equals("On", true)
-                text(11.5f, if (on) Color.BLACK else Colors.SILVER, true).apply {
-                    text = pop.value
-                    gravity = Gravity.CENTER
-                    setPadding(dp(9), dp(3), dp(9), dp(3))
-                    background = GradientDrawable().apply {
-                        cornerRadius = dpf(10f)
-                        if (on) setColor(accent) else setStroke(dp(1), Color.argb(90, 255, 255, 255))
-                    }
+                MiniSwitch(context).apply {
+                    color = accent
+                    // Starts the other way and flips into place.
+                    setOn(!on, animate = false)
+                    postDelayed({ setOn(on, animate = true) }, 330L)
                 }
+            }
+            // Wi-Fi: its arcs light up one after another.
+            isWifi -> hRow().apply {
+                addView(text(12f, Colors.SILVER, true).apply { text = pop.value })
+                val arcs = SignalArcs(context).apply { color = accent }
+                addView(arcs, LinearLayout.LayoutParams(dp(18), dp(14)).apply { marginStart = dp(6) })
+                fill(1f, delay = 260L, ms = 700L) { arcs.level = it }
+            }
+            pop.kind == "device" -> hRow().apply {
+                addView(text(12f, Colors.SILVER, true).apply { text = pop.value; maxWidth = dp(110) })
+                // A green "linked" dot that pops in.
+                val dot = View(context).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(Colors.GREEN)
+                    }
+                    scaleX = 0f
+                    scaleY = 0f
+                    animate().scaleX(1f).scaleY(1f).setStartDelay(420L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(4f)).start()
+                }
+                addView(dot, LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginStart = dp(7) })
             }
             else -> text(12.5f, accent, true).apply {
                 text = pop.value
                 maxWidth = dp(110)
             }
         }
-        // In: the icon pops, the right side slides in a moment later.
+        // In: the badge pops, the title slides in, then the right side.
         badge.scaleX = 0.2f
         badge.scaleY = 0.2f
         badge.rotation = -40f
-        badge.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(110L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(3.2f)).start()
+        badge.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(100L).setDuration(460L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3.4f))
+            .withEndAction { actOut(badge, pop) }.start()
+        title.alpha = 0f
+        title.translationX = -dpf(10f)
+        title.animate().alpha(1f).translationX(0f).setStartDelay(150L).setDuration(360L).setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
         right.alpha = 0f
-        right.scaleX = 0.6f
-        right.scaleY = 0.6f
-        right.translationX = dpf(12f)
-        right.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).setStartDelay(190L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
+        right.scaleX = 0.5f
+        right.scaleY = 0.5f
+        right.translationX = dpf(14f)
+        right.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).setStartDelay(210L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
         return Sides(left, right)
+    }
+
+    /** Runs a 0..1 value over [ms] after [delay] with an eased stop (for fills and ticks). */
+    private fun fill(to: Float, delay: Long = 240L, ms: Long = 620L, set: (Float) -> Unit) {
+        set(0f)
+        android.animation.ValueAnimator.ofFloat(0f, to).apply {
+            startDelay = delay
+            duration = ms
+            interpolator = DecelerateInterpolator(2.2f)
+            addUpdateListener { set(it.animatedValue as Float) }
+            start()
+        }
+    }
+
+    /** The badge's icon acts out its event once it has popped in. */
+    private fun actOut(v: View, pop: Pop) {
+        when (pop.icon) {
+            // A bell rings (it swings side to side).
+            R.drawable.ic_bell, R.drawable.ic_bell_off, R.drawable.ic_vibrate -> android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, 22f, -18f, 14f, -9f, 5f, 0f).apply {
+                duration = 620L
+                start()
+            }
+            // A bolt flashes.
+            R.drawable.ic_bolt -> android.animation.ObjectAnimator.ofPropertyValuesHolder(
+                v,
+                android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.3f, 0.92f, 1.08f, 1f),
+                android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.3f, 0.92f, 1.08f, 1f),
+                android.animation.PropertyValuesHolder.ofFloat(View.ALPHA, 1f, 0.55f, 1f, 0.8f, 1f),
+            ).apply {
+                duration = 520L
+                start()
+            }
+            // The moon swings in like a crescent settling.
+            R.drawable.ic_moon -> android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, -50f, 12f, -5f, 0f).apply {
+                duration = 560L
+                start()
+            }
+            // The plane takes off a little.
+            R.drawable.ic_airplane -> android.animation.ObjectAnimator.ofPropertyValuesHolder(
+                v,
+                android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_X, 0f, dpf(3f), 0f),
+                android.animation.PropertyValuesHolder.ofFloat(View.TRANSLATION_Y, 0f, -dpf(3f), 0f),
+            ).apply {
+                duration = 520L
+                start()
+            }
+            // Leaf: a gentle sway.
+            R.drawable.ic_leaf -> wobble(v, 12f)
+            // Bluetooth and earbuds: a quick double beat.
+            else -> android.animation.ObjectAnimator.ofPropertyValuesHolder(
+                v,
+                android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.14f, 1f, 1.08f, 1f),
+                android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.14f, 1f, 1.08f, 1f),
+            ).apply {
+                duration = 480L
+                start()
+            }
+        }
     }
 
     /** On a call: a green phone (gently pulsing) on the left, the running time in green on the right. */
@@ -3895,5 +3990,100 @@ class EdgeFadeLayout(context: Context) : LinearLayout(context) {
         canvas.drawRect(width - fw, t, width.toFloat(), b, fade)
         canvas.restoreToCount(save)
         return r
+    }
+}
+
+
+/** A tiny on/off switch for event capsules: the knob flips across with a springy overshoot. */
+class MiniSwitch(context: Context) : View(context) {
+    var color = Color.WHITE
+    private var pos = 0f
+    private var anim: android.animation.ValueAnimator? = null
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val r = RectF()
+    private val density = resources.displayMetrics.density
+
+    fun setOn(on: Boolean, animate: Boolean) {
+        anim?.cancel()
+        val to = if (on) 1f else 0f
+        if (!animate) {
+            pos = to
+            invalidate()
+            return
+        }
+        anim = android.animation.ValueAnimator.ofFloat(pos, to).apply {
+            duration = 460L
+            interpolator = android.view.animation.OvershootInterpolator(2.6f)
+            addUpdateListener {
+                pos = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+        performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension((30 * density).toInt(), (18 * density).toInt())
+    }
+
+    override fun onDraw(c: Canvas) {
+        val h = height.toFloat()
+        val w = width.toFloat()
+        val f = pos.coerceIn(0f, 1f)
+        // Track: outlined when off, filling with the colour as it turns on.
+        r.set(density, density, w - density, h - density)
+        p.style = Paint.Style.FILL
+        p.color = Color.argb((255 * f).toInt(), Color.red(color), Color.green(color), Color.blue(color))
+        c.drawRoundRect(r, h / 2f, h / 2f, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = density * 1.2f
+        p.color = Color.argb((110 * (1f - f)).toInt(), 255, 255, 255)
+        c.drawRoundRect(r, h / 2f, h / 2f, p)
+        // Knob: stretches a little as it travels, like liquid.
+        val kr = h / 2f - density * 3f
+        val cx = h / 2f + (w - h) * pos
+        val stretch = (1f - kotlin.math.abs(f - 0.5f) * 2f) * density * 3f
+        p.style = Paint.Style.FILL
+        p.color = Color.WHITE
+        r.set(cx - kr - stretch, h / 2f - kr, cx + kr + stretch, h / 2f + kr)
+        c.drawRoundRect(r, kr, kr, p)
+    }
+}
+
+/** Wi-Fi arcs that light up one after another as [level] goes 0 to 1. */
+class SignalArcs(context: Context) : View(context) {
+    var color = Color.WHITE
+    var level = 0f
+        set(v) {
+            field = v
+            invalidate()
+        }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val r = RectF()
+
+    override fun onDraw(c: Canvas) {
+        val d = resources.displayMetrics.density
+        val cx = width / 2f
+        val cy = height - d * 2f
+        p.strokeWidth = d * 1.8f
+        // The dot, then three arcs.
+        for (i in 0..3) {
+            val on = ((level * 4f) - i).coerceIn(0f, 1f)
+            val a = (60 + 195 * on).toInt()
+            p.color = Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+            if (i == 0) {
+                p.style = Paint.Style.FILL
+                c.drawCircle(cx, cy, d * 1.4f, p)
+                p.style = Paint.Style.STROKE
+                continue
+            }
+            val rad = d * (3.5f * i + 1f)
+            r.set(cx - rad, cy - rad, cx + rad, cy + rad)
+            c.drawArc(r, 225f, 90f, false, p)
+        }
     }
 }
