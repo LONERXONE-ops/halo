@@ -571,68 +571,94 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private var panelQuiet = false
     private var panelList: LinearLayout? = null
-    private var panelGroups: Map<String, List<PanelItem>> = emptyMap()
+    private var panelGroups: LinkedHashMap<String, MutableList<PanelItem>> = LinkedHashMap()
+    /** Cards still sliding away after a fold; cleared if you tap again before they finish. */
+    private val ghosts = ArrayList<View>()
     private var panelChromeH = 0
     private var panelRoom = 0
 
     /** The views for one app's notifications: a stack, or a header and every card. */
     private fun groupViews(pkg: String, group: List<PanelItem>, open: Boolean): List<View> {
-        if (group.size == 1) return listOf(panelCard(group[0]).apply { tag = "g:$pkg" })
+        if (group.size == 1) return listOf(panelCard(group[0], pkg).apply { tag = "g:$pkg" })
         if (!open) return listOf(stackedCard(pkg, group).apply { tag = "g:$pkg" })
         val out = ArrayList<View>()
         out += groupHeader(pkg, group).apply { tag = "gh:$pkg" }
         group.forEachIndexed { i, item ->
-            out += panelCard(item).also { v ->
-                // One app's cards sit close together; different apps get more air.
-                (v.layoutParams as LinearLayout.LayoutParams).topMargin = dp(if (i == 0) 8 else 6)
+            out += panelCard(item, pkg).also { v ->
+                // One app's cards sit close together; different apps get a little more air.
+                (v.layoutParams as LinearLayout.LayoutParams).topMargin = dp(if (i == 0) 6 else 5)
                 v.tag = "gc:$pkg"
             }
         }
         return out
     }
 
+    private fun groupMembers(list: ViewGroup, pkg: String): List<View> =
+        (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.substringAfter(':') == pkg }
+
     /**
      * Fan a stack out, or fold it back, right where it is (no rebuild).
-     * Everything is measured before and after (FLIP): the cards slide out
-     * from under the stack one after another and settle with a little
-     * bounce; the cards below glide down to make room; the island grows
-     * with them. Folding runs it backwards: the cards slide up into the
-     * stack and fade, and everything below glides up.
+     *
+     * Open: the pile's front card stays exactly where it was and the cards
+     * behind it slide down out from under it one after another, with a
+     * springy settle; the header fades in above; everything below glides
+     * down to make room; the island grows with them.
+     *
+     * Fold: the cards slide back up under the first one and fade into the
+     * pile, which settles where the first card was; everything below glides
+     * up. Tapping again mid-way finishes the last move first, so it never
+     * leaves stray cards behind.
      */
     private fun toggleGroup(pkg: String, open: Boolean) {
         val list = panelList ?: return
         val group = panelGroups[pkg] ?: return
-        val idx = (0 until list.childCount).firstOrNull { (list.getChildAt(it).tag as? String)?.endsWith(":$pkg") == true } ?: return
+        // Finish any fold still in flight.
+        for (g in ghosts) {
+            g.animate().cancel()
+            list.overlay.remove(g)
+        }
+        ghosts.clear()
+        val old = groupMembers(list, pkg)
+        if (old.isEmpty()) return
+        val idx = list.indexOfChild(old.first())
         haptic()
-        // Before: where every view is now.
+        for (i in 0 until list.childCount) list.getChildAt(i).animate().cancel()
+        // Before: where everything sits now (settled positions).
         val before = HashMap<View, Int>()
-        for (i in 0 until list.childCount) list.getChildAt(i).let { before[it] = it.top + it.translationY.toInt() }
-        val old = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.endsWith(":$pkg") == true }
-        val anchorTop = old.first().top
+        for (i in 0 until list.childCount) list.getChildAt(i).let { before[it] = it.top }
+        // Where the stack's front card is (or the first card of the fan).
+        val firstCard = old.firstOrNull { (it.tag as? String)?.startsWith("gh:") != true } ?: old.first()
+        val frontTop = firstCard.top
         if (open) openGroups.add(pkg) else openGroups.remove(pkg)
         for (v in old) {
-            v.animate().cancel()
+            v.translationX = 0f
+            v.translationY = 0f
             list.removeView(v)
         }
-        val fresh = groupViews(pkg, group, open)
+        val fresh = groupViews(pkg, group, open && group.size > 1)
         fresh.forEachIndexed { i, v -> list.addView(v, idx + i) }
-        // Folding: the old views stay on screen as ghosts. The header fades,
-        // the first card turns into the stack, and the others slide up behind
-        // it one after another, shrinking a little and fading, like cards
-        // being tucked back into a pile.
-        val firstCardTop = old.getOrNull(1)?.top ?: anchorTop
+        val step = dpf(7f)
         if (!open) {
-            val ease = android.view.animation.PathInterpolator(0.25f, 0.1f, 0.2f, 1f)
-            old.forEachIndexed { i, v ->
+            // The old cards (but the first, which becomes the pile) slide up under it and fade.
+            var k = 0
+            for (v in old) {
+                if (v === firstCard) continue
+                val header = (v.tag as? String)?.startsWith("gh:") == true
                 list.overlay.add(v)
-                when (i) {
-                    0 -> v.animate().alpha(0f).setDuration(160L).setInterpolator(ease)
-                    // The stack (which looks the same) takes its place straight away.
-                    1 -> v.animate().alpha(0f).setDuration(90L).setInterpolator(ease)
-                    else -> v.animate().translationY((anchorTop - v.top).toFloat() + dpf(8f) * min(i - 1, 2))
-                        .alpha(0f).scaleX(0.92f).scaleY(0.92f)
-                        .setStartDelay(((i - 2) * 25L).coerceAtMost(100L)).setDuration(380L).setInterpolator(ease)
-                }.withEndAction { list.overlay.remove(v) }.start()
+                ghosts += v
+                val anim = if (header) {
+                    v.animate().alpha(0f).translationY(-dpf(6f)).setDuration(160L)
+                } else {
+                    k++
+                    v.animate().translationY((frontTop - v.top).toFloat() + step * min(k, 2))
+                        .alpha(0f).scaleX(0.94f).scaleY(0.94f)
+                        .setStartDelay(((k - 1) * 22L).coerceAtMost(110L)).setDuration(300L)
+                        .setInterpolator(android.view.animation.PathInterpolator(0.3f, 0f, 0.2f, 1f))
+                }
+                anim.withEndAction {
+                    list.overlay.remove(v)
+                    ghosts.remove(v)
+                }.start()
             }
         }
         // Keep the panel the same kind of thing so a later refresh doesn't rebuild it.
@@ -640,38 +666,80 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         list.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
                 list.viewTreeObserver.removeOnPreDrawListener(this)
-                val spring = android.view.animation.OvershootInterpolator(1.15f)
-                // Everything that was already there glides from where it was.
+                val glide = android.view.animation.PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
+                val bouncy = android.view.animation.OvershootInterpolator(1.2f)
+                // Everything else glides from where it was.
                 for (i in 0 until list.childCount) {
                     val v = list.getChildAt(i)
+                    if (v in fresh) continue
                     val was = before[v] ?: continue
                     val d = (was - v.top).toFloat()
                     if (abs(d) < 1f) continue
                     v.translationY = d
-                    v.animate().translationY(0f).setStartDelay(if (open) 0L else 60L).setDuration(if (open) 380L else 440L)
-                        .setInterpolator(if (open) spring else android.view.animation.PathInterpolator(0.25f, 0.1f, 0.2f, 1f)).start()
+                    v.animate().translationY(0f).setStartDelay(0L).setDuration(if (open) 420L else 380L).setInterpolator(glide).start()
                 }
-                // The new views come out of the stack.
                 var k = 0
                 for (v in fresh) {
-                    // Opening: out from under the stack. Folding: the stack slides up from where the first card was.
-                    val from = if (open) (anchorTop - v.top).toFloat() + if (k > 0) dpf(8f) * min(k, 2) else 0f else (firstCardTop - v.top).toFloat()
-                    v.translationY = from
-                    val isHeader = (v.tag as? String)?.startsWith("gh:") == true
-                    if (open && (k > 0 || isHeader)) {
+                    val header = (v.tag as? String)?.startsWith("gh:") == true
+                    if (header) {
                         v.alpha = 0f
+                        v.translationY = dpf(8f)
+                        v.animate().alpha(1f).translationY(0f).setDuration(260L).setInterpolator(glide).start()
+                        continue
+                    }
+                    // Starts where the pile's front card was (the ones behind, a little lower and smaller).
+                    v.translationY = (frontTop - v.top).toFloat() + if (open) step * min(k, 2) else 0f
+                    if (open && k > 0) {
+                        v.alpha = if (k <= 2) 0.85f else 0f
                         v.scaleX = 0.94f
                         v.scaleY = 0.94f
                     }
                     v.animate().translationY(0f).alpha(1f).scaleX(1f).scaleY(1f)
-                        .setStartDelay(if (open) k * 40L else 0L).setDuration(if (open) 420L else 440L)
-                        .setInterpolator(if (open) spring else android.view.animation.PathInterpolator(0.25f, 0.1f, 0.2f, 1f)).start()
-                    if (!isHeader) k++
+                        .setStartDelay(if (open) k * 32L else 0L).setDuration(if (open) 460L else 380L)
+                        .setInterpolator(if (open) bouncy else glide).start()
+                    k++
                 }
                 return true
             }
         })
         resizePanel()
+    }
+
+    /**
+     * One notification cleared from the center: it's gone from its group;
+     * an empty group disappears (with its header), and a group left with a
+     * single card turns back into a plain card.
+     */
+    private fun dismissItem(pkg: String, item: PanelItem) {
+        host.dismissNotification(item.key)
+        val g = panelGroups[pkg] ?: return
+        g.removeAll { it.key == item.key }
+        val list = panelList ?: return
+        if (g.isEmpty()) {
+            panelGroups.remove(pkg)
+            openGroups.remove(pkg)
+            for (v in groupMembers(list, pkg)) collapse(v) {}
+        } else if (pkg in openGroups && g.size == 1) {
+            postDelayed({ toggleGroup(pkg, open = false) }, 190L)
+        }
+        updateCount()
+    }
+
+    /** A whole stack swiped away: every notification in it is cleared. */
+    private fun dismissGroup(pkg: String) {
+        val g = panelGroups.remove(pkg) ?: return
+        openGroups.remove(pkg)
+        for (item in g) host.dismissNotification(item.key)
+        updateCount()
+    }
+
+    /** The number next to "Notifications". */
+    private var countText: TextView? = null
+
+    private fun updateCount() {
+        val n = panelGroups.values.sumOf { it.size }
+        countText?.text = n.toString()
+        if (n == 0) countText?.visibility = View.GONE
     }
 
     /** The list changed size: the island grows or shrinks to fit (up to its limit), smoothly. */
@@ -2474,6 +2542,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }, if (nControls == 0) LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)) else LinearLayout.LayoutParams(0, dp(28), 1f))
         if (items.isNotEmpty()) {
             header.addView(text(11f, Color.WHITE, true).apply {
+                countText = this
                 text = items.size.toString()
                 gravity = Gravity.CENTER
                 setPadding(dp(7), dp(2), dp(7), dp(2))
@@ -2573,6 +2642,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // them out. Only the first few groups are built straight away so the
         // panel opens without a hitch; the rest are added a moment later.
         val groups = LinkedHashMap<String, MutableList<PanelItem>>()
+        ghosts.clear()
         for (item in items) groups.getOrPut(item.packageName) { ArrayList() }.add(item)
         panelGroups = groups
         panelList = list
@@ -2729,19 +2799,26 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return box
     }
 
-    /** Above a fanned-out group: the app's name and "Show less". */
+    /** Above a fanned-out group: the app's icon, name and count, and a "Show less" pill. */
     private fun groupHeader(pkg: String, group: List<PanelItem>): View {
-        val row = hRow().apply { setPadding(dp(6), dp(18), dp(4), 0) }
-        row.addView(text(12.5f, white70, true).apply { text = group.first().appName }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(text(12f, Color.WHITE, true).apply {
-            text = "Show less"
-            setPadding(dp(10), dp(4), dp(10), dp(4))
+        val row = hRow().apply { setPadding(dp(6), dp(12), dp(2), dp(2)) }
+        row.addView(roundImage(group.first().rich.appIcon, dpf(5f), Colors.GRAPHITE, R.drawable.ic_bell), LinearLayout.LayoutParams(dp(18), dp(18)))
+        row.addView(spaced(text(13.5f, Color.WHITE, true).apply { text = group.first().appName }, 8))
+        row.addView(spaced(text(12f, white55, true).apply { text = group.size.toString() }, 6), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val pill = hRow().apply {
+            setPadding(dp(11), dp(5), dp(9), dp(5))
             background = GradientDrawable().apply {
-                setColor(Colors.GRAPHITE)
-                cornerRadius = dpf(11f)
+                setColor(Color.argb(60, 255, 255, 255))
+                cornerRadius = dpf(13f)
             }
-            setOnClickListener { toggleGroup(pkg, open = false) }
-        })
+            setOnClickListener {
+                bounce(it)
+                toggleGroup(pkg, open = false)
+            }
+        }
+        pill.addView(text(12f, Color.WHITE, true).apply { text = "Show less" })
+        pill.addView(icon(R.drawable.ic_chevron, Color.WHITE).apply { rotation = -90f }, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(4) })
+        row.addView(pill)
         return row
     }
 
@@ -2757,7 +2834,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // card, which looked detached from it.
         val behind = minOf(group.size - 1, 2)
         val box = PileLayout(context, behind, dp(7), dp(12))
-        val front = panelCard(group.first()) as LinearLayout
+        val front = panelCard(group.first(), pkg, inPile = true) as LinearLayout
         // "+N more" goes in the header (where the arrow was), so the stack
         // doesn't grow an extra row of empty space.
         val meta = front.getChildAt(0) as LinearLayout
@@ -2779,9 +2856,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         front.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         box.addView(front)
-        // Tap anywhere on the stack to fan it out.
+        // Tap anywhere on the stack to fan it out; swipe it away to clear them all.
         front.setOnClickListener { toggleGroup(pkg, open = true) }
-        box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
+        swipeToDismiss(front, box) { dismissGroup(pkg) }
+        box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
         return box
     }
 
@@ -2800,13 +2878,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * send button in the app's colour. Tap to open, swipe either way to
      * clear; it squishes under your finger and springs back.
      */
-    private fun panelCard(item: PanelItem): View {
+    private fun panelCard(item: PanelItem, pkg: String, inPile: Boolean = false): View {
         val raw = item.accent
         val hasAccent = raw != 0 && raw != Color.BLACK && raw != Color.WHITE
         val accent = if (hasAccent) raw else Colors.INK
         val cardView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(15))
+            setPadding(dp(15), dp(12), dp(15), dp(13))
             val glow = GradientDrawable().apply {
                 gradientType = GradientDrawable.RADIAL_GRADIENT
                 gradientRadius = dpf(190f)
@@ -2834,8 +2912,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         cardView.addView(meta)
         cardView.addView(messageRow(item.rich, big = false), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(11) })
         if (item.canReply) cardView.addView(replyBar(item, accent), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)).apply { topMargin = dp(12) })
-        cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
-        swipeToDismiss(cardView) { host.dismissNotification(item.key) }
+        cardView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        // In a pile, the pile itself is what gets swiped (set up by the pile).
+        if (!inPile) swipeToDismiss(cardView) { dismissItem(pkg, item) }
         return cardView
     }
 
@@ -2888,7 +2967,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * follows the finger 1:1, flies off in ~0.1 s and the cards below close
      * the gap smoothly instead of jumping.
      */
-    private fun swipeToDismiss(view: View, onDismiss: () -> Unit) {
+    private fun swipeToDismiss(view: View, move: View = view, onDismiss: () -> Unit) {
         val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
         var downX = 0f
         var downY = 0f
@@ -2902,11 +2981,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     downY = e.rawY
                     dragging = false
                     v.isPressed = true
-                    v.animate().cancel()
+                    move.animate().cancel()
                     // A touch during the entrance shouldn't freeze it half-faded.
-                    v.alpha = 1f
-                    v.translationY = 0f
-                    v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(110L).setInterpolator(DecelerateInterpolator()).start()
+                    move.alpha = 1f
+                    move.translationY = 0f
+                    move.animate().scaleX(0.97f).scaleY(0.97f).setDuration(110L).setInterpolator(DecelerateInterpolator()).start()
                     tracker?.recycle()
                     tracker = android.view.VelocityTracker.obtain().also { it.addMovement(e) }
                 }
@@ -2916,13 +2995,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     if (!dragging && abs(dx) > slop * 0.8f && abs(dx) > abs(dy) * 1.1f) {
                         dragging = true
                         v.isPressed = false
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
+                        move.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
                         v.parent?.requestDisallowInterceptTouchEvent(true)
                     }
                     if (dragging) {
-                        v.translationX = dx
-                        v.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1) * 0.9f).coerceIn(0.15f, 1f)
-                        v.rotation = dx / v.width.coerceAtLeast(1) * 3f
+                        move.translationX = dx
+                        move.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1) * 0.9f).coerceIn(0.15f, 1f)
+                        move.rotation = dx / v.width.coerceAtLeast(1) * 3f
                     } else if (abs(dy) > slop) {
                         v.isPressed = false
                     }
@@ -2940,14 +3019,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         val dir = if ((if (flick) vx else dx) > 0) 1f else -1f
                         val left = v.width - abs(dx)
                         val ms = (if (flick) (left / abs(vx) * 1000f) else 110f).toLong().coerceIn(70L, 140L)
-                        v.animate().translationX(dir * v.width * 1.1f).alpha(0f).setDuration(ms)
+                        move.animate().translationX(dir * v.width * 1.1f).alpha(0f).setDuration(ms)
                             .setInterpolator(android.view.animation.LinearInterpolator())
-                            .withEndAction { collapse(v, onDismiss) }.start()
+                            .withEndAction { collapse(move, onDismiss) }.start()
                     } else if (dragging) {
-                        v.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(420L)
+                        move.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(420L)
                             .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
                     } else {
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(360L)
+                        move.animate().scaleX(1f).scaleY(1f).setDuration(360L)
                             .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
                         if (abs(e.rawY - downY) < slop) v.performClick()
                     }
@@ -2955,7 +3034,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
-                    v.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(360L)
+                    move.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(360L)
                         .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
                     dragging = false
                     tracker?.recycle()
@@ -2987,6 +3066,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(a: android.animation.Animator) {
                     (v.parent as? ViewGroup)?.removeView(v)
+                    resizePanel()
                 }
             })
             start()
@@ -3438,6 +3518,8 @@ class ShineDrawable(private val fill: Int, private val radius: Float, private va
 
     override fun draw(c: Canvas) {
         r.set(bounds)
+        // Squeezed almost flat (a card closing its gap): nothing, or it draws as a stray line.
+        if (r.height() < radius) return
         p.color = fill
         c.drawRoundRect(r, radius, radius, p)
         // The new Liquid Glass light (Android 13+); the old sheen and rim otherwise.
@@ -3494,7 +3576,8 @@ class PileLayout(context: Context, private val behind: Int, private val step: In
                 MeasureSpec.makeMeasureSpec(fh, MeasureSpec.EXACTLY),
             )
         }
-        setMeasuredDimension(w, fh + step * behind)
+        // Respects a fixed height (the gap closing after the pile is swiped away).
+        setMeasuredDimension(w, resolveSize(fh + step * behind, heightMeasureSpec))
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
