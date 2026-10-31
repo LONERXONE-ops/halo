@@ -1,0 +1,275 @@
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1540: Warning: Field requires API level 31 (current min is 30): android.Manifest.permission#BLUETOOTH_CONNECT [InlinedApi]
+            Manifest.permission.BLUETOOTH_CONNECT,
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1541: Warning: Field requires API level 33 (current min is 30): android.Manifest.permission#POST_NOTIFICATIONS [InlinedApi]
+            Manifest.permission.POST_NOTIFICATIONS,
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "InlinedApi":
+   This check scans through all the Android API field references in the
+   application and flags certain constants, such as static final integers and
+   Strings, which were introduced in later versions. These will actually be
+   copied into the class files rather than being referenced, which means that
+   the value is available even when running on older devices. In some cases
+   that's fine, and in other cases it can result in a runtime crash or
+   incorrect behavior. It depends on the context, so consider the code
+   carefully and decide whether it's safe and can be suppressed or whether the
+   code needs to be guarded.
+
+   If you really want to use this API and don't need to support older devices
+   just set the minSdkVersion in your build.gradle or AndroidManifest.xml
+   files.
+
+   If your code is deliberately accessing newer APIs, and you have ensured
+   (e.g. with conditional execution) that this code will only ever be called
+   on a supported platform, then you can annotate your class or method with
+   the @TargetApi annotation specifying the local minimum SDK to apply, such
+   as @TargetApi(11), such that this check considers 11 rather than your
+   manifest file's minimum SDK as the required API level.
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/HaloService.kt:1126: Warning: Using internal inset dimension resource status_bar_height is not supported [InternalInsetResource]
+            .takeIf { it > 0 } ?: resources.getIdentifier("status_bar_height", "dimen", "android")
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "InternalInsetResource":
+   The internal inset dimension resources are not a supported way to retrieve
+   the relevant insets for your application. The insets are dynamic values
+   that can change while your app is visible, and your app's window may not
+   intersect with the system UI. To get the relevant value for your app and
+   listen to updates, use androidx.core.view.WindowInsetsCompat and related
+   APIs.
+
+/home/runner/work/halo/halo/app/build.gradle.kts:15: Warning: Not targeting the latest versions of Android; compatibility modes apply. Consider testing and updating this version. Consult the android.os.Build.VERSION_CODES javadoc for details. [OldTargetApi]
+        targetSdk = 35
+        ~~~~~~~~~~~~~~
+
+   Explanation for issues of type "OldTargetApi":
+   When your application runs on a version of Android that is more recent than
+   your targetSdkVersion specifies that it has been tested with, various
+   compatibility modes kick in. This ensures that your application continues
+   to work, but it may look out of place. For example, if the targetSdkVersion
+   is less than 14, your app may get an option button in the UI.
+
+   To fix this issue, set the targetSdkVersion to the highest available value.
+   Then test your app to make sure everything works correctly. You may want to
+   consult the compatibility notes to see what changes apply to each version
+   you are adding support for:
+   https://developer.android.com/reference/android/os/Build.VERSION_CODES.html
+   as well as follow this guide:
+   https://developer.android.com/distribute/best-practices/develop/target-sdk.
+   html
+
+   https://developer.android.com/distribute/best-practices/develop/target-sdk.html
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:789: Warning: Use of REQUEST_IGNORE_BATTERY_OPTIMIZATIONS violates the Play Store Content Policy regarding acceptable use cases, as described in https://developer.android.com/training/monitoring-device-state/doze-standby.html [BatteryLife]
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "BatteryLife":
+   This issue flags code that either
+   * negatively affects battery life, or
+   * uses APIs that have recently changed behavior to prevent background tasks
+   from consuming memory and battery excessively.
+
+   Generally, you should be using WorkManager instead.
+
+   For more details on how to update your code, please see
+   https://developer.android.com/topic/performance/background-optimization
+
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/HaloService.kt:201: Error: linkReceiver is missing RECEIVER_EXPORTED or RECEIVER_NOT_EXPORTED flag for unprotected broadcasts registered for com.lonerxone.halo.action.COMMAND [UnspecifiedRegisterReceiverFlag]
+            registerReceiver(linkReceiver, link, LauncherLink.PERMISSION, null)
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "UnspecifiedRegisterReceiverFlag":
+   In Android U, all receivers registering for non-system broadcasts are
+   required to include a flag indicating the receiver's exported state. Apps
+   registering for non-system broadcasts should use the
+   ContextCompat#registerReceiver APIs with flags set to either
+   RECEIVER_EXPORTED or RECEIVER_NOT_EXPORTED.
+
+   If you are not expecting broadcasts from other apps on the device, register
+   your receiver with RECEIVER_NOT_EXPORTED to protect your receiver on all
+   platform releases.
+
+   https://developer.android.com/reference/androidx/core/content/ContextCompat#registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int)
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/HaloService.kt:1125: Warning: Use of this function is discouraged because resource reflection makes it harder to perform build optimizations and compile-time verification of code. It is much more efficient to retrieve resources by identifier (e.g. R.foo.bar) than by name (e.g. getIdentifier("bar", "foo", null)). [DiscouragedApi]
+        val id = resources.getIdentifier(if (land) "status_bar_height_landscape" else "status_bar_height", "dimen", "android")
+                           ~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/HaloService.kt:1126: Warning: Use of this function is discouraged because resource reflection makes it harder to perform build optimizations and compile-time verification of code. It is much more efficient to retrieve resources by identifier (e.g. R.foo.bar) than by name (e.g. getIdentifier("bar", "foo", null)). [DiscouragedApi]
+            .takeIf { it > 0 } ?: resources.getIdentifier("status_bar_height", "dimen", "android")
+                                            ~~~~~~~~~~~~~
+
+   Explanation for issues of type "DiscouragedApi":
+   Discouraged APIs are allowed and are not deprecated, but they may be unfit
+   for common use (e.g. due to slow performance or subtle behavior).
+
+/home/runner/work/halo/halo/app/src/main/AndroidManifest.xml:58: Warning: The attribute android:allowBackup is deprecated from Android 12 and higher and may be removed in future versions. Consider adding the attribute android:dataExtractionRules specifying an @xml resource which configures cloud backups and device transfers on Android 12 and higher. [DataExtractionRules]
+        android:allowBackup="false"
+                             ~~~~~
+
+   Explanation for issues of type "DataExtractionRules":
+   Before Android 12, the attributes android:allowBackup and
+   android:fullBackupContent were used to configure all forms of backup,
+   including cloud backups, device-to-device transfers and adb backup.
+
+   In Android 12 and higher, these attributes have been deprecated and will
+   only apply to cloud backups. You should instead use the attribute
+   android:dataExtractionRules, specifying an @xml resource that configures
+   which files to back up, for cloud backups and for device-to-device
+   transfers, separately. If your minSdkVersion supports older versions,
+   you'll still want to specify an android:fullBackupContent resource if the
+   default behavior is not right for your app.
+
+   https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   https://goo.gle/DataExtractionRules
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1605: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+        fill.shader = android.graphics.LinearGradient(0f, 0f, fw, 0f, Color.rgb(90, 170, 255), Color.WHITE, android.graphics.Shader.TileMode.CLAMP)
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1605: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+        fill.shader = android.graphics.LinearGradient(0f, 0f, fw, 0f, Color.rgb(90, 170, 255), Color.WHITE, android.graphics.Shader.TileMode.CLAMP)
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1610: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+        shine.shader = android.graphics.LinearGradient(x - fw * 0.25f, 0f, x + fw * 0.25f, 0f,
+                       ^
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1610: Warning: Avoid object allocations during draw/layout operations (preallocate and reuse instead) [DrawAllocation]
+        shine.shader = android.graphics.LinearGradient(x - fw * 0.25f, 0f, x + fw * 0.25f, 0f,
+                       ^
+
+   Explanation for issues of type "DrawAllocation":
+   You should avoid allocating objects during a drawing or layout operation.
+   These are called frequently, so a smooth UI can be interrupted by garbage
+   collection pauses caused by the object allocations.
+
+   The way this is generally handled is to allocate the needed objects up
+   front and to reuse them for each drawing operation.
+
+   Some methods allocate memory on your behalf (such as Bitmap.create), and
+   these should be handled in the same way.
+
+/home/runner/work/halo/halo/app/src/main/res/mipmap-anydpi-v26: Warning: This folder configuration (v26) is unnecessary; minSdkVersion is 30. Merge all the resources in this folder into mipmap-anydpi. [ObsoleteSdkInt]
+
+   Explanation for issues of type "ObsoleteSdkInt":
+   This check flags version checks that are not necessary, because the
+   minSdkVersion (or surrounding known API level) is already at least as high
+   as the version checked for.
+
+   Similarly, it also looks for resources in -vNN folders, such as values-v14
+   where the version qualifier is less than or equal to the minSdkVersion,
+   where the contents should be merged into the best folder.
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3725: Warning: Custom view IslandView overrides onTouchEvent but not performClick [ClickableViewAccessibility]
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+                 ~~~~~~~~~~~~
+
+   Explanation for issues of type "ClickableViewAccessibility":
+   If a View that overrides onTouchEvent or uses an OnTouchListener does not
+   also implement performClick and call it when clicks are detected, the View
+   may not handle accessibility actions properly. Logic handling the click
+   actions should ideally be placed in View#performClick as some accessibility
+   services invoke performClick when a click action should occur.
+
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/AppsActivity.kt:40: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            text = "Apps on the island"
+                    ~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/AppsActivity.kt:46: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            text = "Switched-off apps never pop up or appear in the panel."
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:782: Warning: Number formatting does not take into account locale settings. Consider using String.format instead. [SetTextI18n]
+        countText?.text = n.toString()
+                          ~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:1592: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        Sides(icon(R.drawable.ic_flashlight, Colors.INK), text(12.5f, Colors.SILVER, true).apply { text = "On" }, dp(16))
+                                                                                                           ~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2219: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+    private fun noteMeta(): View = text(11.5f, white55, false).apply { text = "now" }
+                                                                               ~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2336: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        val timer = text(12.5f, Colors.GREEN, true).apply { if (c.ringing) text = "Incoming" }
+                                                                                   ~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2571: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        val tag = hRow(sized(icon(R.drawable.ic_nav, Colors.INK), dp(14)), spaced(text(12f, white70, true).apply { text = "Maps" }, 6))
+                                                                                                                           ~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2615: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        val how = text(12f, Colors.GREEN, true).apply { text = "Charging" }
+                                                                ~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2666: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        pctView.text = "$pct%"
+                       ~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2692: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        chargeInfo?.text = (parts + listOfNotNull(full.ifEmpty { null })).joinToString("\n")
+                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2723: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            text = "Notifications"
+                    ~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2731: Warning: Number formatting does not take into account locale settings. Consider using String.format instead. [SetTextI18n]
+                text = items.size.toString()
+                       ~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2820: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                text = "You're all caught up"
+                        ~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:2993: Warning: Number formatting does not take into account locale settings. Consider using String.format instead. [SetTextI18n]
+        row.addView(spaced(text(12f, white55, true).apply { text = group.size.toString() }, 6), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                                                                   ~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3005: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        pill.addView(text(12f, Color.WHITE, true).apply { text = "Show less" })
+                                                                  ~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3029: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+            text = "+${group.size - 1}"
+                   ~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3096: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        meta.addView(spaced(text(11.5f, white55, false).apply { text = "·  $ago" }, 6), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                                                                       ~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3349: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                    timerEnds?.text = "Ends at " + DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a", Date(t.anchor))
+                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3349: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                    timerEnds?.text = "Ends at " + DateFormat.format(if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a", Date(t.anchor))
+                                       ~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3351: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                    timerEnds?.text = "Paused"
+                                       ~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/IslandView.kt:3364: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+        bt.text = "$pct%"
+                  ~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1518: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                    v.text = "${p + min}$unit"
+                             ~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/MainActivity.kt:1518: Warning: Do not concatenate text displayed with setText. Use resource string with placeholders. [SetTextI18n]
+                    v.text = "${p + min}$unit"
+                                ~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/NotificationActivity.kt:517: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                                status.text = "Sent ✓"
+                                               ~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/WallsActivity.kt:225: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+        if (items.isEmpty()) status.text = "Loading…"
+                                            ~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/WallsActivity.kt:251: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                    if (items.isEmpty()) status.text = "Couldn't load wallpapers. Check your connection and try again."
+                                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/WallsActivity.kt:413: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                    state.text = "Couldn't get this one. Try another."
+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/WallsActivity.kt:426: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+            state.text = "Setting…"
+                          ~~~~~~~~
+/home/runner/work/halo/halo/app/src/main/java/com/lonerxone/halo/WallsActivity.kt:442: Warning: String literal in setText can not be translated. Use Android resources instead. [SetTextI18n]
+                        state.text = "Couldn't save it. Try again."
+                                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "SetTextI18n":
+   When calling TextView#setText
+   * Never call Number#toString() to format numbers; it will not handle
+   fraction separators and locale-specific digits properly. Consider using
+   String#format with proper format specifications (%d or %f) instead.
+   * Do not pass a string literal (e.g. "Hello") to display text. Hardcoded
+   text can not be properly translated to other languages. Consider using
+   Android resource strings instead.
+   * Do not build messages by concatenating text chunks. Such messages can not
+   be properly translated.
+
+   https://developer.android.com/guide/topics/resources/localization.html
+
+1 errors, 43 warnings
