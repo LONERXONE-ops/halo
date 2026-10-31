@@ -2617,7 +2617,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         col.addView(chipScroll)
 
-        val list = LinearLayout(context).apply {
+        // Cards fade out at the sides as you swipe them away, instead of being cut off by the island's edge.
+        val list = EdgeFadeLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(4), dp(12), dp(14))
         }
@@ -2882,7 +2883,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val raw = item.accent
         val hasAccent = raw != 0 && raw != Color.BLACK && raw != Color.WHITE
         val accent = if (hasAccent) raw else Colors.INK
-        val cardView = LinearLayout(context).apply {
+        val cardView = SwipeCard(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(15), dp(12), dp(15), dp(13))
             val glow = GradientDrawable().apply {
@@ -2967,32 +2968,40 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * follows the finger 1:1, flies off in ~0.1 s and the cards below close
      * the gap smoothly instead of jumping.
      */
+    /**
+     * Swipe a card sideways to clear it. Works from anywhere on the card,
+     * even over its avatar, text or reply bar (the card takes the touch over
+     * as soon as it's clearly sideways), while a tap still opens it and an
+     * up-and-down drag still scrolls the list.
+     */
     private fun swipeToDismiss(view: View, move: View = view, onDismiss: () -> Unit) {
         val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
         var downX = 0f
         var downY = 0f
         var dragging = false
         var tracker: android.view.VelocityTracker? = null
-        view.setOnTouchListener { v, e ->
-            tracker?.addMovement(e)
+        val handle: (MotionEvent, Boolean) -> Boolean = { e, direct ->
+            val v = view
+            if (e.actionMasked != MotionEvent.ACTION_DOWN) tracker?.addMovement(e)
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = e.rawX
                     downY = e.rawY
                     dragging = false
-                    v.isPressed = true
+                    if (direct) v.isPressed = true
                     move.animate().cancel()
                     // A touch during the entrance shouldn't freeze it half-faded.
                     move.alpha = 1f
                     move.translationY = 0f
-                    move.animate().scaleX(0.97f).scaleY(0.97f).setDuration(110L).setInterpolator(DecelerateInterpolator()).start()
+                    move.animate().scaleX(0.975f).scaleY(0.975f).setDuration(110L).setInterpolator(DecelerateInterpolator()).start()
                     tracker?.recycle()
                     tracker = android.view.VelocityTracker.obtain().also { it.addMovement(e) }
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
-                    if (!dragging && abs(dx) > slop * 0.8f && abs(dx) > abs(dy) * 1.1f) {
+                    // Sideways wins early (a little sideways is enough), up and down scrolls.
+                    if (!dragging && abs(dx) > slop * 0.6f && abs(dx) > abs(dy) * 0.9f) {
                         dragging = true
                         v.isPressed = false
                         move.animate().scaleX(1f).scaleY(1f).setDuration(160L).start()
@@ -3000,8 +3009,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     }
                     if (dragging) {
                         move.translationX = dx
-                        move.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1) * 0.9f).coerceIn(0.15f, 1f)
-                        move.rotation = dx / v.width.coerceAtLeast(1) * 3f
+                        move.alpha = (1f - abs(dx) / v.width.coerceAtLeast(1) * 0.8f).coerceIn(0.2f, 1f)
+                        move.rotation = dx / v.width.coerceAtLeast(1) * 2.5f
                     } else if (abs(dy) > slop) {
                         v.isPressed = false
                     }
@@ -3013,14 +3022,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     val vx = tracker?.xVelocity ?: 0f
                     tracker?.recycle()
                     tracker = null
-                    val flick = abs(vx) > 700f && Math.signum(vx) == Math.signum(dx)
-                    if (dragging && (abs(dx) > v.width * 0.22f || flick)) {
+                    val flick = abs(vx) > 600f && Math.signum(vx) == Math.signum(dx)
+                    if (dragging && (abs(dx) > v.width * 0.2f || flick)) {
                         haptic()
                         val dir = if ((if (flick) vx else dx) > 0) 1f else -1f
                         val left = v.width - abs(dx)
-                        val ms = (if (flick) (left / abs(vx) * 1000f) else 110f).toLong().coerceIn(70L, 140L)
+                        val ms = (if (flick) (left / abs(vx) * 1000f) else 140f).toLong().coerceIn(90L, 170L)
                         move.animate().translationX(dir * v.width * 1.1f).alpha(0f).setDuration(ms)
-                            .setInterpolator(android.view.animation.LinearInterpolator())
+                            .setInterpolator(android.view.animation.DecelerateInterpolator(1.2f))
                             .withEndAction { collapse(move, onDismiss) }.start()
                     } else if (dragging) {
                         move.animate().translationX(0f).alpha(1f).rotation(0f).scaleX(1f).scaleY(1f).setDuration(420L)
@@ -3028,7 +3037,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     } else {
                         move.animate().scaleX(1f).scaleY(1f).setDuration(360L)
                             .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
-                        if (abs(e.rawY - downY) < slop) v.performClick()
+                        // A tap on the card itself opens it (a tap on a button inside is that button's).
+                        if (direct && abs(e.rawY - downY) < slop && abs(dx) < slop) v.performClick()
                     }
                     dragging = false
                 }
@@ -3041,7 +3051,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     tracker = null
                 }
             }
-            true
+            dragging
+        }
+        if (view is SwipeCard) {
+            view.swipe = handle
+        } else {
+            view.setOnTouchListener { _, e ->
+                handle(e, true)
+                true
+            }
         }
     }
 
@@ -3590,5 +3608,62 @@ class PileLayout(context: Context, private val behind: Int, private val step: In
             c.layout(x, y, x + c.measuredWidth, y + c.measuredHeight)
         }
         front.layout(0, 0, front.measuredWidth, front.measuredHeight)
+    }
+}
+
+
+/**
+ * A notification card that can be swiped from anywhere on it: it watches
+ * touches that start on its avatar, text or buttons too, and takes over
+ * once the finger clearly moves sideways.
+ */
+class SwipeCard(context: Context) : LinearLayout(context) {
+    /** Gets every touch; returns true while it's a sideways swipe. The flag: the touch is the card's own (not a child's). */
+    var swipe: ((MotionEvent, Boolean) -> Boolean)? = null
+
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        val h = swipe ?: return false
+        return h(e, false)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        val h = swipe ?: return super.onTouchEvent(e)
+        h(e, true)
+        return true
+    }
+}
+
+/**
+ * The notification list. While a card is being swiped (or is flying off),
+ * its left and right edges fade to nothing, so the card dissolves at the
+ * sides instead of being sliced off by the island's edge.
+ */
+class EdgeFadeLayout(context: Context) : LinearLayout(context) {
+    private val fade = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT) }
+    private var shaderW = -1
+    private var left: Shader? = null
+    private var right: Shader? = null
+
+    /** Only a card that's moving sideways gets the fade; the others are drawn as they are. */
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        if (child.translationX == 0f || width == 0) return super.drawChild(canvas, child, drawingTime)
+        val fw = 40f * resources.displayMetrics.density
+        if (shaderW != width) {
+            shaderW = width
+            left = LinearGradient(0f, 0f, fw, 0f, Color.BLACK, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+            right = LinearGradient(width - fw, 0f, width.toFloat(), 0f, Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP)
+        }
+        val pad = 12f * resources.displayMetrics.density
+        val t = child.top - pad
+        val b = child.bottom + pad
+        val save = canvas.saveLayer(0f, t, width.toFloat(), b, null)
+        val r = super.drawChild(canvas, child, drawingTime)
+        fade.shader = left
+        canvas.drawRect(0f, t, fw, b, fade)
+        fade.shader = right
+        canvas.drawRect(width - fw, t, width.toFloat(), b, fade)
+        canvas.restoreToCount(save)
+        return r
     }
 }
