@@ -760,7 +760,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Snappier and bouncier: a quick lively overshoot opening, and a
         // small settle-bounce closing too, so nothing ever feels stiff.
         k = if (scale <= 0f) 540f else 540f / (scale * scale)
-        zeta = if (grow) 0.62f else 0.78f
+        zeta = if (grow) 0.5f else 0.66f
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
         if (springs[10].value == 0f) springs[10].snap(notchCx())
@@ -945,6 +945,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     private fun drawShine(canvas: Canvas, r: Float, amount: Float) {
+        // The new Liquid Glass light (Android 13+), the same as the launcher's.
+        if (GlassRim.draw(canvas, rect, r, min(dpf(18f), rect.height() * 0.3f), amount * (1f + 0.4f * pressGlow), pressGlow, touchX, touchY)) return
         val al = (255 * amount).toInt().coerceIn(0, 255)
         shineMatrix.reset()
         shineMatrix.setScale(1f, rect.height())
@@ -2749,7 +2751,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * the stack to fan them out.
      */
     private fun stackedCard(pkg: String, group: List<PanelItem>): View {
-        val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        // The cards behind are whole cards tucked under the front one, a
+        // little narrower and lower each, so just their rounded bottoms peek
+        // out (like a real pile). They used to be flat strips added below the
+        // card, which looked detached from it.
+        val box = FrameLayout(context).apply { clipChildren = false }
         val front = panelCard(group.first()) as LinearLayout
         // "+N more" goes in the header (where the arrow was), so the stack
         // doesn't grow an extra row of empty space.
@@ -2764,21 +2770,21 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 cornerRadius = dpf(10f)
             }
         })
-        front.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        box.addView(front)
-        // The cards behind peek out underneath as two slim, narrower edges.
         val behind = minOf(group.size - 1, 2)
-        for (i in 1..behind) {
+        val step = dp(7)
+        for (i in behind downTo 1) {
             box.addView(View(context).apply {
-                background = GradientDrawable().apply {
-                    setColor(tint(Color.argb(if (i == 1) 215 else 160, 34, 34, 37), group.first().accent, 0.12f))
-                    cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, dpf(14f), dpf(14f), dpf(14f), dpf(14f))
-                }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)).apply {
-                marginStart = dp(14 * i)
-                marginEnd = dp(14 * i)
+                background = ShineDrawable(tint(Color.argb(if (i == 1) 225 else 175, 30, 30, 33), group.first().accent, 0.10f), dpf(24f), dpf(1f))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                marginStart = dp(12 * i)
+                marginEnd = dp(12 * i)
+                topMargin = step * i
+                bottomMargin = step * (behind - i)
             })
         }
+        box.addView(front, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = step * behind
+        })
         // Tap anywhere on the stack to fan it out.
         front.setOnClickListener { toggleGroup(pkg, open = true) }
         box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
@@ -3180,15 +3186,26 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     })
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        // Open cards light up under your finger (the glass glow follows it).
+        val lit = mode != Mode.IDLE && mode != Mode.HIDDEN
+        if (lit) {
+            touchX = ev.x
+            touchY = ev.y
+        }
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 pillRect(v(0), v(1), v(6), rect)
                 pivotX = rect.centerX()
                 pivotY = rect.centerY()
-                if (mode == Mode.COMPACT || mode == Mode.IDLE) animate().scaleX(0.96f).scaleY(0.96f).setDuration(80L).start()
+                // A squeeze, then a springy release (bigger cards give a little less).
+                val sq = if (mode == Mode.COMPACT || mode == Mode.IDLE) 0.95f else 0.985f
+                animate().scaleX(sq).scaleY(sq).setDuration(90L).setInterpolator(DecelerateInterpolator(2f)).start()
+                if (lit) glowTo(1f)
             }
+            MotionEvent.ACTION_MOVE -> if (lit && pressGlow > 0f) invalidate()
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                animate().scaleX(1f).scaleY(1f).setDuration(180L).start()
+                animate().scaleX(1f).scaleY(1f).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                if (pressGlow > 0f || lit) glowTo(0f)
             }
         }
         lastTouch = SystemClock.uptimeMillis()
@@ -3366,6 +3383,24 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     @SuppressLint("ClickableViewAccessibility")
+    // The glass lights up under your finger while you touch the open island.
+    private var pressGlow = 0f
+    private var touchX = 0f
+    private var touchY = 0f
+    private var glowAnim: android.animation.ValueAnimator? = null
+
+    private fun glowTo(target: Float) {
+        glowAnim?.cancel()
+        glowAnim = android.animation.ValueAnimator.ofFloat(pressGlow, target).apply {
+            duration = if (target > 0f) 140L else 380L
+            addUpdateListener {
+                pressGlow = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (noteSwiping) {
             noteSwipe(event)
@@ -3411,6 +3446,8 @@ class ShineDrawable(private val fill: Int, private val radius: Float, private va
         r.set(bounds)
         p.color = fill
         c.drawRoundRect(r, radius, radius, p)
+        // The new Liquid Glass light (Android 13+); the old sheen and rim otherwise.
+        if (GlassRim.draw(c, r, radius, minOf(radius * 0.75f, r.height() * 0.3f), 1f)) return
         c.drawRoundRect(r, radius, radius, sheen)
         r.inset(stroke / 2f, stroke / 2f)
         c.drawRoundRect(r, radius - stroke / 2f, radius - stroke / 2f, rim)
