@@ -239,7 +239,7 @@ class StatusBarController(private val svc: HaloService) {
             svc.getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(net)
         } catch (_: Exception) {
         }
-        for ((tm, cb) in telCallbacks) {
+        if (Build.VERSION.SDK_INT >= 31) for ((tm, cb) in telCallbacks) {
             try {
                 tm.unregisterTelephonyCallback(cb)
             } catch (_: Exception) {
@@ -264,7 +264,7 @@ class StatusBarController(private val svc: HaloService) {
     private fun readBluetooth() {
         StatusData.bluetooth = try {
             val a: BluetoothAdapter? = svc.getSystemService(BluetoothManager::class.java)?.adapter
-            a != null && a.isEnabled && listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET).any { a.getProfileConnectionState(it) == BluetoothProfile.STATE_CONNECTED }
+            a != null && a.isEnabled && listOf(BluetoothProfile.A2DP, BluetoothProfile.HEADSET).any { a.getProfileConnectionState(it) == BluetoothAdapter.STATE_CONNECTED }
         } catch (_: Throwable) {
             false
         }
