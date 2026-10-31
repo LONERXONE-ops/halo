@@ -242,6 +242,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
             "queue_play" -> arg?.toLongOrNull()?.let { tc?.skipToQueueItem(it) }
             // Halo Launcher's lock screen switched on or off in its settings.
             "lockscreen" -> Prefs.get(this).edit().putBoolean(Prefs.LOCKSCREEN, arg == "1").apply()
+            "dismiss_notif" -> if (arg != null) dismissNotification(arg)
             // The lock screen asks to unlock and then open a notification.
             "torch" -> try {
                 val cm = getSystemService(android.hardware.camera2.CameraManager::class.java)
