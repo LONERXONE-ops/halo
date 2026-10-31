@@ -2755,7 +2755,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // little narrower and lower each, so just their rounded bottoms peek
         // out (like a real pile). They used to be flat strips added below the
         // card, which looked detached from it.
-        val box = FrameLayout(context).apply { clipChildren = false }
+        val behind = minOf(group.size - 1, 2)
+        val box = PileLayout(context, behind, dp(7), dp(12))
         val front = panelCard(group.first()) as LinearLayout
         // "+N more" goes in the header (where the arrow was), so the stack
         // doesn't grow an extra row of empty space.
@@ -2770,21 +2771,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 cornerRadius = dpf(10f)
             }
         })
-        val behind = minOf(group.size - 1, 2)
-        val step = dp(7)
+        // Furthest card first (drawn underneath), then the nearer one, then the front.
         for (i in behind downTo 1) {
             box.addView(View(context).apply {
                 background = ShineDrawable(tint(Color.argb(if (i == 1) 225 else 175, 30, 30, 33), group.first().accent, 0.10f), dpf(24f), dpf(1f))
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                marginStart = dp(12 * i)
-                marginEnd = dp(12 * i)
-                topMargin = step * i
-                bottomMargin = step * (behind - i)
             })
         }
-        box.addView(front, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = step * behind
-        })
+        front.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        box.addView(front)
         // Tap anywhere on the stack to fan it out.
         front.setOnClickListener { toggleGroup(pkg, open = true) }
         box.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
@@ -3469,3 +3463,49 @@ class ShineDrawable(private val fill: Int, private val radius: Float, private va
 
 /** Marks the island's content holders (clipped to its live shape). */
 private const val SLOT_TAG = "island_slot"
+
+
+/**
+ * A pile of notification cards: the last child is the front card; the
+ * others are the cards behind it, each exactly as tall as the front one,
+ * [inset] narrower per step and [step] lower, so only their rounded bottoms
+ * peek out. Laid out by hand so the cards behind can never take more (or
+ * less) room than the front card, whatever is measuring the list.
+ */
+@SuppressLint("ViewConstructor")
+class PileLayout(context: Context, private val behind: Int, private val step: Int, private val inset: Int) : ViewGroup(context) {
+    init {
+        clipChildren = false
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val w = MeasureSpec.getSize(widthMeasureSpec)
+        val front = getChildAt(childCount - 1)
+        if (front == null) {
+            setMeasuredDimension(w, 0)
+            return
+        }
+        front.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        val fh = front.measuredHeight
+        for (i in 0 until childCount - 1) {
+            val depth = behind - i
+            getChildAt(i).measure(
+                MeasureSpec.makeMeasureSpec((w - 2 * inset * depth).coerceAtLeast(0), MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(fh, MeasureSpec.EXACTLY),
+            )
+        }
+        setMeasuredDimension(w, fh + step * behind)
+    }
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        val front = getChildAt(childCount - 1) ?: return
+        for (i in 0 until childCount - 1) {
+            val depth = behind - i
+            val c = getChildAt(i)
+            val x = inset * depth
+            val y = step * depth
+            c.layout(x, y, x + c.measuredWidth, y + c.measuredHeight)
+        }
+        front.layout(0, 0, front.measuredWidth, front.measuredHeight)
+    }
+}
