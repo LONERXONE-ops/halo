@@ -68,7 +68,6 @@ class HaloService : AccessibilityService(), IslandView.Host {
                 Intent.ACTION_POWER_CONNECTED -> onCharging()
                 Intent.ACTION_SCREEN_OFF -> {
                     setLocked(true)
-                    showLockScreen()
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     UpdateWatch.maybeCheck(this@HaloService)
@@ -240,7 +239,6 @@ class HaloService : AccessibilityService(), IslandView.Host {
             }
             "queue_play" -> arg?.toLongOrNull()?.let { tc?.skipToQueueItem(it) }
             // Halo Launcher's lock screen switched on or off in its settings.
-            "lockscreen" -> Prefs.get(this).edit().putBoolean(Prefs.LOCKSCREEN, arg == "1").apply()
             "dismiss_notif" -> if (arg != null) dismissNotification(arg)
             // The lock screen asks to unlock and then open a notification.
             "torch" -> try {
@@ -384,22 +382,6 @@ class HaloService : AccessibilityService(), IslandView.Host {
         if (changed) push()
     }
 
-
-    /**
-     * Halo Launcher's lock screen: put up the moment the screen goes off, so
-     * it's already there when you wake the phone (no flash of the stock one).
-     */
-    private fun showLockScreen() {
-        if (!Prefs.get(this).getBoolean(Prefs.LOCKSCREEN, false)) return
-        if (IslandStore.call != null || !LauncherLink.launcherInstalled(this)) return
-        try {
-            startActivity(
-                Intent().setClassName(LauncherLink.LAUNCHER, LauncherLink.LAUNCHER + ".LockActivity")
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            )
-        } catch (_: Exception) {
-        }
-    }
 
     override fun onInterrupt() {}
 

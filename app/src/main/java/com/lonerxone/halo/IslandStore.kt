@@ -483,8 +483,6 @@ object Prefs {
     /** Show the island on the lock screen (a padlock that opens when you unlock). */
     const val LOCK_MODE = "lock_mode"
 
-    /** Halo Launcher's lock screen is on (set from Halo Launcher's settings). */
-    const val LOCKSCREEN = "lockscreen"
     /** Show screen recordings (Halo's and other apps') on the island. */
     const val RECORDING = "recording"
     /** Sound in Halo's screen recordings: "device" (what the phone plays), "mic", or "none". */
