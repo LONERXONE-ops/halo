@@ -71,6 +71,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     showLockScreen()
                 }
                 Intent.ACTION_SCREEN_ON -> {
+                    UpdateWatch.maybeCheck(this@HaloService)
                     ensureListener()
                     watchCalls()
                     // Screen wakes on the lock screen: the padlock drops in and clicks shut.

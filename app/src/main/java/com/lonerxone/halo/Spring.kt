@@ -32,6 +32,11 @@ class Spring(var value: Float = 0f, private val rest: Float = 0.5f) {
         damping = zeta
     }
 
+    /** Adds a push (px/s) without moving the target: a jelly wobble that settles back. */
+    fun kick(dv: Float) {
+        velocity += dv
+    }
+
     fun snap(v: Float) {
         value = v
         target = v

@@ -137,6 +137,8 @@ data class CallInfo(
     val contentIntent: PendingIntent?,
     val answer: PendingIntent?,
     val hangUp: PendingIntent?,
+    /** Calling out and not answered yet (no timer until it connects). */
+    val connecting: Boolean = false,
     /** The calling app (Phone, WhatsApp…) and its name. */
     val app: String = "",
     val appName: String = "Phone",
@@ -316,18 +318,31 @@ object IslandStore {
         dispatch()
     }
 
+    /**
+     * The timer only runs once the call is really connected. While you're
+     * calling out ("Calling…", "Ringing…", "Dialling…") there's no clock;
+     * the moment it connects it starts from zero, then never restarts while
+     * the notification updates. (It used to start when you began dialling,
+     * so it ran ahead of the call by however long it rang.)
+     */
     private fun reconcile(new: CallInfo?, old: CallInfo?): CallInfo? {
         new ?: return null
         var c = new
         if (c.ringing && phoneState == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK && isDialer(c.app)) {
             c = c.copy(ringing = false, answer = null)
         }
+        if (c.connecting) return c.copy(startedAt = 0L)
         if (!c.ringing) {
-            val keep = old?.takeIf { it.key == c.key && !it.ringing && it.startedAt > 0L }?.startedAt
+            val same = old?.takeIf { it.key == c.key }
+            val keep = same?.takeIf { !it.ringing && !it.connecting && it.startedAt > 0L }?.startedAt
+            val now = System.currentTimeMillis()
             c = when {
-                c.startedAt > 0L -> c
                 keep != null -> c.copy(startedAt = keep)
-                else -> c.copy(startedAt = System.currentTimeMillis())
+                // Just connected (it was ringing or calling out a moment ago): from zero.
+                same != null -> c.copy(startedAt = now)
+                // Halo started mid-call: the app's own start time if it gives one.
+                c.startedAt in 1..now -> c
+                else -> c.copy(startedAt = now)
             }
         }
         return c
@@ -498,6 +513,10 @@ object Prefs {
     const val SB_COLOR = "sb_color"
     /** 0 Small, 1 Normal, 2 Large. */
     const val SB_SIZE = "sb_size"
+    /** Adaptive colour (takes the colour of the app under it): 0 Off, 1 Smooth, 2 Saver. */
+    const val SB_ADAPT = "sb_adapt"
+    /** 0 iOS (each side centred beside the camera), 1 One UI (at the edges). */
+    const val SB_ALIGN = "sb_align"
     /** Halo Launcher's lock screen is on (set from Halo Launcher's settings). */
     const val LOCKSCREEN = "lockscreen"
     /** Show screen recordings (Halo's and other apps') on the island. */

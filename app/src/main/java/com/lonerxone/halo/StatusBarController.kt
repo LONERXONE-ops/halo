@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.media.AudioManager
 import android.net.ConnectivityManager
@@ -109,10 +110,14 @@ class StatusBarController(private val svc: HaloService) {
         if (want) startWatching() else stopWatching()
         v.clear = clear && Prefs.get(svc).getInt(Prefs.SB_BG, 0) == 2
         if (want == shown) {
-            if (want) v.invalidate()
+            if (want) {
+                v.invalidate()
+                startSampling()
+            }
             return
         }
         shown = want
+        if (want) startSampling()
         v.animate().cancel()
         if (want) {
             v.visibility = android.view.View.VISIBLE
@@ -126,6 +131,80 @@ class StatusBarController(private val svc: HaloService) {
 
     fun refresh() {
         view?.invalidate()
+        if (shown) startSampling()
+    }
+
+    // ----- Adaptive colour -----
+
+    /**
+     * Looks at one thin strip just under the bar (where the app's own top
+     * starts) a few times a second, and the bar takes that colour, glass
+     * on top. Videos and games change it as they play. Nothing is kept.
+     * Secure screens (banking apps) can't be looked at: the bar stays as it was.
+     */
+    private var sampling = false
+    private val sample = object : Runnable {
+        override fun run() {
+            val v = view
+            val mode = Prefs.get(svc).getInt(Prefs.SB_ADAPT, 1)
+            if (!shown || v == null || mode == 0 || v.clear) {
+                sampling = false
+                v?.setAdaptive(null)
+                return
+            }
+            try {
+                svc.takeScreenshot(android.view.Display.DEFAULT_DISPLAY, svc.mainExecutor, object : android.accessibilityservice.AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(r: android.accessibilityservice.AccessibilityService.ScreenshotResult) {
+                        val buf = r.hardwareBuffer
+                        try {
+                            val hw = Bitmap.wrapHardwareBuffer(buf, r.colorSpace)
+                            if (hw != null) {
+                                val barH = v.height.coerceAtLeast(1)
+                                val y = (barH + 3 * svc.resources.displayMetrics.density).toInt().coerceAtMost(hw.height - 2)
+                                val strip = Bitmap.createBitmap(hw, 0, y, hw.width, 2).copy(Bitmap.Config.ARGB_8888, false)
+                                v.setAdaptive(average(strip, hw.width))
+                                strip.recycle()
+                                hw.recycle()
+                            }
+                        } catch (_: Throwable) {
+                        } finally {
+                            buf.close()
+                        }
+                    }
+
+                    override fun onFailure(code: Int) {}
+                })
+            } catch (_: Throwable) {
+            }
+            main.postDelayed(this, if (mode == 2) 1500L else 420L)
+        }
+    }
+
+    /** The strip's colour: the sides (the middle may hold the island), most common shade winning. */
+    private fun average(b: Bitmap, w: Int): Int {
+        var r = 0L
+        var g = 0L
+        var bl = 0L
+        var n = 0
+        val px = IntArray(w)
+        b.getPixels(px, 0, w, 0, 0, w, 1)
+        for (x in 0 until w step 4) {
+            val rel = x / w.toFloat()
+            if (rel in 0.34f..0.66f) continue
+            val p = px[x]
+            r += android.graphics.Color.red(p)
+            g += android.graphics.Color.green(p)
+            bl += android.graphics.Color.blue(p)
+            n++
+        }
+        if (n == 0) return android.graphics.Color.BLACK
+        return android.graphics.Color.rgb((r / n).toInt(), (g / n).toInt(), (bl / n).toInt())
+    }
+
+    private fun startSampling() {
+        if (sampling) return
+        sampling = true
+        main.post(sample)
     }
 
     // ----- Notification icons -----

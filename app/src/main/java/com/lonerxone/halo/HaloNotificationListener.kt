@@ -365,6 +365,11 @@ class HaloNotificationListener : NotificationListenerService() {
         val ringing = !ex.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER, false) && !(inCall && !hasAnswer) &&
             (hasAnswer || n.fullScreenIntent != null || detail.contains("incoming", true))
 
+        // Calling out and not picked up yet: "Calling…", "Ringing…", "Dialling…"
+        // (WhatsApp, Telegram, the phone app), as opposed to "Ongoing call".
+        val connecting = !ringing && Regex("calling|ringing|connecting|dialing|dialling|outgoing|reconnecting|waiting for", RegexOption.IGNORE_CASE).containsMatchIn(detail) &&
+            !Regex("ongoing|in call|on call|connected", RegexOption.IGNORE_CASE).containsMatchIn(detail)
+
         var answer: android.app.PendingIntent? = null
         var hangUp: android.app.PendingIntent? = null
         val extras = ArrayList<Pair<String, android.app.PendingIntent>>()
@@ -396,7 +401,8 @@ class HaloNotificationListener : NotificationListenerService() {
                 name = name.ifEmpty { "Call" },
                 detail = detail,
                 ringing = ringing,
-                startedAt = if (!ringing && chrono) n.`when` else 0L,
+                startedAt = if (!ringing && !connecting && chrono) n.`when` else 0L,
+                connecting = connecting,
                 avatar = avatar,
                 contentIntent = n.contentIntent,
                 answer = answer,

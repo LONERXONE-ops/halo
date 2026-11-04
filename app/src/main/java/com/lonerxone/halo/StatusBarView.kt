@@ -110,6 +110,51 @@ class StatusBarView(context: Context) : View(context) {
 
     private fun prefs() = Prefs.get(context)
 
+    /** Measuring pass (iOS alignment): nothing is drawn. */
+    private var dry = false
+    /** How far the side being drawn is shifted (for the island check). */
+    private var shift = 0f
+    /** The camera's centre across the screen (set by the service). */
+    var cameraX = 0f
+    /** The colour behind the icons right now (to ring the notification icons with). */
+    private var bgNow = Color.BLACK
+
+    // Adaptive colour: where it's heading, and where it is now (eased).
+    private var adaptiveTarget: Int? = null
+    private var adaptiveNow: Int? = null
+
+    /** The app's colour under the bar, or null for the plain background. */
+    fun setAdaptive(col: Int?) {
+        if (col == adaptiveTarget) return
+        adaptiveTarget = col
+        if (col == null) adaptiveNow = null
+        invalidate()
+    }
+
+    private fun mix(a: Int, b: Int, f: Float) = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+    )
+
+    private fun dist(a: Int, b: Int) = kotlin.math.abs(Color.red(a) - Color.red(b)) + kotlin.math.abs(Color.green(a) - Color.green(b)) + kotlin.math.abs(Color.blue(a) - Color.blue(b))
+
+    private fun lum(c: Int) = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f
+
+    private val sheen = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var sheenFor = -1
+
+    /** Liquid Glass light over the colour: a soft lift at the top, a hairline at the bottom. */
+    private fun drawGlass(c: Canvas, w: Float, h: Float, col: Int) {
+        if (sheenFor != height) {
+            sheenFor = height
+            sheen.shader = android.graphics.LinearGradient(0f, 0f, 0f, h, intArrayOf(Color.argb(34, 255, 255, 255), Color.argb(8, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(18, 0, 0, 0)), floatArrayOf(0f, 0.35f, 0.7f, 1f), Shader.TileMode.CLAMP)
+        }
+        c.drawRect(0f, 0f, w, h, sheen)
+        fill.color = if (lum(col) > 0.6f) Color.argb(26, 0, 0, 0) else Color.argb(30, 255, 255, 255)
+        c.drawRect(0f, h - dp(0.8f), w, h, fill)
+    }
+
     override fun onDraw(c: Canvas) {
         val p = prefs()
         val now = SystemClock.uptimeMillis()
@@ -120,19 +165,83 @@ class StatusBarView(context: Context) : View(context) {
         val w = width.toFloat()
         val size = p.getInt(Prefs.SB_SIZE, 1)
         val k = listOf(0.88f, 1f, 1.12f)[size.coerceIn(0, 2)]
-        val ink = COLOURS[p.getInt(Prefs.SB_COLOR, 0).coerceIn(0, COLOURS.size - 1)]
-        if (!clear) c.drawColor(when (p.getInt(Prefs.SB_BG, 0)) {
-            1 -> Color.rgb(22, 22, 25)
-            else -> Color.BLACK
-        })
+        var ink = COLOURS[p.getInt(Prefs.SB_COLOR, 0).coerceIn(0, COLOURS.size - 1)]
+        if (!clear) {
+            val tgt = adaptiveTarget
+            if (tgt != null) {
+                // Adaptive: the app's colour, eased in, with Liquid Glass light on top.
+                val cur = adaptiveNow ?: tgt
+                val f = (1f - Math.exp((-9f * dt).toDouble()).toFloat())
+                val next = mix(cur, tgt, f)
+                adaptiveNow = if (dist(next, tgt) < 3) tgt else next.also { moving = true }
+                val col = adaptiveNow ?: tgt
+                c.drawColor(Color.BLACK)
+                c.drawColor(col)
+                drawGlass(c, w, h, col)
+                // Dark icons on light colours (like a white app), light ones otherwise.
+                if (lum(col) > 0.6f) ink = Color.rgb(18, 18, 20)
+                bgNow = col
+            } else {
+                bgNow = when (p.getInt(Prefs.SB_BG, 0)) {
+                    1 -> Color.rgb(22, 22, 25)
+                    else -> Color.BLACK
+                }
+                c.drawColor(bgNow)
+            }
+        } else {
+            bgNow = Color.TRANSPARENT
+        }
         val cy = h / 2f + dp(1f)
         val full = p.getInt(Prefs.SB_LAYOUT, 0) == 1
         // Keep clear of rounded screen corners.
         val padL = dp(26f)
         val padR = dp(24f)
+        val ios = p.getInt(Prefs.SB_ALIGN, 0) == 0
+        if (cameraX <= 0f) {
+            // Where the punch-hole is (centre of the top cutout), if the phone has one.
+            val r = rootWindowInsets?.displayCutout?.boundingRects?.firstOrNull { it.top <= 0 && it.width() < width / 2 }
+            if (r != null) cameraX = r.exactCenterX()
+        }
+        // iOS: each side sits centred in the space beside the camera; One UI: at the edges.
+        val camL = (if (cameraX > 0f) cameraX else w / 2f) - dp(22f)
+        val camR = (if (cameraX > 0f) cameraX else w / 2f) + dp(22f)
+        var offL = 0f
+        var offR = 0f
+        if (ios) {
+            dry = true
+            val le = drawLeft(c, padL, p, k, ink, cy, full, dt)
+            val rs = drawRight(c, w - padR, p, k, ink, cy, full, dt, now)
+            dry = false
+            offL = (((camL - padL) - (le - padL)) / 2f).coerceAtLeast(0f)
+            offR = -(((w - padR - camR) - (w - padR - rs)) / 2f).coerceAtLeast(0f)
+        }
+        shift = offL
+        c.save()
+        c.translate(offL, 0f)
+        drawLeft(c, padL, p, k, ink, cy, full, dt)
+        c.restore()
+        shift = offR
+        c.save()
+        c.translate(offR, 0f)
+        val chargingNow = drawRightAndCharging(c, w - padR, p, k, ink, cy, full, dt, now)
+        c.restore()
+        shift = 0f
 
+        // Keep animating only while something moves.
+        val chargeAnim = chargingNow && p.getInt(Prefs.SB_CHARGE, 0) != 3
+        if (moving || chargeAnim || now - burstAt < 1400L) postInvalidateOnAnimation() else lastFrame = 0L
+    }
+
+
+    private fun drawRightAndCharging(c: Canvas, x0: Float, p: android.content.SharedPreferences, k: Float, ink: Int, cy: Float, full: Boolean, dt: Float, now: Long): Boolean {
+        drawRight(c, x0, p, k, ink, cy, full, dt, now)
+        return if (preview) true else StatusData.charging
+    }
+
+    /** The left side (time, notification icons) from [x0]; returns where it ends. */
+    private fun drawLeft(c: Canvas, x0: Float, p: android.content.SharedPreferences, k: Float, ink: Int, cy: Float, full: Boolean, dt: Float): Float {
         // ----- Left: the time, then notification icons -----
-        var x = padL
+        var x = x0
         text.color = ink
         text.textSize = dp(14.5f) * k
         text.typeface = when (p.getInt(Prefs.SB_TIME, 0)) {
@@ -166,7 +275,7 @@ class StatusBarView(context: Context) : View(context) {
                     item(c, "notifs", x, x + width, dt) { a ->
                         for (i in shown - 1 downTo 0) {
                             val ix = x + step * i + s / 2f
-                            fill.color = if (clear) Color.argb((140 * a).toInt(), 0, 0, 0) else Color.BLACK
+                            fill.color = if (clear) Color.argb((140 * a).toInt(), 0, 0, 0) else bgNow
                             c.drawCircle(ix, cy, s / 2f + dp(1.3f), fill)
                             val bmp = StatusData.notifIcons.getOrNull(i)
                             if (bmp != null) {
@@ -216,8 +325,13 @@ class StatusBarView(context: Context) : View(context) {
             }
         }
 
+        return x - dp(6f)
+    }
+
+    /** The right side (battery, then leftwards) ending at [x0]; returns where it starts. */
+    private fun drawRight(c: Canvas, x0: Float, p: android.content.SharedPreferences, k: Float, ink: Int, cy: Float, full: Boolean, dt: Float, now: Long): Float {
         // ----- Right: battery, then Wi-Fi, signal, Bluetooth and the rest, leftwards -----
-        var rx = w - padR
+        var rx = x0
         val charging = if (preview) true else StatusData.charging
         val level = if (preview) 72 else StatusData.battery
         if (charging && !wasCharging) burstAt = now
@@ -278,9 +392,7 @@ class StatusBarView(context: Context) : View(context) {
             }
         }
 
-        // Keep animating only while something moves.
-        val chargeAnim = charging && p.getInt(Prefs.SB_CHARGE, 0) != 3
-        if (moving || chargeAnim || now - burstAt < 1400L) postInvalidateOnAnimation() else lastFrame = 0L
+        return rx + dp(5f)
     }
 
     /**
@@ -288,8 +400,9 @@ class StatusBarView(context: Context) : View(context) {
      * island reaches it, and back in when the island moves away.
      */
     private inline fun item(c: Canvas, id: String, left: Float, right: Float, dt: Float, draw: (Float) -> Unit) {
+        if (dry) return
         val margin = dp(7f)
-        val hit = islandOn && right > islandL - margin && left < islandR + margin
+        val hit = islandOn && right + shift > islandL - margin && left + shift < islandR + margin
         val target = if (hit) 0f else 1f
         var a = alphas[id] ?: target
         if (a != target) {

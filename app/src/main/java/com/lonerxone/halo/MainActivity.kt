@@ -65,8 +65,18 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
 
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onResume() {
         super.onResume()
+        // From the "new version" notification: straight to Updates.
+        if (intent?.getStringExtra("page") == "updates") {
+            intent?.removeExtra("page")
+            page = Page.UPDATES
+        }
         render()
         if (listenerOn() && !Debug.listenerConnected) {
             try {
@@ -648,6 +658,17 @@ class MainActivity : Activity() {
         if (!on) {
             stage.alpha = 0.45f
         }
+        // With Match the app on, the preview walks through a few app colours.
+        val demo = intArrayOf(Color.rgb(250, 250, 252), Color.rgb(18, 140, 126), Color.rgb(29, 185, 84), Color.rgb(24, 24, 28), Color.rgb(255, 0, 51), Color.rgb(36, 112, 220))
+        var step = 0
+        val cycle = object : Runnable {
+            override fun run() {
+                if (!bar.isAttachedToWindow) return
+                if (on && prefs.getInt(Prefs.SB_ADAPT, 1) != 0) bar.setAdaptive(demo[step++ % demo.size]) else bar.setAdaptive(null)
+                bar.postDelayed(this, 1600L)
+            }
+        }
+        bar.post(cycle)
         col.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         gap(col)
         // The switch: on shows everything below.
@@ -656,9 +677,58 @@ class MainActivity : Activity() {
             col.addView(footnote("Off: your phone's own status bar. Swiping down still opens your notifications either way."))
             return
         }
+        // Presets: one tap sets the whole look; everything below still fine tunes it.
+        col.addView(sectionTitle("Start from"))
+        val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        data class Preset(val name: String, val sub: String, val ints: Map<String, Int>, val bools: Map<String, Boolean>)
+        val list = listOf(
+            Preset("iOS", "Centred, calm", mapOf(Prefs.SB_LAYOUT to 0, Prefs.SB_ALIGN to 0, Prefs.SB_BATTERY to 0, Prefs.SB_TIME to 0, Prefs.SB_NOTIFS to 3, Prefs.SB_SIGNAL to 0, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_BATTERY_PCT to false, Prefs.SB_NETTYPE to false, Prefs.SB_SPEED to false, Prefs.SB_DATE to false)),
+            Preset("One UI", "Edges, icons", mapOf(Prefs.SB_LAYOUT to 1, Prefs.SB_ALIGN to 1, Prefs.SB_BATTERY to 1, Prefs.SB_TIME to 1, Prefs.SB_NOTIFS to 0, Prefs.SB_SIGNAL to 0, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_BATTERY_PCT to true, Prefs.SB_NETTYPE to true, Prefs.SB_SPEED to false)),
+            Preset("Minimal", "Time and battery", mapOf(Prefs.SB_LAYOUT to 0, Prefs.SB_ALIGN to 0, Prefs.SB_BATTERY to 4, Prefs.SB_TIME to 1, Prefs.SB_NOTIFS to 3, Prefs.SB_SIGNAL to 2, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_WIFI to false, Prefs.SB_BT to false, Prefs.SB_EXTRAS to false, Prefs.SB_NETTYPE to false, Prefs.SB_SPEED to false)),
+            Preset("Full", "Everything", mapOf(Prefs.SB_LAYOUT to 1, Prefs.SB_ALIGN to 1, Prefs.SB_BATTERY to 0, Prefs.SB_TIME to 0, Prefs.SB_NOTIFS to 0, Prefs.SB_SIGNAL to 0, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_WIFI to true, Prefs.SB_BT to true, Prefs.SB_EXTRAS to true, Prefs.SB_NETTYPE to true, Prefs.SB_SPEED to true, Prefs.SB_BATTERY_PCT to true, Prefs.SB_DUAL to true)),
+        )
+        list.forEachIndexed { i, pr ->
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                background = GradientDrawable().apply {
+                    setColor(Color.argb(20, 255, 255, 255))
+                    cornerRadius = dp(18).toFloat()
+                    setStroke(dp(1), cardStroke)
+                }
+                addView(label(pr.name, 15f, text1, true))
+                addView(label(pr.sub, 12f, text2, false))
+                setOnClickListener { v ->
+                    val e = prefs.edit()
+                    pr.ints.forEach { (k, x) -> e.putInt(k, x) }
+                    pr.bools.forEach { (k, x) -> e.putBoolean(k, x) }
+                    e.apply()
+                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).withEndAction {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(420).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                    }.start()
+                    statusBarChanged()
+                    postDelayed({ render() }, 260L)
+                }
+            }
+            presets.addView(card, LinearLayout.LayoutParams(dp(128), ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) marginStart = dp(8) })
+        }
+        col.addView(android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            addView(presets)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        col.addView(sectionTitle("Colour"))
+        col.addView(group(
+            choiceRow("Match the app", Prefs.SB_ADAPT, listOf("Off", "Smooth", "Battery saver"), 1),
+            choiceRow("Background", Prefs.SB_BG, listOf("Black", "Graphite", "Clear on Halo Launcher"), 0),
+        ))
+        col.addView(footnote("Match the app: the bar takes the colour at the top of whatever app or video is open, with a glass shine over it, and the icons turn dark on light apps. Smooth looks about twice a second, Battery saver every second and a half. Banking and other secure apps can't be looked at, so the bar keeps its last colour there. If it stays black after an update, turn Halo off and on in Accessibility once so Android grants the new permission."))
         col.addView(sectionTitle("Layout"))
-        col.addView(group(choiceRow("Style", Prefs.SB_LAYOUT, listOf("Island", "Full"), 0)))
-        col.addView(footnote("Island keeps just what matters, like an iPhone. Full shows every indicator."))
+        col.addView(group(
+            choiceRow("Style", Prefs.SB_LAYOUT, listOf("Island", "Full"), 0),
+            choiceRow("Place", Prefs.SB_ALIGN, listOf("Centred like iOS", "Edges like One UI"), 0),
+        ))
+        col.addView(footnote("Island keeps just what matters. Full shows every indicator. Centred puts each side in the middle of the space beside the camera, the way an iPhone does."))
         col.addView(sectionTitle("Time"))
         col.addView(group(
             choiceRow("Font", Prefs.SB_TIME, listOf("Bold", "Medium", "Light", "Mono"), 0),
@@ -690,11 +760,10 @@ class MainActivity : Activity() {
         col.addView(footnote("Beside the time: the apps waiting for you in the notification center, newest first."))
         col.addView(sectionTitle("Look"))
         col.addView(group(
-            choiceRow("Background", Prefs.SB_BG, listOf("Black", "Graphite", "Clear on Halo Launcher"), 0),
-            choiceRow("Colour", Prefs.SB_COLOR, StatusBarView.COLOUR_NAMES, 0),
+            choiceRow("Icon colour", Prefs.SB_COLOR, StatusBarView.COLOUR_NAMES, 0),
             choiceRow("Size", Prefs.SB_SIZE, listOf("Small", "Normal", "Large"), 1),
         ))
-        col.addView(footnote("It sits over your phone's own bar, so over other apps it has a solid background (Android doesn't let apps see what's behind them). Clear works on Halo Launcher and its lock screen, which hide the phone's bar. The green and orange camera and mic dots always show (Android keeps them on top for privacy), and the pulled-down shade shows your phone's own bar."))
+        col.addView(footnote("It sits over your phone's own bar, so it always has a background of its own (black, or the app's colour with Match the app). Clear works on Halo Launcher and its lock screen, which hide the phone's bar. The green and orange camera and mic dots always show (Android keeps them on top for privacy), and the pulled-down shade shows your phone's own bar."))
     }
 
     /** A switch for the status bar: saves, updates the bar and the preview (and redraws the page if asked). */

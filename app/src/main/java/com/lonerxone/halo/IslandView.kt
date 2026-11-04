@@ -431,7 +431,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             // Locked and unlocked are two looks: switching rebuilds, so the island
             // springs wider for the tick, like a moment of its own.
             is Content.Lock -> "lock:" + c.unlocked
-            is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name
+            is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name + ":" + c.call.connecting
             is Content.Timer -> "t:" + c.timer.key + ":" + (c.timer.anchor == 0L) + ":" + c.timer.actions.size
             is Content.Transfer -> "d:" + c.transfer.key
             is Content.Nav -> "g:" + c.nav.key
@@ -839,10 +839,20 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // Springs
     // =====================================================================
 
-    private fun animScale(): Float = try {
-        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-    } catch (_: Exception) {
-        1f
+    // The system animation speed, read at most every few seconds (not every morph).
+    private var scaleCache = 1f
+    private var scaleAt = 0L
+    private fun animScale(): Float {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (scaleAt == 0L || now - scaleAt > 4000L) {
+            scaleAt = now
+            scaleCache = try {
+                Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+            } catch (_: Exception) {
+                1f
+            }
+        }
+        return scaleCache
     }
 
     private var k = 400f
@@ -888,6 +898,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (springs[10].value == 0f) springs[10].snap(notchCx())
         startW[0] = v(0)
         startW[1] = v(1)
+        // Same size, new content (a new song, the next notification): a little
+        // jelly squish so the change is felt, then it settles back.
+        val sameSize = abs(w - t(0)) < dpf(4f) && abs(h - t(1)) < dpf(4f) && w > dpf(60f)
+        if (sameSize && springs[0].atRest && springs[1].atRest && scale > 0f) {
+            springs[0].kick(w * 1.1f)
+            springs[1].kick(-h * 0.9f)
+        }
         // Opening: width leads height. Closing: height leads width. Both read as one organic motion.
         springs[0].to(w, if (grow) k * 1.15f else k, zeta)
         springs[1].to(h, if (grow) k else k * 1.2f, zeta)
@@ -1827,7 +1844,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 setColor(Colors.GREEN)
             }
         }, LayoutParams(dp(18), dp(18), Gravity.CENTER))
-        val t = text(12.5f, Colors.GREEN, true).apply { text = if (c.ringing) "Ringing" else "" }
+        val t = text(12.5f, Colors.GREEN, true).apply { text = if (c.ringing) "Ringing" else if (c.connecting) "Calling" else "" }
         timerText = t
         return Sides(left, t, dp(26))
     }
@@ -3437,6 +3454,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         when (val c = content) {
             is Content.Call -> tv.text = when {
                 c.call.ringing -> "Ringing"
+                c.call.connecting -> "Calling…"
                 c.call.startedAt > 0 -> fmt(System.currentTimeMillis() - c.call.startedAt)
                 else -> "On call"
             }
