@@ -1404,6 +1404,62 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun reveal() {
         revealed = true
         slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(320L)?.withLayer()?.start()
+        // Opened cards: their parts rise in one after another instead of all at once.
+        if (mode == Mode.EXPANDED || mode == Mode.PANEL) cascade()
+    }
+
+    /** The open card's rows (or parts) rise and fade in, one after another, springy. */
+    private fun cascade() {
+        if (animScale() <= 0f) return
+        val root = (slot?.getChildAt(0) as? ViewGroup) ?: return
+        val parts = if (root.childCount == 1 && root.getChildAt(0) is ViewGroup && root.getChildAt(0) !is android.widget.ScrollView) root.getChildAt(0) as ViewGroup else root
+        val n = parts.childCount.coerceAtMost(8)
+        for (i in 0 until n) {
+            val c = parts.getChildAt(i)
+            if (c.visibility != View.VISIBLE) continue
+            c.alpha = 0f
+            c.translationY = dpf(10f)
+            c.scaleX = 0.96f
+            c.scaleY = 0.96f
+            c.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+                .setStartDelay(30L + i * 38L).setDuration(380L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
+        }
+    }
+
+    // ----- Stretch: the pill follows your finger like liquid before it lets go -----
+    private var downX = 0f
+    private var downY = 0f
+    private var stretchTicked = false
+
+    /** Soft resistance: moves freely at first, then harder and harder (rubber band). */
+    private fun rubber(d: Float, limit: Float): Float {
+        val a = abs(d)
+        val r = limit * (1f - 1f / (a / limit * 0.55f + 1f))
+        return if (d < 0) -r else r
+    }
+
+    private fun stretch(ev: MotionEvent) {
+        if (mode != Mode.COMPACT && mode != Mode.IDLE) return
+        val dx = ev.x - downX
+        val dy = ev.y - downY
+        val pull = rubber(dy.coerceAtLeast(0f), dpf(46f))
+        val side = rubber(dx, dpf(26f))
+        val h = v(1).coerceAtLeast(1f)
+        // Pulled down: taller and a little wider, reaching toward your finger.
+        scaleY = 1f + pull / h * 0.9f
+        scaleX = 1f + pull / h * 0.18f
+        translationY = pull * 0.35f
+        // Sideways: leans after your finger (and music skips on a clear swipe).
+        translationX = side
+        // A tick the moment it's pulled far enough to open.
+        val ready = dy > dpf(36f)
+        if (ready && !stretchTicked) {
+            stretchTicked = true
+            haptic()
+        } else if (!ready) {
+            stretchTicked = false
+        }
     }
 
     /** The island's current shape on screen (in this view), for clipping its contents. */
@@ -3630,15 +3686,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             MotionEvent.ACTION_DOWN -> {
                 pillRect(v(0), v(1), v(6), rect)
                 pivotX = rect.centerX()
-                pivotY = rect.centerY()
+                pivotY = rect.top
+                downX = ev.x
+                downY = ev.y
+                stretchTicked = false
                 // A squeeze, then a springy release (bigger cards give a little less).
                 val sq = if (mode == Mode.COMPACT || mode == Mode.IDLE) 0.95f else 0.985f
                 animate().scaleX(sq).scaleY(sq).setDuration(90L).setInterpolator(DecelerateInterpolator(2f)).start()
                 if (lit) glowTo(1f)
             }
-            MotionEvent.ACTION_MOVE -> if (lit && pressGlow > 0f) invalidate()
+            MotionEvent.ACTION_MOVE -> {
+                if (lit && pressGlow > 0f) invalidate()
+                if (abs(ev.y - downY) > dpf(6f) || abs(ev.x - downX) > dpf(6f)) {
+                    animate().cancel()
+                    stretch(ev)
+                }
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                animate().scaleX(1f).scaleY(1f).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                // Let go: snaps back with a wobble (the morph to the new shape carries on from here).
+                animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setDuration(520L).setInterpolator(android.view.animation.OvershootInterpolator(3.2f)).start()
                 if (pressGlow > 0f || lit) glowTo(0f)
             }
         }
