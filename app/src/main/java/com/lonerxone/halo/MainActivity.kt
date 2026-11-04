@@ -111,7 +111,6 @@ class MainActivity : Activity() {
         ABOUT("About"),
         REC_QUALITY("Recording quality"),
         REC_SOUND("Recording sound"),
-        STATUS_BAR("Status bar"),
     }
 
     /** Where Back goes from a page. */
@@ -176,7 +175,6 @@ class MainActivity : Activity() {
             Page.ABOUT -> aboutPage(col)
             Page.REC_QUALITY -> recQualityPage(col)
             Page.REC_SOUND -> recSoundPage(col)
-            Page.STATUS_BAR -> statusBarPage(col)
         }
 
         // Same page re-rendered (a status change): keep the scroll position.
@@ -298,7 +296,6 @@ class MainActivity : Activity() {
             iconRow(R.drawable.ic_palette, Colors.GRAPHITE, "Look & feel", "Size, glass, position, haptics") { go(Page.LOOK) },
             iconRow(R.drawable.ic_image, Colors.GRAPHITE, "Pictures", "Your own picture in the island") { go(Page.PICTURES) },
             iconRow(R.drawable.ic_camera, Colors.GRAPHITE, "Camera fit", "Sit the circle right on your lens") { go(Page.CAMERA) },
-            iconRow(R.drawable.ic_battery_full, Colors.GRAPHITE, "Status bar", if (Prefs.get(this).getBoolean(Prefs.SB_ON, false)) "Halo's own, made for the island" else "Off · the phone's own") { go(Page.STATUS_BAR) },
         ))
         gap(col)
         col.addView(group(
@@ -614,231 +611,6 @@ class MainActivity : Activity() {
             switchRow("Haptics", "Light tick on taps", Prefs.HAPTICS),
             switchRowDefault("Low-power mode", "No blur, still bars, slower updates", Prefs.LOW_POWER, false),
         ))
-    }
-
-    // ---------------------------------------------------------------------
-    // Status bar
-    // ---------------------------------------------------------------------
-
-    private var sbPreview: StatusBarView? = null
-
-    /**
-     * Halo's own status bar. One switch turns it on (it's off until you do);
-     * then everything about it can be tuned, with a live preview on top that
-     * shows the island in the middle and charging so you can see it all move.
-     */
-    private fun statusBarPage(col: LinearLayout) {
-        pageHeader(col, "Status bar", "Made for the island")
-        val prefs = Prefs.get(this)
-        val on = prefs.getBoolean(Prefs.SB_ON, false)
-        // The preview: a strip of phone top with the camera and a pill in the middle.
-        val stage = android.widget.FrameLayout(this).apply {
-            background = GradientDrawable().apply {
-                setColor(Color.BLACK)
-                cornerRadius = dp(26).toFloat()
-                setStroke(dp(1), cardStroke)
-            }
-            setPadding(0, dp(10), 0, dp(10))
-        }
-        val bar = StatusBarView(this).apply { preview = true }
-        sbPreview = bar
-        stage.addView(bar, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34)))
-        val pill = View(this).apply {
-            background = GradientDrawable().apply {
-                setColor(Color.rgb(8, 8, 9))
-                cornerRadius = dp(15).toFloat()
-                setStroke(dp(1), Color.argb(40, 255, 255, 255))
-            }
-        }
-        stage.addView(pill, android.widget.FrameLayout.LayoutParams(dp(96), dp(30), Gravity.CENTER))
-        stage.post {
-            val l = (stage.width - dp(96)) / 2f
-            bar.setIsland(l, l + dp(96), true)
-        }
-        if (!on) {
-            stage.alpha = 0.45f
-        }
-        // With Match the app on, the preview walks through a few app colours.
-        val demo = intArrayOf(Color.rgb(250, 250, 252), Color.rgb(18, 140, 126), Color.rgb(29, 185, 84), Color.rgb(24, 24, 28), Color.rgb(255, 0, 51), Color.rgb(36, 112, 220))
-        var step = 0
-        val cycle = object : Runnable {
-            override fun run() {
-                if (!bar.isAttachedToWindow) return
-                if (on && prefs.getInt(Prefs.SB_ADAPT, 1) != 0) bar.setAdaptive(demo[step++ % demo.size]) else bar.setAdaptive(null)
-                bar.postDelayed(this, 1600L)
-            }
-        }
-        bar.post(cycle)
-        col.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
-        gap(col)
-        // The switch: on shows everything below.
-        col.addView(group(sbSwitch("Custom status bar", "Halo draws the time, signal, Wi-Fi and battery, built around the island", Prefs.SB_ON, false, rerender = true)))
-        if (!on) {
-            col.addView(footnote("Off: your phone's own status bar. Swiping down still opens your notifications either way."))
-            return
-        }
-        // Presets: one tap sets the whole look; everything below still fine tunes it.
-        col.addView(sectionTitle("Start from"))
-        val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        data class Preset(val name: String, val sub: String, val ints: Map<String, Int>, val bools: Map<String, Boolean>)
-        val list = listOf(
-            Preset("iOS", "Centred, calm", mapOf(Prefs.SB_LAYOUT to 0, Prefs.SB_ALIGN to 0, Prefs.SB_BATTERY to 0, Prefs.SB_TIME to 0, Prefs.SB_NOTIFS to 3, Prefs.SB_SIGNAL to 0, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_BATTERY_PCT to false, Prefs.SB_NETTYPE to false, Prefs.SB_SPEED to false, Prefs.SB_DATE to false)),
-            Preset("One UI", "Edges, icons", mapOf(Prefs.SB_LAYOUT to 1, Prefs.SB_ALIGN to 1, Prefs.SB_BATTERY to 1, Prefs.SB_TIME to 1, Prefs.SB_NOTIFS to 0, Prefs.SB_SIGNAL to 0, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_BATTERY_PCT to true, Prefs.SB_NETTYPE to true, Prefs.SB_SPEED to false)),
-            Preset("Minimal", "Time and battery", mapOf(Prefs.SB_LAYOUT to 0, Prefs.SB_ALIGN to 0, Prefs.SB_BATTERY to 4, Prefs.SB_TIME to 1, Prefs.SB_NOTIFS to 3, Prefs.SB_SIGNAL to 2, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_WIFI to false, Prefs.SB_BT to false, Prefs.SB_EXTRAS to false, Prefs.SB_NETTYPE to false, Prefs.SB_SPEED to false)),
-            Preset("Full", "Everything", mapOf(Prefs.SB_LAYOUT to 1, Prefs.SB_ALIGN to 1, Prefs.SB_BATTERY to 0, Prefs.SB_TIME to 0, Prefs.SB_NOTIFS to 0, Prefs.SB_SIGNAL to 0, Prefs.SB_ADAPT to 1), mapOf(Prefs.SB_WIFI to true, Prefs.SB_BT to true, Prefs.SB_EXTRAS to true, Prefs.SB_NETTYPE to true, Prefs.SB_SPEED to true, Prefs.SB_BATTERY_PCT to true, Prefs.SB_DUAL to true)),
-        )
-        list.forEachIndexed { i, pr ->
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                background = GradientDrawable().apply {
-                    setColor(Color.argb(20, 255, 255, 255))
-                    cornerRadius = dp(18).toFloat()
-                    setStroke(dp(1), cardStroke)
-                }
-                addView(label(pr.name, 15f, text1, true))
-                addView(label(pr.sub, 12f, text2, false))
-                setOnClickListener { v ->
-                    val e = prefs.edit()
-                    pr.ints.forEach { (k, x) -> e.putInt(k, x) }
-                    pr.bools.forEach { (k, x) -> e.putBoolean(k, x) }
-                    e.apply()
-                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).withEndAction {
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(420).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
-                    }.start()
-                    statusBarChanged()
-                    postDelayed({ render() }, 260L)
-                }
-            }
-            presets.addView(card, LinearLayout.LayoutParams(dp(128), ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) marginStart = dp(8) })
-        }
-        col.addView(android.widget.HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            clipToPadding = false
-            addView(presets)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        col.addView(sectionTitle("Colour"))
-        col.addView(group(
-            choiceRow("Match the app", Prefs.SB_ADAPT, listOf("Off", "Smooth", "Battery saver"), 1),
-            choiceRow("Background", Prefs.SB_BG, listOf("Black", "Graphite", "Clear on Halo Launcher"), 0),
-        ))
-        col.addView(footnote("Match the app: the bar takes the colour at the top of whatever app or video is open, with a glass shine over it, and the icons turn dark on light apps. Smooth looks about twice a second, Battery saver every second and a half. Banking and other secure apps can't be looked at, so the bar keeps its last colour there. If it stays black after an update, turn Halo off and on in Accessibility once so Android grants the new permission."))
-        col.addView(sectionTitle("Layout"))
-        col.addView(group(
-            choiceRow("Style", Prefs.SB_LAYOUT, listOf("Island", "Full"), 0),
-            choiceRow("Place", Prefs.SB_ALIGN, listOf("Centred like iOS", "Edges like One UI"), 0),
-        ))
-        col.addView(footnote("Island keeps just what matters. Full shows every indicator. Centred puts each side in the middle of the space beside the camera, the way an iPhone does."))
-        col.addView(sectionTitle("Time"))
-        col.addView(group(
-            choiceRow("Font", Prefs.SB_TIME, listOf("Bold", "Medium", "Light", "Mono"), 0),
-            sbSwitch("Seconds", "12:45:09", Prefs.SB_SECONDS, false),
-            sbSwitch("Date", "Sat 31 before the time", Prefs.SB_DATE, false),
-        ))
-        col.addView(sectionTitle("Battery"))
-        col.addView(group(
-            choiceRow("Look", Prefs.SB_BATTERY, listOf("Pill", "Classic", "Ring", "Slim", "Number"), 0),
-            sbSwitch("Percentage", "The number with the battery", Prefs.SB_BATTERY_PCT, true),
-            choiceRow("Charging", Prefs.SB_CHARGE, listOf("Liquid", "Pulse", "Glow", "None"), 0),
-        ))
-        col.addView(footnote("Green while charging (it fills up the moment you plug in), yellow on power saving, red when low."))
-        col.addView(sectionTitle("Signal"))
-        col.addView(group(
-            choiceRow("Mobile", Prefs.SB_SIGNAL, listOf("Bars", "Dots", "Hidden"), 0),
-            sbSwitch("Network type", "4G, 5G and the like, off Wi-Fi", Prefs.SB_NETTYPE, true),
-            sbSwitch("Both SIMs", "Two signals with two SIMs", Prefs.SB_DUAL, true),
-        ))
-        col.addView(sectionTitle("Indicators"))
-        col.addView(group(
-            sbSwitch("Wi-Fi", "Its strength when connected", Prefs.SB_WIFI, true),
-            sbSwitch("Bluetooth", "When earbuds or a speaker are connected", Prefs.SB_BT, true),
-            sbSwitch("Silent, Do Not Disturb, alarm", "Small icons when they're on", Prefs.SB_EXTRAS, true),
-            sbSwitch("Data speed", "How fast things are downloading", Prefs.SB_SPEED, false),
-        ))
-        col.addView(sectionTitle("Notifications"))
-        col.addView(group(choiceRow("Show", Prefs.SB_NOTIFS, listOf("App icons", "Dots", "Count", "Hidden"), 0)))
-        col.addView(footnote("Beside the time: the apps waiting for you in the notification center, newest first."))
-        col.addView(sectionTitle("Look"))
-        col.addView(group(
-            choiceRow("Icon colour", Prefs.SB_COLOR, StatusBarView.COLOUR_NAMES, 0),
-            choiceRow("Size", Prefs.SB_SIZE, listOf("Small", "Normal", "Large"), 1),
-        ))
-        col.addView(footnote("It sits over your phone's own bar, so it always has a background of its own (black, or the app's colour with Match the app). Clear works on Halo Launcher and its lock screen, which hide the phone's bar. The green and orange camera and mic dots always show (Android keeps them on top for privacy), and the pulled-down shade shows your phone's own bar."))
-    }
-
-    /** A switch for the status bar: saves, updates the bar and the preview (and redraws the page if asked). */
-    @Suppress("UseSwitchCompatOrMaterialCode")
-    private fun sbSwitch(title: String, summary: String, key: String, def: Boolean, rerender: Boolean = false): View {
-        val row = rowBase(title, summary)
-        val prefs = Prefs.get(this)
-        val sw = Switch(this).apply {
-            val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
-            thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, Color.rgb(170, 170, 176)))
-            trackTintList = ColorStateList(states, intArrayOf(Color.rgb(120, 120, 128), Color.rgb(58, 58, 62)))
-            isChecked = prefs.getBoolean(key, def)
-            setOnCheckedChangeListener { _, checked ->
-                prefs.edit().putBoolean(key, checked).apply()
-                statusBarChanged()
-                if (rerender) postDelayed({ render() }, 180L)
-            }
-        }
-        row.addView(sw)
-        row.setOnClickListener { sw.toggle() }
-        return row
-    }
-
-    /** A setting with a few choices as chips (the chosen one white). */
-    private fun choiceRow(title: String, key: String, options: List<String>, def: Int): View {
-        val prefs = Prefs.get(this)
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(14), dp(14), dp(14))
-        }
-        box.addView(label(title, 16f, text1, true))
-        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val cur = prefs.getInt(key, def)
-        val views = ArrayList<TextView>()
-        fun paint(sel: Int) {
-            views.forEachIndexed { i, v ->
-                v.setTextColor(if (i == sel) Color.BLACK else text1)
-                v.background = GradientDrawable().apply {
-                    setColor(if (i == sel) Color.WHITE else Color.argb(26, 255, 255, 255))
-                    cornerRadius = dp(15).toFloat()
-                }
-            }
-        }
-        options.forEachIndexed { i, o ->
-            val chip = label(o, 13f, text1, true).apply {
-                setPadding(dp(14), dp(7), dp(14), dp(7))
-                setOnClickListener {
-                    prefs.edit().putInt(key, i).apply()
-                    paint(i)
-                    it.animate().scaleX(0.9f).scaleY(0.9f).setDuration(70).withEndAction {
-                        it.animate().scaleX(1f).scaleY(1f).setDuration(380).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
-                    }.start()
-                    statusBarChanged()
-                }
-            }
-            views += chip
-            chips.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) marginStart = dp(6) })
-        }
-        paint(cur)
-        box.addView(android.widget.HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            isHorizontalFadingEdgeEnabled = true
-            setFadingEdgeLength(dp(20))
-            addView(chips)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
-        return box
-    }
-
-    private fun statusBarChanged() {
-        sbPreview?.invalidate()
-        HaloService.instance?.let {
-            it.reloadPrefs()
-            it.statusBar.refresh()
-        }
-        HaloService.instance?.let { LauncherLink.schedule(it) }
     }
 
     // ---------------------------------------------------------------------

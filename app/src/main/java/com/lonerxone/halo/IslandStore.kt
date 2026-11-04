@@ -483,40 +483,6 @@ object Prefs {
     /** Show the island on the lock screen (a padlock that opens when you unlock). */
     const val LOCK_MODE = "lock_mode"
 
-    // ----- Custom status bar (off by default) -----
-    const val SB_ON = "sb_on"
-    /** 0 Island (just what matters, like an iPhone), 1 Full (every indicator). */
-    const val SB_LAYOUT = "sb_layout"
-    /** Time: 0 Bold, 1 Medium, 2 Light, 3 Mono. */
-    const val SB_TIME = "sb_time"
-    const val SB_SECONDS = "sb_seconds"
-    const val SB_DATE = "sb_date"
-    /** Battery: 0 Pill (number inside), 1 Classic, 2 Ring, 3 Slim, 4 Number. */
-    const val SB_BATTERY = "sb_battery"
-    const val SB_BATTERY_PCT = "sb_battery_pct"
-    /** Charging: 0 Liquid, 1 Pulse, 2 Glow, 3 None. */
-    const val SB_CHARGE = "sb_charge"
-    /** Mobile signal: 0 Bars, 1 Dots, 2 Hidden. */
-    const val SB_SIGNAL = "sb_signal"
-    const val SB_NETTYPE = "sb_nettype"
-    const val SB_DUAL = "sb_dual"
-    const val SB_WIFI = "sb_wifi"
-    const val SB_BT = "sb_bt"
-    /** Silent, vibrate, Do Not Disturb and alarm. */
-    const val SB_EXTRAS = "sb_extras"
-    const val SB_SPEED = "sb_speed"
-    /** Notification icons: 0 App icons, 1 Dots, 2 Count, 3 Hidden. */
-    const val SB_NOTIFS = "sb_notifs"
-    /** Background: 0 Black, 1 Graphite, 2 Clear on Halo Launcher. */
-    const val SB_BG = "sb_bg"
-    /** Icon colour index (StatusBarView.COLOURS). */
-    const val SB_COLOR = "sb_color"
-    /** 0 Small, 1 Normal, 2 Large. */
-    const val SB_SIZE = "sb_size"
-    /** Adaptive colour (takes the colour of the app under it): 0 Off, 1 Smooth, 2 Saver. */
-    const val SB_ADAPT = "sb_adapt"
-    /** 0 iOS (each side centred beside the camera), 1 One UI (at the edges). */
-    const val SB_ALIGN = "sb_align"
     /** Halo Launcher's lock screen is on (set from Halo Launcher's settings). */
     const val LOCKSCREEN = "lockscreen"
     /** Show screen recordings (Halo's and other apps') on the island. */

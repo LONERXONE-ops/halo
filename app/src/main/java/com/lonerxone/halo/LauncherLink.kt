@@ -59,8 +59,6 @@ object LauncherLink {
         val i = Intent(ACTION_STATE).setPackage(LAUNCHER)
         // Halo's own status bar: the launcher hides the system one under a clear strip.
         val sp = Prefs.get(svc)
-        i.putExtra("sb_on", sp.getBoolean(Prefs.SB_ON, false))
-        i.putExtra("sb_clear", sp.getBoolean(Prefs.SB_ON, false) && sp.getInt(Prefs.SB_BG, 0) == 2)
         IslandStore.music?.let { m ->
             i.putExtra("m_title", m.title)
             i.putExtra("m_artist", m.artist)

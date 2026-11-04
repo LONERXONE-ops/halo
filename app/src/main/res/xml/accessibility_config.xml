@@ -3,15 +3,11 @@
   canRetrieveWindowContent lets Halo find and tap a Quick Settings tile
   (mobile data, Bluetooth, airplane mode) when you press its button in the
   notification center. Halo reads nothing else on screen.
-  canTakeScreenshot lets the custom status bar (when you turn on its
-  adaptive colour) take the colour of the app under it: it looks at one
-  thin strip just below the bar, a few times a second, and keeps nothing.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
-    android:canTakeScreenshot="true"
     android:description="@string/accessibility_desc"
     android:notificationTimeout="100" />

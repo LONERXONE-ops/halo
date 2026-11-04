@@ -61,8 +61,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     interface Host {
         fun setTouchArea(area: Rect?)
-        /** Where the island spans across the top right now (the custom status bar makes way). */
-        fun islandSpan(left: Float, right: Float, visible: Boolean) {}
         fun openMusicApp(info: MusicInfo)
         fun send(intent: PendingIntent?)
         fun openDetail(key: String)
@@ -1009,34 +1007,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // Drawing (no allocations per frame)
     // =====================================================================
 
-    private val spanRect = RectF()
-    private var lastSpan = floatArrayOf(-1f, -1f, -1f)
-
-    /** Tells the custom status bar where the island is, so its icons can make way. */
-    private fun reportSpan(a: Float) {
-        var l = 0f
-        var r = 0f
-        var on = 0f
-        if (a > 0.01f && mode != Mode.HIDDEN && v(0) >= 1f) {
-            pillRect(v(0), v(1), v(6), spanRect)
-            if (spanRect.top < geometry.statusBarH) {
-                l = spanRect.left
-                r = spanRect.right
-                if (bubble != null && v(7) > 0.05f) r = max(r, bubbleCenterX(v(0), v(8)) + v(8) / 2f)
-                on = 1f
-            }
-        }
-        if (l == lastSpan[0] && r == lastSpan[1] && on == lastSpan[2]) return
-        lastSpan[0] = l
-        lastSpan[1] = r
-        lastSpan[2] = on
-        host.islandSpan(l, r, on > 0f)
-    }
-
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val a = v(3).coerceIn(0f, 1f)
-        reportSpan(a)
         if (a <= 0.01f || v(0) < 1f || v(1) < 1f) return
         val w = v(0)
         val h = v(1)
