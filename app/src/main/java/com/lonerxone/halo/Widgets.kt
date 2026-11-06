@@ -216,55 +216,93 @@ class ProgressLine(context: Context) : View(context) {
         return out
     }
 
+    private var ripple = 0f
+    private val fadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /**
+     * Builds the hill outline from x0 to x1 as a smooth curve. [scale] sets
+     * the height; near the thumb the hills lift with the beat (the sound
+     * "coming out" where you are), further back they're calmer.
+     */
+    private fun hillPath(x0: Float, x1: Float, cy: Float, maxH: Float, scale: Float, thumbX: Float, live: Float, pk: FloatArray) {
+        path.reset()
+        path.moveTo(x0, cy)
+        val n = pk.size
+        val step = 4f * density
+        var px = x0
+        var lastX = x0
+        var lastY = cy
+        while (px <= x1) {
+            val pos = (px / width.coerceAtLeast(1)) * (n - 1)
+            val i0 = pos.toInt().coerceIn(0, n - 1)
+            val i1 = (i0 + 1).coerceAtMost(n - 1)
+            val f = pos - i0
+            // Smoothstep between peaks: rounded hills, no corners.
+            val sf = f * f * (3f - 2f * f)
+            var hgt = pk[i0] + (pk[i1] - pk[i0]) * sf
+            // A slow ripple running through them while the song plays.
+            hgt *= 0.85f + 0.15f * kotlin.math.sin(px / (26f * density) - ripple)
+            // Closer to the thumb, the more it moves with the beat.
+            val near = (1f - kotlin.math.abs(thumbX - px) / (90f * density)).coerceIn(0f, 1f)
+            hgt *= 0.7f + 0.3f * (1f - near) + live * near * 0.6f
+            // Soft start, and it slopes down into the thumb.
+            val edge = kotlin.math.min((px - x0) / (12f * density) + 0.1f, 1f).coerceIn(0f, 1f) *
+                kotlin.math.min(1f, kotlin.math.abs(thumbX - px) / (10f * density) + 0.35f)
+            val y = cy - maxH * hgt * edge * scale
+            path.quadTo(lastX, lastY, (lastX + px) / 2f, (lastY + y) / 2f)
+            lastX = px
+            lastY = y
+            px += step
+        }
+        path.lineTo(x1, lastY)
+        path.lineTo(x1, cy)
+        path.close()
+    }
+
     private fun drawHills(canvas: Canvas, shown: Float) {
         val now = SystemClock.uptimeMillis()
         val dt = if (lastT == 0L) 0.016f else ((now - lastT) / 1000f).coerceIn(0f, 0.05f)
         lastT = now
-        val beat = if (playing && Beat.fresh()) (Beat.levels[0] * 0.6f + Beat.levels[1] * 0.4f) else if (playing) 0.55f else 0.35f
-        breathe += (beat - breathe) * (1f - kotlin.math.exp(-10f * dt))
-        val th = 5f * density
-        val cy = height * 0.62f
+        val hear = playing && Beat.fresh()
+        val beat = if (hear) (Beat.levels[0] * 0.65f + Beat.levels[1] * 0.35f).coerceIn(0f, 1f) else if (playing) 0.5f + 0.12f * kotlin.math.sin(now / 420f) else 0.3f
+        // Quick to rise on a hit, slower to fall, like a meter.
+        breathe += (beat - breathe) * (1f - kotlin.math.exp(-(if (beat > breathe) 18f else 6f) * dt))
+        if (playing) ripple += dt * 2.4f
+        val th = 4f * density
+        val cy = height * 0.66f
         val x = width * shown
-        val rr = 8f * density
-        // Unplayed: a grey line.
+        val maxH = cy - 1.5f * density
+        val pk = peaksFor(56)
+        val c = bar.color
+        // Ahead: the rest of the song's hills, faint, so you can see its shape coming.
+        if (x < width - 2f) {
+            hillPath(x, width.toFloat(), cy, maxH, 0.55f, x, 0f, pk)
+            fadePaint.color = Color.argb(22, 255, 255, 255)
+            canvas.drawPath(path, fadePaint)
+        }
         canvas.drawRoundRect(x, cy - th / 2f, width.toFloat(), cy + th / 2f, th / 2f, th / 2f, track)
-        // Played: soft hills above the line, two layers.
+        // Played: two layers of hills in the song's colour, the front one brighter at the top.
         if (x > 2f) {
-            val n = 48
-            val pk = peaksFor(n)
-            val maxH = cy - 2f * density
-            for (layer in 0 until 2) {
-                path.reset()
-                path.moveTo(0f, cy)
-                val steps = (x / (3f * density)).toInt().coerceAtLeast(2)
-                for (i in 0..steps) {
-                    val px = x * i / steps
-                    val pos = (px / width) * (n - 1)
-                    val i0 = pos.toInt().coerceIn(0, n - 1)
-                    val i1 = (i0 + 1).coerceAtMost(n - 1)
-                    val f = pos - i0
-                    var hgt = pk[i0] + (pk[i1] - pk[i0]) * f
-                    if (layer == 1) hgt *= 0.62f
-                    // Taper in at the start and down to the thumb.
-                    val edge = kotlin.math.min(1f, kotlin.math.min(px / (14f * density), (x - px) / (18f * density) + 0.15f)).coerceIn(0f, 1f)
-                    path.lineTo(px, cy - maxH * hgt * edge * (0.55f + 0.45f * breathe))
-                }
-                path.lineTo(x, cy)
-                path.close()
-                hillPaint.color = Color.argb(if (layer == 0) 95 else 150, Color.red(bar.color), Color.green(bar.color), Color.blue(bar.color))
-                canvas.drawPath(path, hillPaint)
-            }
+            hillPath(0f, x, cy, maxH, 0.62f + 0.38f * breathe, x, breathe, pk)
+            hillPaint.shader = null
+            hillPaint.color = Color.argb(70, Color.red(c), Color.green(c), Color.blue(c))
+            canvas.drawPath(path, hillPaint)
+            hillPath(0f, x, cy, maxH, (0.62f + 0.38f * breathe) * 0.6f, x, breathe, pk)
+            hillPaint.shader = android.graphics.LinearGradient(0f, cy - maxH * 0.6f, 0f, cy, Color.argb(190, Color.red(c), Color.green(c), Color.blue(c)), Color.argb(90, Color.red(c), Color.green(c), Color.blue(c)), android.graphics.Shader.TileMode.CLAMP)
+            canvas.drawPath(path, hillPaint)
+            hillPaint.shader = null
             canvas.drawRoundRect(0f, cy - th / 2f, x, cy + th / 2f, th / 2f, th / 2f, bar)
         }
-        // The thumb: a filled circle with a white ring and a soft glow.
-        val tr = if (dragging) rr * 1.2f else rr
+        // The thumb: a round knob with a white ring; its glow pulses with the beat.
+        val tr = (if (dragging) 8.5f else 7f) * density
         val tx = x.coerceIn(tr, width - tr)
-        glowPaint.shader = android.graphics.RadialGradient(tx, cy, tr * 2.2f, Color.argb(120, Color.red(bar.color), Color.green(bar.color), Color.blue(bar.color)), Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP)
-        canvas.drawCircle(tx, cy, tr * 2.2f, glowPaint)
+        val g = tr * (2f + breathe * 0.8f)
+        glowPaint.shader = android.graphics.RadialGradient(tx, cy, g, Color.argb((90 + 90 * breathe).toInt().coerceAtMost(200), Color.red(c), Color.green(c), Color.blue(c)), Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawCircle(tx, cy, g, glowPaint)
         canvas.drawCircle(tx, cy, tr, bar)
-        ringPaint.strokeWidth = 2.5f * density
-        canvas.drawCircle(tx, cy, tr - 1.25f * density, ringPaint)
-        if ((playing || kotlin.math.abs(breathe - 0.35f) > 0.02f) && isShown) postInvalidateOnAnimation() else lastT = 0L
+        ringPaint.strokeWidth = 2.2f * density
+        canvas.drawCircle(tx, cy, tr - 1.1f * density, ringPaint)
+        if ((playing || kotlin.math.abs(breathe - 0.3f) > 0.02f) && isShown) postInvalidateOnAnimation() else lastT = 0L
     }
 }
 
