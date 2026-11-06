@@ -23,7 +23,7 @@ LiveBridge and HyperBridge. Halo's code is its own; nothing is copied.
 | Size | What it shows | Rules |
 | --- | --- | --- |
 | Idle | The camera circle | Same size as the camera, nothing in it. |
-| Compact | One small thing each side of the camera | 30 dp tall. At least 84 dp wide (or the camera plus 54 dp), and only as wide as its content: 6 to 9 dp from each end, 7 dp from the camera. One icon or image on the left (18 to 20 dp), one short value on the right (11.5 to 12 sp, tabular numbers, at most about 70 dp). Never a sentence. |
+| Compact | One small thing each side of the camera | 30 dp tall. Adaptive: each side of the camera is only as wide as its own content (6 to 9 dp from the end, 7 dp from the camera), so the pill sits off-centre when one side holds more. Never under 72 dp (or the camera plus 44 dp). An icon or image (18 to 20 dp) on one side; an icon, ring or short value (11.5 to 12 sp, tabular numbers) on the other. Never a sentence. |
 | Open | A card | Up to 372 dp wide, 8 dp from the screen edges, 32 dp corners. 18 dp padding, 8 dp between rows. The top row sits beside the camera: app on the left, a status on the right. |
 
 Every compact moment answers one question at a glance: what is it (left)

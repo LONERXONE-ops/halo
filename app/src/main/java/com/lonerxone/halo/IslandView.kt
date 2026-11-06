@@ -370,9 +370,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Where a pill in mode [m] wants its centre, before it is kept on screen. */
     private fun anchorXFor(m: Mode): Float = when {
         idleLike(m) -> notchCx()
-        wraps() -> notchCx() + offsetX
+        wraps() -> notchCx() + offsetX + (if (m == Mode.COMPACT) compactShift else 0f)
         else -> geometry.screenW / 2f + offsetX
     }
+
+    /**
+     * Adaptive pills: each side of the camera is only as wide as its own
+     * content, so the pill sits off-centre when one side holds more (a time
+     * on the right, a small icon on the left) instead of padding both sides.
+     */
+    private var compactShift = 0f
 
     /** Space the round bubble takes to the right of the pill. */
     private fun bubbleExtra(): Float =
@@ -1667,8 +1674,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
     private fun compactWidthFor(s: Sides): Float {
         // Snug: each side's content, its edge margin, and a small gap from the camera.
-        val side = max(widthOf(s.left, s.leftSize) + dp(6) + dp(7), widthOf(s.right, s.rightW) + dp(9) + dp(7))
-        return min(max(baseCompactW(), wrapW() + 2f * side * max(capW, 1f)), expandedW())
+        val grow = max(capW, 1f)
+        val leftNeed = (widthOf(s.left, s.leftSize) + dp(6) + dp(7)) * grow
+        val rightNeed = (widthOf(s.right, s.rightW) + dp(9) + dp(7)) * grow
+        if (!wraps()) {
+            // No camera in the middle: just the two sides and a small gap.
+            compactShift = 0f
+            return min(max(baseCompactW(), leftNeed + rightNeed + dpf(6f)), expandedW())
+        }
+        var w = leftNeed + rightNeed + wrapW()
+        val base = baseCompactW()
+        if (w < base) {
+            // Too small to look right: grow both sides evenly.
+            val add = (base - w) / 2f
+            w = base
+            compactShift = ((rightNeed + add) - (leftNeed + add)) / 2f
+        } else {
+            compactShift = (rightNeed - leftNeed) / 2f
+        }
+        return min(w, expandedW())
     }
 
     /**
