@@ -23,7 +23,7 @@ LiveBridge and HyperBridge. Halo's code is its own; nothing is copied.
 | Size | What it shows | Rules |
 | --- | --- | --- |
 | Idle | The camera circle | Same size as the camera, nothing in it. |
-| Compact | One small thing each side of the camera | 34 dp tall. At least 100 dp wide (or the camera plus 70 dp). One icon or image on the left (20 to 24 dp), one short value on the right (12 to 13.5 sp, tabular numbers). Never a sentence. |
+| Compact | One small thing each side of the camera | 30 dp tall. At least 84 dp wide (or the camera plus 54 dp), and only as wide as its content: 6 to 9 dp from each end, 7 dp from the camera. One icon or image on the left (18 to 20 dp), one short value on the right (11.5 to 12 sp, tabular numbers, at most about 70 dp). Never a sentence. |
 | Open | A card | Up to 372 dp wide, 8 dp from the screen edges, 32 dp corners. 18 dp padding, 8 dp between rows. The top row sits beside the camera: app on the left, a status on the right. |
 
 Every compact moment answers one question at a glance: what is it (left)
@@ -56,10 +56,10 @@ Spatial springs, after Material 3 Expressive's tokens:
 
 ## Notifications
 
-- A new alert always arrives as a pill: photo with the app's badge and the
-  sender on the left of the camera, the message on the right (each up to
-  about 100 dp, one line). The photo pops in with a spin, then the name
-  and the message spring out from the camera.
+- A new alert always arrives as a small pill: the photo (with the app's
+  badge) on the left of the camera, who it's from on the right (up to about
+  74 dp). The message waits until you tap. The photo pops in with a spin,
+  then the name springs out from the camera.
 - Tap or pull down: it opens into the full card. Swipe up: dismiss. Hold:
   open the app.
 

@@ -1646,12 +1646,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             val root = FrameLayout(context)
             if (left != null) {
                 val s = if (leftSize > 0) leftSize else ViewGroup.LayoutParams.WRAP_CONTENT
-                root.addView(left, LayoutParams(s, s, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(8) })
+                root.addView(left, LayoutParams(s, s, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(6) })
             }
             if (right != null) {
                 val w = if (rightW > 0) rightW else ViewGroup.LayoutParams.WRAP_CONTENT
                 val h = if (rightH > 0) rightH else ViewGroup.LayoutParams.WRAP_CONTENT
-                root.addView(right, LayoutParams(w, h, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(12) })
+                root.addView(right, LayoutParams(w, h, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(9) })
             }
             return root
         }
@@ -1666,7 +1666,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
     private fun compactWidthFor(s: Sides): Float {
-        val side = max(widthOf(s.left, s.leftSize) + dp(8) + dp(10), widthOf(s.right, s.rightW) + dp(12) + dp(10))
+        // Snug: each side's content, its edge margin, and a small gap from the camera.
+        val side = max(widthOf(s.left, s.leftSize) + dp(6) + dp(7), widthOf(s.right, s.rightW) + dp(9) + dp(7))
         return min(max(baseCompactW(), wrapW() + 2f * side * max(capW, 1f)), expandedW())
     }
 
@@ -1768,12 +1769,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // =====================================================================
 
     private fun compactTorch(): Sides =
-        Sides(icon(R.drawable.ic_flashlight, Colors.INK), text(12.5f, Colors.SILVER, true).apply { text = "On" }, dp(16))
+        Sides(icon(R.drawable.ic_flashlight, Colors.INK), text(11.5f, Colors.SILVER, true).apply { text = "On" }, dp(16))
 
     private fun compactMusic(info: MusicInfo): Sides {
         Beat.ensure(context, info.playing && !lowPower)
         // Tiny: a round cover on one side, the beat on the other.
-        val art = roundImage(info.art, dpf(10f), info.accent, R.drawable.ic_note)
+        val art = roundImage(info.art, dpf(9f), info.accent, R.drawable.ic_note)
         artImage = art
         val w = WaveformView(context).apply {
             color = Colors.INK
@@ -1781,7 +1782,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             still = lowPower
         }
         wave = w
-        return Sides(art, w, dp(20), dp(12), dp(13))
+        return Sides(art, w, dp(18), dp(11), dp(12))
     }
 
     /**
@@ -1808,7 +1809,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         badgeBox.addView(PulseView(context).apply {
             color = accent
             strength = 0.6f
-        }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+        }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
         val badge = ImageView(context).apply {
             setImageResource(if (pop.icon != 0) pop.icon else R.drawable.ic_info)
             setColorFilter(accent)
@@ -1819,9 +1820,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 setColor(Color.argb(52, Color.red(accent), Color.green(accent), Color.blue(accent)))
             }
         }
-        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(21), dp(21), Gravity.CENTER))
+        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
         val pct = pop.value.removeSuffix("%").toIntOrNull()
-        fun word(t: String, c: Int, maxW: Int = dp(84)) = text(12f, c, true).apply {
+        fun word(t: String, c: Int, maxW: Int = dp(84)) = text(11.5f, c, true).apply {
             text = t
             maxWidth = maxW
             fontFeatureSettings = "tnum"
@@ -1840,7 +1841,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             "buds" -> hRow().apply {
                 addView(word(pop.value, if (pct != null && pct <= 20) Colors.RED else Color.WHITE))
                 val ring = ProgressRing(context).apply { color = if (pct != null && pct <= 20) Colors.RED else Colors.GREEN; progress = 0f }
-                addView(ring, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(5) })
+                addView(ring, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(5) })
                 fill((pct ?: 0) / 100f) { ring.progress = it }
             }
             // Battery and charging: the level counts up while a battery fills.
@@ -1851,7 +1852,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     level = 0f
                     color = accent
                 }
-                addView(glyph, LinearLayout.LayoutParams(dp(22), dp(11)).apply { marginStart = dp(5) })
+                addView(glyph, LinearLayout.LayoutParams(dp(19), dp(10)).apply { marginStart = dp(5) })
                 fill((pct ?: 0) / 100f) {
                     glyph.level = it
                     num.text = "${(it * 100).toInt()}%"
@@ -1863,13 +1864,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 // Connected says it with the arcs alone; a drop says "Lost".
                 if (!up) addView(word("Lost", Colors.GREY))
                 val arcs = SignalArcs(context).apply { color = accent }
-                addView(arcs, LinearLayout.LayoutParams(dp(16), dp(13)).apply { marginStart = dp(5) })
+                addView(arcs, LinearLayout.LayoutParams(dp(14), dp(11)).apply { marginStart = dp(5) })
                 if (up) fill(1f, delay = 220L, ms = 620L) { arcs.level = it } else fill(1f, delay = 120L, ms = 520L) { arcs.level = 1f - it }
             }
             // Bluetooth gear: its name, and a dot that links (green) or drops (grey ring).
             "device" -> hRow().apply {
                 val up = pop.title == "Connected"
-                addView(word(pop.value, if (up) Color.WHITE else Colors.GREY, dp(88)))
+                addView(word(pop.value, if (up) Color.WHITE else Colors.GREY, dp(72)))
                 val dot = View(context).apply {
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
@@ -1885,13 +1886,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             "saved" -> hRow().apply {
                 if (pop.value.isNotEmpty()) addView(word(pop.value, Colors.SILVER))
                 val tick = CheckGlyph(context).apply { color = accent }
-                addView(tick, LinearLayout.LayoutParams(dp(17), dp(17)).apply { marginStart = dp(5) })
+                addView(tick, LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginStart = dp(5) })
                 fill(1f, delay = 260L, ms = 320L) { tick.progress = it }
             }
             else -> if (pop.title == "Done") hRow().apply {
                 addView(word(pop.value, Colors.SILVER))
                 val tick = CheckGlyph(context).apply { color = accent }
-                addView(tick, LinearLayout.LayoutParams(dp(17), dp(17)).apply { marginStart = dp(5) })
+                addView(tick, LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginStart = dp(5) })
                 fill(1f, delay = 260L, ms = 320L) { tick.progress = it }
             } else hRow().apply {
                 // Anything else: a short title and its value.
@@ -1911,7 +1912,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         right.scaleY = 0.4f
         right.translationX = -dpf(12f)
         right.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).setStartDelay(140L).setDuration(400L).setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
-        return Sides(badgeBox, right, dp(24))
+        return Sides(badgeBox, right, dp(18))
     }
 
     /** Runs a 0..1 value over [ms] after [delay] with an eased stop (for fills and ticks). */
@@ -2008,7 +2009,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** On a call: a green phone (gently pulsing) on the left, the running time in green on the right. */
     private fun compactCall(c: CallInfo): Sides {
         val left = FrameLayout(context)
-        left.addView(PulseView(context).apply { color = Colors.GREEN; strength = 0.8f }, LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        left.addView(PulseView(context).apply { color = Colors.GREEN; strength = 0.8f }, LayoutParams(dp(22), dp(22), Gravity.CENTER))
         left.addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_call)
             setColorFilter(Color.BLACK)
@@ -2018,10 +2019,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 shape = GradientDrawable.OVAL
                 setColor(Colors.GREEN)
             }
-        }, LayoutParams(dp(18), dp(18), Gravity.CENTER))
-        val t = text(12.5f, Colors.GREEN, true).apply { text = if (c.ringing) "Ringing" else if (c.connecting) "Calling" else "" }
+        }, LayoutParams(dp(16), dp(16), Gravity.CENTER))
+        val t = text(11.5f, Colors.GREEN, true).apply { text = if (c.ringing) "Ringing" else if (c.connecting) "Calling" else "" }
         timerText = t
-        return Sides(left, t, dp(26))
+        return Sides(left, t, dp(22))
     }
 
     private var lockGlyph: LockGlyph? = null
@@ -2216,7 +2217,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             box.addView(PulseView(context).apply {
                 color = Colors.RED
                 strength = 1f
-            }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+            }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
         }
         val dot = View(context).apply {
             background = GradientDrawable().apply {
@@ -2311,7 +2312,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** On the pill: a ring that empties as a timer runs down (an icon for a stopwatch), and the time in steady digits. */
     private fun compactTimer(): Sides {
         val t = (content as? Content.Timer)?.timer
-        val tv = text(13f, if (t?.anchor == 0L) Colors.SILVER else Color.WHITE, true).apply { fontFeatureSettings = "tnum" }
+        val tv = text(12f, if (t?.anchor == 0L) Colors.SILVER else Color.WHITE, true).apply { fontFeatureSettings = "tnum" }
         timerText = tv
         val left: View = if (t != null && t.countDown) {
             FrameLayout(context).apply {
@@ -2363,54 +2364,43 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * An alert as a pill: the photo (with the app's badge) and who it's from
      * on the left of the camera, the message on the right. Tap for all of it.
      */
+    /**
+     * An alert as a small pill: the photo (with the app's badge) on the left
+     * of the camera, who it's from on the right. Tap it for the message.
+     */
     private fun compactNote(n: NotifInfo): Sides {
         val avatar = FrameLayout(context).apply { clipChildren = false }
-        avatar.addView(roundImage(n.icon, dpf(11f), n.accent, R.drawable.ic_bell), LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        avatar.addView(roundImage(n.icon, dpf(10f), n.accent, R.drawable.ic_bell), LayoutParams(dp(20), dp(20), Gravity.CENTER))
         // The app's icon as a little badge when the big picture is a contact photo.
         if (n.rich.avatar != null && n.rich.appIcon != null) {
-            avatar.addView(roundImage(n.rich.appIcon, dpf(5f), n.accent, R.drawable.ic_bell).apply {
+            avatar.addView(roundImage(n.rich.appIcon, dpf(4.5f), n.accent, R.drawable.ic_bell).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(Color.BLACK)
                 }
                 setPadding(dp(1), dp(1), dp(1), dp(1))
-            }, LayoutParams(dp(11), dp(11), Gravity.END or Gravity.BOTTOM).apply {
+            }, LayoutParams(dp(10), dp(10), Gravity.END or Gravity.BOTTOM).apply {
                 marginEnd = -dp(2)
                 bottomMargin = -dp(2)
             })
         }
-        val who = text(12.5f, Color.WHITE, true).apply {
+        val who = text(11.5f, Color.WHITE, true).apply {
             text = n.title
-            maxWidth = dp(92)
+            maxWidth = dp(74)
             isSingleLine = true
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        val left = hRow().apply {
-            clipChildren = false
-            addView(avatar, LinearLayout.LayoutParams(dp(24), dp(24)))
-            addView(who, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(7) })
-        }
-        val msg = text(12f, white70, false).apply {
-            text = if (n.rich.picture != null && n.text.isEmpty()) "Photo" else n.text.ifEmpty { n.appName }
-            maxWidth = dp(104)
-            isSingleLine = true
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-        // In: the photo pops with a spin, then the name and the message spring
-        // out from the camera, one after the other.
+        // In: the photo pops with a spin, then the name springs out from the camera.
         if (animScale() > 0f) {
             avatar.scaleX = 0.2f
             avatar.scaleY = 0.2f
             avatar.rotation = -35f
             avatar.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(60L).setDuration(460L).setInterpolator(android.view.animation.OvershootInterpolator(3.4f)).start()
             who.alpha = 0f
-            who.translationX = dpf(18f)
-            who.animate().alpha(1f).translationX(0f).setStartDelay(130L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
-            msg.alpha = 0f
-            msg.translationX = -dpf(18f)
-            msg.animate().alpha(1f).translationX(0f).setStartDelay(190L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
+            who.translationX = -dpf(16f)
+            who.animate().alpha(1f).translationX(0f).setStartDelay(150L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
         }
-        return Sides(left, msg)
+        return Sides(avatar, who, dp(20))
     }
 
     private fun compactTransfer(t: TransferInfo): Sides {
@@ -2424,7 +2414,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             addView(r, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
             addView(icon(R.drawable.ic_pause, Colors.SILVER), LayoutParams(dp(9), dp(9), Gravity.CENTER))
         } else r
-        return Sides(roundImage(t.icon, dpf(10f), Colors.GRAPHITE, R.drawable.ic_download), right, dp(20), dp(18), dp(18))
+        return Sides(roundImage(t.icon, dpf(9f), Colors.GRAPHITE, R.drawable.ic_download), right, dp(18), dp(16), dp(16))
     }
 
     // ----- One-time codes -----
@@ -2449,7 +2439,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Compact: a key on the left, the code on the right. */
     private fun compactOtp(o: OtpInfo): Sides {
         val key = icon(R.drawable.ic_key, Colors.INK)
-        val code = text(13.5f, Color.WHITE, true).apply {
+        val code = text(12f, Color.WHITE, true).apply {
             text = spacedCode(o.code)
             fontFeatureSettings = "tnum"
             letterSpacing = 0.06f
@@ -2535,13 +2525,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Compact: the app on the left, minutes away (or the stage) on the right. */
     private fun compactLive(l: LiveInfo): Sides {
         val tint = if (l.stage >= 3) Colors.GREEN else Color.WHITE
-        val right = text(12.5f, tint, true).apply {
+        val right = text(11.5f, tint, true).apply {
             text = etaText(l)
             fontFeatureSettings = "tnum"
-            maxWidth = dp(80)
+            maxWidth = dp(64)
         }
         liveEta = right
-        return Sides(roundImage(l.icon, dpf(10f), Colors.GRAPHITE, if (l.ride) R.drawable.ic_car else R.drawable.ic_scooter), right, dp(20))
+        return Sides(roundImage(l.icon, dpf(9f), Colors.GRAPHITE, if (l.ride) R.drawable.ic_car else R.drawable.ic_scooter), right, dp(18))
     }
 
     /**
@@ -2599,12 +2589,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun compactNav(nv: NavInfo): Sides {
         val arrow = if (nv.arrow != null) ImageView(context).apply { setImageBitmap(nv.arrow) } else icon(R.drawable.ic_nav, Colors.INK)
-        val right = text(12.5f, Color.WHITE, true).apply {
+        val right = text(11.5f, Color.WHITE, true).apply {
             text = nv.primary
-            maxWidth = dp(110)
+            maxWidth = dp(90)
         }
         navText = right
-        return Sides(arrow, right, dp(20))
+        return Sides(arrow, right, dp(18))
     }
 
     // =====================================================================
@@ -4792,7 +4782,7 @@ class MiniSwitch(context: Context) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension((27 * density).toInt(), (16 * density).toInt())
+        setMeasuredDimension((23 * density).toInt(), (14 * density).toInt())
     }
 
     override fun onDraw(c: Canvas) {
