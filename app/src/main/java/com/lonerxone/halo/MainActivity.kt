@@ -352,6 +352,7 @@ class MainActivity : Activity() {
         Page.ISLAND -> listOf(
             Prefs.MUSIC, Prefs.BEAT, Prefs.CALLS, Prefs.LOCK_MODE, Prefs.LOCK_SHAKE, Prefs.ALARMS, Prefs.TIMERS, Prefs.TRANSFERS,
             Prefs.NAV, Prefs.TORCH, Prefs.RECORDING, Prefs.NOTIFS, Prefs.HIDE_TEXT, Prefs.DND_PEEK, Prefs.CHARGING,
+            Prefs.OTP, Prefs.LIVE,
         )
         Page.MOMENTS -> listOf(
             Prefs.SYSTEM_POPS, Prefs.CONNECTIVITY, Prefs.EV_RINGER, Prefs.EV_DND, Prefs.EV_BT, Prefs.EV_WIFI, Prefs.EV_HOTSPOT,
@@ -360,6 +361,7 @@ class MainActivity : Activity() {
         Page.LOOK -> listOf(
             Prefs.IDLE, Prefs.SCALE, Prefs.CAP_H, Prefs.CAP_W, Prefs.CARD_W, Prefs.GLASS, Prefs.ART_BACKDROP,
             Prefs.OFFSET_X, Prefs.OFFSET_Y, Prefs.HIDE_FULLSCREEN, Prefs.HAPTICS, Prefs.LOW_POWER, Prefs.IN_SHOTS,
+            Prefs.MOTION_SPEED, Prefs.MOTION_BOUNCE,
         )
         Page.CAMERA -> listOf(Prefs.CAM_X, Prefs.CAM_Y, Prefs.CAM_SIZE)
         Page.PICTURES -> listOf(Prefs.PIC_DIM)
@@ -483,6 +485,8 @@ class MainActivity : Activity() {
             switchRow("Lock screen", "A padlock on the lock screen that springs open when you unlock", Prefs.LOCK_MODE),
             switchRow("Shake on a wrong try", "The island shakes no when the PIN, pattern or fingerprint is wrong, like an iPhone", Prefs.LOCK_SHAKE),
             switchRow("Alarms", "An alarm going off (or a timer ending) with big Snooze and Stop buttons", Prefs.ALARMS),
+            switchRow("One-time codes", "A code in a message (OTP) shows big on the island, with Copy", Prefs.OTP),
+            switchRow("Rides and deliveries", "Bolt, Uber, Chowdeck, Glovo and others as live progress: how far, and the app's buttons", Prefs.LIVE),
             switchRow("Timers & stopwatch", "Countdown from the Clock app", Prefs.TIMERS),
             switchRow("Downloads & installs", "Progress ring for files and apps", Prefs.TRANSFERS),
             switchRow("Navigation", "Next turn from Google Maps", Prefs.NAV),
@@ -670,6 +674,12 @@ class MainActivity : Activity() {
             switchRow("Camera circle", "Rests on the camera; tap it for notifications", Prefs.IDLE),
             sliderRow("Size", Prefs.SCALE, 100, 80, 130, "%"),
         ))
+        col.addView(sectionTitle("Motion"))
+        col.addView(group(
+            segRow("Speed", Prefs.MOTION_SPEED, listOf("Relaxed", "Normal", "Quick"), 1),
+            segRow("Bounce", Prefs.MOTION_BOUNCE, listOf("Subtle", "Normal", "Bouncy"), 1),
+        ))
+        col.addView(footnote("How fast the island opens and closes, and how much it springs past and settles. Changes show on the next move."))
         col.addView(sectionTitle("Fine sizing"))
         col.addView(group(
             sliderRow("Pill height", Prefs.CAP_H, 100, 80, 125, "%"),
@@ -1655,6 +1665,54 @@ class MainActivity : Activity() {
     private fun infoRow(title: String, summary: String): View = rowBase(title, summary).apply { isClickable = false }
 
     private fun switchRow(title: String, summary: String, key: String): View = switchRowDefault(title, summary, key, true)
+
+    /** A title with a three-way choice under it (one tap picks). */
+    private fun segRow(title: String, key: String, names: List<String>, def: Int): View {
+        val p = Prefs.get(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+        }
+        box.addView(label(title, 16f, text1, true))
+        val seg = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(20, 255, 255, 255))
+                cornerRadius = dp(18).toFloat()
+            }
+        }
+        val cur = p.getInt(key, def)
+        val views = ArrayList<TextView>()
+        fun paint(sel: Int) = views.forEachIndexed { i, v ->
+            v.setTextColor(if (i == sel) Color.BLACK else text1)
+            v.background = if (i == sel) GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(15).toFloat()
+            } else null
+        }
+        names.forEachIndexed { i, n ->
+            val t = label(n, 13.5f, text1, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(9), 0, dp(9))
+                isClickable = true
+                setOnClickListener { v ->
+                    p.edit().putInt(key, i).apply()
+                    paint(i)
+                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(60).withEndAction {
+                        v.animate().scaleX(1f).scaleY(1f).setDuration(300).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                    }.start()
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                    HaloService.instance?.reloadPrefs()
+                }
+            }
+            views += t
+            seg.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        paint(cur)
+        box.addView(seg, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        return box
+    }
 
     private fun postDelayedRender() = window.decorView.postDelayed({ render() }, 220L)
 

@@ -675,6 +675,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.hapticsEnabled = p.getBoolean(Prefs.HAPTICS, true)
         v.sizeScale = p.getInt(Prefs.SCALE, 100) / 100f
         v.capH = p.getInt(Prefs.CAP_H, 100).coerceIn(80, 125) / 100f
+        v.motionSpeed = HaloTheme.speed(p.getInt(Prefs.MOTION_SPEED, 1))
+        v.motionBounce = HaloTheme.bounce(p.getInt(Prefs.MOTION_BOUNCE, 1))
         v.capW = p.getInt(Prefs.CAP_W, 100).coerceIn(85, 125) / 100f
         v.cardW = p.getInt(Prefs.CARD_W, 100).coerceIn(80, 100) / 100f
         val d = resources.displayMetrics.density
@@ -743,9 +745,12 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val live0 = buildList<IslandView.Content> {
             IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }?.let { add(IslandView.Content.Call(it)) }
             IslandStore.alarm?.takeIf { p.getBoolean(Prefs.ALARMS, true) }?.let { add(IslandView.Content.Alarm(it)) }
+            // A code you're waiting for comes first after calls and alarms.
+            IslandStore.otp?.takeIf { p.getBoolean(Prefs.OTP, true) }?.let { add(IslandView.Content.Otp(it)) }
             // Halo's own recording always shows (it's how you stop it); another app's follows the setting.
             IslandStore.rec?.takeIf { it.own || p.getBoolean(Prefs.RECORDING, true) }?.let { add(IslandView.Content.Rec(it)) }
             IslandStore.timer?.takeIf { p.getBoolean(Prefs.TIMERS, true) }?.let { add(IslandView.Content.Timer(it)) }
+            IslandStore.live?.takeIf { p.getBoolean(Prefs.LIVE, true) }?.let { add(IslandView.Content.Live(it)) }
             // Halo Launcher's own player is on screen: the island steps back so only one shows.
             IslandStore.music?.takeIf { p.getBoolean(Prefs.MUSIC, true) && !launcherShowsMusic }?.let { add(IslandView.Content.Music(it)) }
             IslandStore.nav?.takeIf { p.getBoolean(Prefs.NAV, true) }?.let { add(IslandView.Content.Nav(it)) }
@@ -826,6 +831,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         is IslandView.Content.Torch -> "f"
         is IslandView.Content.Rec -> "r"
         is IslandView.Content.Alarm -> "a"
+        is IslandView.Content.Otp -> "o"
+        is IslandView.Content.Live -> "v"
         else -> null
     }
 
@@ -849,6 +856,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.INK, -1f, onHold = { torchOff() }) { torchOff() }
         is IslandView.Content.Rec -> IslandView.Bubble("r", null, R.drawable.ic_record, Colors.RED, -1f, onHold = { recStop() }) { bringForward("r") }
         is IslandView.Content.Alarm -> IslandView.Bubble("a", null, R.drawable.ic_alarm, Colors.ORANGE, -1f, onHold = { send(c.alarm.stop) }) { bringForward("a") }
+        is IslandView.Content.Otp -> IslandView.Bubble("o", null, R.drawable.ic_key, Colors.INK, -1f) { bringForward("o") }
+        is IslandView.Content.Live -> IslandView.Bubble("v", c.live.icon, if (c.live.ride) R.drawable.ic_car else R.drawable.ic_scooter, Colors.INK, -1f) { bringForward("v") }
         else -> null
     }
 

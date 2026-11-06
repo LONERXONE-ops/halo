@@ -180,6 +180,41 @@ data class TransferInfo(
     /** 0..1, or -1 when the app does not say how far along it is. */
     val progress: Float,
     val contentIntent: PendingIntent?,
+    /** The app's line under the title ("12 MB of 40 MB · 2 min left"). */
+    val detail: String = "",
+    val paused: Boolean = false,
+    /** The app's own buttons (Pause, Resume, Cancel…), kept as they are. */
+    val actions: List<Pair<String, PendingIntent>> = emptyList(),
+)
+
+/** A one-time code (OTP) found in a message, ready to copy from the island. */
+data class OtpInfo(
+    val key: String,
+    val packageName: String,
+    val appName: String,
+    val icon: Bitmap?,
+    val code: String,
+    val contentIntent: PendingIntent?,
+)
+
+/**
+ * A ride or a delivery on its way (Bolt, Uber, Chowdeck, Glovo…), read from
+ * the app's notifications and shown as live progress.
+ */
+data class LiveInfo(
+    val key: String,
+    val packageName: String,
+    val appName: String,
+    val icon: Bitmap?,
+    val title: String,
+    val status: String,
+    /** Minutes away, or -1 when the app doesn't say. */
+    val etaMin: Int,
+    /** 0 placed or booked, 1 preparing or driver assigned, 2 on the way, 3 arriving or arrived, 4 done. */
+    val stage: Int,
+    val ride: Boolean,
+    val contentIntent: PendingIntent?,
+    val actions: List<Pair<String, PendingIntent>> = emptyList(),
 )
 
 /** Turn-by-turn navigation from Google Maps. */
@@ -239,6 +274,32 @@ object IslandStore {
         private set
     var alarm: AlarmInfo? = null
         private set
+    var otp: OtpInfo? = null
+        private set
+    var live: LiveInfo? = null
+        private set
+    private val expiry = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** A code shows for 3 minutes (codes expire), or until its message is cleared. */
+    fun setOtp(o: OtpInfo?) {
+        if (o == otp) return
+        otp = o
+        expiry.removeCallbacksAndMessages("otp")
+        if (o != null) expiry.postAtTime({ if (otp?.key == o.key && otp?.code == o.code) setOtp(null) }, "otp", android.os.SystemClock.uptimeMillis() + 180_000L)
+        dispatch()
+    }
+
+    /** A ride or delivery; once it's done it shows "Delivered" for a few seconds, then goes. */
+    fun setLive(l: LiveInfo?) {
+        if (l == live) return
+        live = l
+        expiry.removeCallbacksAndMessages("live")
+        if (l != null) {
+            val wait = if (l.stage >= 4) 8_000L else 2 * 60 * 60_000L
+            expiry.postAtTime({ if (live?.key == l.key) setLive(null) }, "live", android.os.SystemClock.uptimeMillis() + wait)
+        }
+        dispatch()
+    }
     var transfer: TransferInfo? = null
         private set
     var nav: NavInfo? = null
@@ -567,6 +628,15 @@ object Prefs {
     const val EV_BATTERY = "ev_battery"
     const val EV_BUDS = "ev_buds"
     const val ALARMS = "alarms"
+    /** One-time codes on the island, with a Copy button. */
+    const val OTP = "otp"
+    /** Rides and deliveries as live progress. */
+    const val LIVE = "live_rides"
+    /** How the island moves: 0 relaxed, 1 normal, 2 quick. */
+    const val MOTION_SPEED = "motion_speed"
+    /** How much it bounces: 0 subtle, 1 normal, 2 bouncy. */
+    const val MOTION_BOUNCE = "motion_bounce"
+
     // The music player (Settings, Music player).
     /** The card takes the album's colour. */
     const val MP_TINT = "mp_tint"

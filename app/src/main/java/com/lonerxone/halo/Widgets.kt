@@ -259,49 +259,88 @@ class ProgressLine(context: Context) : View(context) {
         path.close()
     }
 
+    private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    private var shaderKey = 0
+    private var frontShader: android.graphics.Shader? = null
+    private var lineShader: android.graphics.Shader? = null
+
+    private fun mixWhite(c: Int, f: Float) = Color.rgb(
+        (Color.red(c) + (255 - Color.red(c)) * f).toInt(),
+        (Color.green(c) + (255 - Color.green(c)) * f).toInt(),
+        (Color.blue(c) + (255 - Color.blue(c)) * f).toInt(),
+    )
+
+    /**
+     * Samsung-style: three soft layers of hills over the played part (deep at
+     * the back, bright at the front with a fine light edge), a thick line that
+     * brightens toward the thumb, and a knob with a white ring and a glow
+     * that pulses with the beat.
+     */
     private fun drawHills(canvas: Canvas, shown: Float) {
         val now = SystemClock.uptimeMillis()
         val dt = if (lastT == 0L) 0.016f else ((now - lastT) / 1000f).coerceIn(0f, 0.05f)
         lastT = now
         val hear = playing && Beat.fresh()
-        val beat = if (hear) (Beat.levels[0] * 0.65f + Beat.levels[1] * 0.35f).coerceIn(0f, 1f) else if (playing) 0.5f + 0.12f * kotlin.math.sin(now / 420f) else 0.3f
+        val beat = if (hear) (Beat.levels[0] * 0.65f + Beat.levels[1] * 0.35f).coerceIn(0f, 1f) else if (playing) 0.5f + 0.1f * kotlin.math.sin(now / 480f) else 0.3f
         // Quick to rise on a hit, slower to fall, like a meter.
-        breathe += (beat - breathe) * (1f - kotlin.math.exp(-(if (beat > breathe) 18f else 6f) * dt))
-        if (playing) ripple += dt * 2.4f
-        val th = 4f * density
-        val cy = height * 0.66f
+        breathe += (beat - breathe) * (1f - kotlin.math.exp(-(if (beat > breathe) 16f else 5f) * dt))
+        if (playing) ripple += dt * 1.6f
+        val th = 4.5f * density
+        val cy = height * 0.68f
         val x = width * shown
-        val maxH = cy - 1.5f * density
+        val maxH = kotlin.math.min(cy - 2f * density, 15f * density)
         val pk = peaksFor(56)
         val c = bar.color
-        // Ahead: the rest of the song's hills, faint, so you can see its shape coming.
-        if (x < width - 2f) {
-            hillPath(x, width.toFloat(), cy, maxH, 0.55f, x, 0f, pk)
-            fadePaint.color = Color.argb(22, 255, 255, 255)
-            canvas.drawPath(path, fadePaint)
+        val light = mixWhite(c, 0.45f)
+        // Gradients made once per colour and size, not every frame.
+        val key = c * 31 + width * 7 + height
+        if (key != shaderKey) {
+            shaderKey = key
+            frontShader = android.graphics.LinearGradient(0f, cy - maxH, 0f, cy, Color.argb(215, Color.red(light), Color.green(light), Color.blue(light)), Color.argb(70, Color.red(c), Color.green(c), Color.blue(c)), android.graphics.Shader.TileMode.CLAMP)
+            lineShader = null
         }
+        // The rest of the song: a calm, soft line.
         canvas.drawRoundRect(x, cy - th / 2f, width.toFloat(), cy + th / 2f, th / 2f, th / 2f, track)
-        // Played: two layers of hills in the song's colour, the front one brighter at the top.
         if (x > 2f) {
-            hillPath(0f, x, cy, maxH, 0.62f + 0.38f * breathe, x, breathe, pk)
+            val lift = 0.6f + 0.4f * breathe
+            // Back: deep and low-contrast, a little taller, so the front reads in front of it.
+            hillPath(0f, x, cy, maxH, lift, x, breathe, pk)
             hillPaint.shader = null
-            hillPaint.color = Color.argb(70, Color.red(c), Color.green(c), Color.blue(c))
+            hillPaint.color = Color.argb(55, Color.red(c), Color.green(c), Color.blue(c))
             canvas.drawPath(path, hillPaint)
-            hillPath(0f, x, cy, maxH, (0.62f + 0.38f * breathe) * 0.6f, x, breathe, pk)
-            hillPaint.shader = android.graphics.LinearGradient(0f, cy - maxH * 0.6f, 0f, cy, Color.argb(190, Color.red(c), Color.green(c), Color.blue(c)), Color.argb(90, Color.red(c), Color.green(c), Color.blue(c)), android.graphics.Shader.TileMode.CLAMP)
+            // Middle.
+            hillPath(0f, x, cy, maxH, lift * 0.78f, x, breathe, pk)
+            hillPaint.color = Color.argb(95, Color.red(c), Color.green(c), Color.blue(c))
+            canvas.drawPath(path, hillPaint)
+            // Front: bright at the top, with a fine light edge.
+            hillPath(0f, x, cy, maxH, lift * 0.52f, x, breathe, pk)
+            hillPaint.shader = frontShader
             canvas.drawPath(path, hillPaint)
             hillPaint.shader = null
+            edgePaint.strokeWidth = 1f * density
+            edgePaint.color = Color.argb(110, 255, 255, 255)
+            canvas.drawPath(path, edgePaint)
+            // The played line, brightening toward the thumb.
+            lineShader = android.graphics.LinearGradient(0f, 0f, x.coerceAtLeast(1f), 0f, c, light, android.graphics.Shader.TileMode.CLAMP)
+            bar.shader = lineShader
             canvas.drawRoundRect(0f, cy - th / 2f, x, cy + th / 2f, th / 2f, th / 2f, bar)
+            bar.shader = null
         }
-        // The thumb: a round knob with a white ring; its glow pulses with the beat.
+        // The knob.
         val tr = (if (dragging) 8.5f else 7f) * density
         val tx = x.coerceIn(tr, width - tr)
-        val g = tr * (2f + breathe * 0.8f)
-        glowPaint.shader = android.graphics.RadialGradient(tx, cy, g, Color.argb((90 + 90 * breathe).toInt().coerceAtMost(200), Color.red(c), Color.green(c), Color.blue(c)), Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP)
+        val g = tr * (2f + breathe * 0.7f)
+        glowPaint.shader = android.graphics.RadialGradient(tx, cy, g, Color.argb((80 + 90 * breathe).toInt().coerceAtMost(190), Color.red(c), Color.green(c), Color.blue(c)), Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP)
         canvas.drawCircle(tx, cy, g, glowPaint)
+        bar.color = light
         canvas.drawCircle(tx, cy, tr, bar)
-        ringPaint.strokeWidth = 2.2f * density
-        canvas.drawCircle(tx, cy, tr - 1.1f * density, ringPaint)
+        bar.color = c
+        ringPaint.strokeWidth = 2.4f * density
+        canvas.drawCircle(tx, cy, tr - 1.2f * density, ringPaint)
         if ((playing || kotlin.math.abs(breathe - 0.3f) > 0.02f) && isShown) postInvalidateOnAnimation() else lastT = 0L
     }
 }
@@ -609,5 +648,69 @@ class AmbientWave(context: Context) : View(context) {
             c.drawPath(path, p)
         }
         if ((playing || moving) && isShown) postInvalidateOnAnimation() else lastT = 0L
+    }
+}
+
+
+/**
+ * The stages of a ride or delivery as a track: dots for placed, preparing,
+ * on the way and arriving, joined by a line that fills up to now, with a
+ * little car or scooter that drives along to the current stage (and bobs
+ * gently while it's on the way).
+ */
+class StageTrack(context: Context) : View(context) {
+    var stage = 0
+        set(v) {
+            field = v
+            invalidate()
+        }
+    var ride = false
+    var vehicle: android.graphics.drawable.Drawable? = null
+    private val d = resources.displayMetrics.density
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var shown = -1f
+    private var lastT = 0L
+
+    override fun onDraw(c: Canvas) {
+        val now = SystemClock.uptimeMillis()
+        val dt = if (lastT == 0L) 0.016f else ((now - lastT) / 1000f).coerceIn(0f, 0.05f)
+        lastT = now
+        // Where the vehicle is along the track (0..1), driving smoothly to the stage.
+        val target = (stage.coerceIn(0, 4).coerceAtMost(3) / 3f)
+        if (shown < 0f) shown = 0f
+        shown += (target - shown) * (1f - kotlin.math.exp(-3.5f * dt))
+        val pad = 10f * d
+        val w = width - pad * 2
+        val cy = height * 0.68f
+        line.strokeCap = Paint.Cap.ROUND
+        line.strokeWidth = 4f * d
+        line.color = Color.argb(46, 255, 255, 255)
+        c.drawLine(pad, cy, pad + w, cy, line)
+        val done = if (stage >= 4) Color.rgb(52, 199, 89) else Color.WHITE
+        line.color = done
+        c.drawLine(pad, cy, pad + w * shown, cy, line)
+        for (i in 0..3) {
+            val x = pad + w * i / 3f
+            val reached = shown * 3f >= i - 0.02f
+            dot.color = if (reached) done else Color.argb(70, 255, 255, 255)
+            c.drawCircle(x, cy, (if (i == stage.coerceAtMost(3)) 6f else 4.5f) * d, dot)
+            if (reached) {
+                dot.color = Color.BLACK
+                c.drawCircle(x, cy, 1.8f * d, dot)
+            }
+        }
+        // The vehicle rides above the line where things are now.
+        vehicle?.let { v ->
+            val s = (20f * d).toInt()
+            val bob = if (stage in 1..3) kotlin.math.sin(now / 160f) * 1.2f * d else 0f
+            val x = (pad + w * shown - s / 2f).toInt()
+            val y = (cy - 8f * d - s + bob).toInt()
+            v.setTint(done)
+            v.setBounds(x, y, x + s, y + s)
+            v.draw(c)
+        }
+        val moving = kotlin.math.abs(target - shown) > 0.002f || stage in 1..3
+        if (moving && isShown) postInvalidateOnAnimation() else lastT = 0L
     }
 }

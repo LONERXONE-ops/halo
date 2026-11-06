@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- A delivery scooter: box on the back, seat, handlebar and two wheels. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,6h6v5h-6zM15,5h2.5l1.6,6.2a3.4,3.4 0,1 1,-1.9 0.6l-0.5,-1.8 -3.2,4.5h-4.8a3.3,3.3 0,1 1,-6.4 -1h2.2a1.3,1.3 0,1 0,2.3 1h3.7l3.4,-4.6 -0.6,-2.4h-1.5zM5.9,15.2a1.1,1.1 0,1 0,0.001 0zM18.2,13.7a1.3,1.3 0,1 0,0.001 0z" />
+</vector>

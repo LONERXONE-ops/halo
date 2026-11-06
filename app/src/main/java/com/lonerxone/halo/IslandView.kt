@@ -102,6 +102,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         data class Rec(val rec: RecInfo) : Content()
         /** An alarm going off, or a timer that just finished. */
         data class Alarm(val alarm: AlarmInfo) : Content()
+        /** A one-time code, ready to copy. */
+        data class Otp(val otp: OtpInfo) : Content()
+        /** A ride or delivery on its way. */
+        data class Live(val live: LiveInfo) : Content()
     }
 
     /** On the lock screen: the notification center stays shut (your notifications are private). */
@@ -131,6 +135,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         is Content.Torch -> "f"
         is Content.Rec -> "r"
         is Content.Alarm -> "a"
+        is Content.Otp -> "o"
+        is Content.Live -> "v"
         else -> null
     }
 
@@ -148,6 +154,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     var sizeScale = 1f
     /** Fine sizing on top of [sizeScale]: the pill's height and width, and the open card's width (1 = standard). */
     var capH = 1f
+    /** The user's Motion speed and Bounce (see [HaloTheme.speed] and [HaloTheme.bounce]). */
+    var motionSpeed = 1f
+    var motionBounce = 0f
     var capW = 1f
     var cardW = 1f
     var offsetX = 0f
@@ -377,10 +386,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun idleD(): Float = if (geometry.notch != null) max(min(notchW(), notchH()).toFloat(), dpf(20f)) else dpf(22f)
-    private fun compactH(): Float = dpf(34f) * sizeScale * capH
+    private fun compactH(): Float = dpf(HaloTheme.COMPACT_H) * sizeScale * capH
     // As small as it can be (like DroidBubble and iOS): the camera, plus room for one small thing each side.
-    private fun baseCompactW(): Float = max(dpf(100f) * sizeScale * capW, wrapW() + dpf(70f) * capW)
-    private fun expandedW(): Float = min(min(dpf(372f), geometry.screenW - dpf(16f)) * min(sizeScale, 1.05f) * cardW, geometry.screenW - dpf(12f))
+    private fun baseCompactW(): Float = max(dpf(HaloTheme.COMPACT_MIN_W) * sizeScale * capW, wrapW() + dpf(HaloTheme.COMPACT_CAMERA_ROOM) * capW)
+    private fun expandedW(): Float = min(min(dpf(HaloTheme.CARD_MAX_W), geometry.screenW - dpf(HaloTheme.CARD_EDGE * 2)) * min(sizeScale, 1.05f) * cardW, geometry.screenW - dpf(12f))
     private fun panelMaxH(): Float = geometry.screenH * 0.62f
     private fun gapTop(): Float = dpf(6f)
 
@@ -406,6 +415,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun canExpand(c: Content) =
         c is Content.Music || c is Content.Call || c is Content.Timer || c is Content.Transfer || c is Content.Nav || c is Content.Rec ||
+            c is Content.Otp || c is Content.Live ||
             (c is Content.Popup && c.pop.kind == "charge")
 
     private fun needsTicker() =
@@ -441,8 +451,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Lock -> "lock:" + c.unlocked
             is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name + ":" + c.call.connecting
             is Content.Timer -> "t:" + c.timer.key + ":" + (c.timer.anchor == 0L) + ":" + c.timer.actions.size
-            is Content.Transfer -> "d:" + c.transfer.key
+            // Paused and running look different (and have different buttons): rebuild on a change.
+            is Content.Transfer -> "d:" + c.transfer.key + ":" + c.transfer.paused + ":" + c.transfer.actions.joinToString { it.first }
             is Content.Nav -> "g:" + c.nav.key
+            is Content.Otp -> "o:" + c.otp.key + ":" + c.otp.code
+            // A new stage rebuilds (so it springs); a new ETA updates in place.
+            is Content.Live -> "v:" + c.live.key + ":" + c.live.stage + ":" + c.live.actions.size
             is Content.Torch -> "f:" + c.cameraId
             is Content.Rec -> "r:" + c.rec.key + ":" + c.rec.paused + ":" + (c.rec.countdownUntil > 0L)
             is Content.Alarm -> "a:" + c.alarm.key + ":" + c.alarm.label
@@ -452,6 +466,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var alarmShake: android.animation.Animator? = null
 
     private fun clearRefs() {
+        liveEta = null
+        liveStatus = null
+        transferDetail = null
         ambient = null
         extraButtons.clear()
         alarmShake?.cancel()
@@ -529,6 +546,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     is Content.Timer -> compactTimer()
                     is Content.Transfer -> compactTransfer(c.transfer)
                     is Content.Nav -> compactNav(c.nav)
+                    is Content.Otp -> compactOtp(c.otp).also { glowColor = Colors.INK; glow = 0.5f }
+                    is Content.Live -> compactLive(c.live)
                     is Content.Torch -> compactTorch().also { glowColor = Colors.INK; glow = 0.5f }
                     is Content.Lock -> compactLock(c)
                     is Content.Rec -> compactRec(c.rec).also { glowColor = Colors.RED; if (c.rec.paused || c.rec.countdownUntil > 0L) glow = 0.2f }
@@ -563,6 +582,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         is Content.Rec -> buildExpandedRec(c.rec, w.toInt(), top).also { glowColor = Colors.RED; glow = 0.4f }
                         is Content.Popup -> buildCharge(w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.6f }
                         is Content.Alarm -> buildAlarm(c.alarm, w.toInt(), top).also { glowColor = Colors.ORANGE; glow = 0.8f }
+                        is Content.Otp -> buildOtp(c.otp, w.toInt(), top).also { glowColor = Colors.INK; glow = 0.5f }
+                        is Content.Live -> buildLive(c.live, w.toInt(), top)
                         else -> View(context)
                     }
                 }
@@ -653,7 +674,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val p = c.transfer.progress
                 ring?.progress = p
                 progress?.fraction = max(0f, p)
-                percentText?.text = if (p >= 0f) "${(p * 100).toInt()}%" else ""
+                percentText?.text = if (c.transfer.paused) "Paused" else if (p >= 0f) "${(p * 100).toInt()}%" else ""
+                transferDetail?.text = c.transfer.detail
+            }
+            is Content.Live -> {
+                liveEta?.text = etaText(c.live)
+                liveStatus?.text = c.live.status
             }
             is Content.Nav -> {
                 navText?.text = c.nav.primary
@@ -941,9 +967,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Snappier and bouncier: a quick lively overshoot opening, and a
         // small settle-bounce closing too, so nothing ever feels stiff.
         // Quick moments (system capsules) snap out a little faster still.
-        val base = if (content is Content.Popup && mode == Mode.COMPACT) 720f else 640f
+        val base = (if (content is Content.Popup && mode == Mode.COMPACT) HaloTheme.STIFF_MOMENT else HaloTheme.STIFF) * motionSpeed
         k = if (scale <= 0f) base else base / (scale * scale)
-        zeta = if (grow) 0.5f else 0.66f
+        zeta = ((if (grow) HaloTheme.DAMP_GROW else HaloTheme.DAMP_SHRINK) + motionBounce).coerceIn(0.32f, 0.95f)
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
         // Swapping with the bubble: the new pill (or card) starts as the bubble,
@@ -1010,7 +1036,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         var moving = false
         for (s in springs) if (s.step(dt)) moving = true
         // Content shows as soon as the shape is half open, so it feels instant.
-        if (!revealed && shapeProgress() >= 0.45f) reveal()
+        if (!revealed && shapeProgress() >= HaloTheme.REVEAL_AT) reveal()
         slot?.translationY = v(6) - t(6)
         fitOutgoing()
         updateClip()
@@ -1396,7 +1422,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 outH = old.height.coerceAtLeast(1)
                 outCy = old.top + old.height / 2f + old.translationY
                 old.clipToOutline = false
-                old.animate().alpha(0f).setDuration(100L).setInterpolator(DecelerateInterpolator(1.5f)).withLayer().withEndAction {
+                old.animate().alpha(0f).setDuration(HaloTheme.SWAP_OUT_MS).setInterpolator(DecelerateInterpolator(1.5f)).withLayer().withEndAction {
                     removeView(old)
                     if (outgoing === old) outgoing = null
                 }.start()
@@ -1468,7 +1494,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun reveal() {
         revealed = true
-        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(270L)?.withLayer()?.start()
+        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(HaloTheme.REVEAL_MS)?.withLayer()?.start()
         // Opened cards: their parts rise in one after another instead of all at once.
         if (mode == Mode.EXPANDED || mode == Mode.PANEL) cascade()
     }
@@ -1487,7 +1513,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             c.scaleX = 0.96f
             c.scaleY = 0.96f
             c.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
-                .setStartDelay(30L + i * 38L).setDuration(380L)
+                .setStartDelay(30L + i * HaloTheme.CASCADE_STEP_MS).setDuration(380L)
                 .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
         }
     }
@@ -2320,11 +2346,186 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun compactTransfer(t: TransferInfo): Sides {
         val r = ProgressRing(context).apply {
-            color = Colors.INK
+            color = if (t.paused) Colors.SILVER else Colors.INK
             progress = t.progress
         }
         ring = r
-        return Sides(roundImage(t.icon, dpf(11f), Colors.GRAPHITE, R.drawable.ic_download), r, dp(22), dp(18), dp(18))
+        // Paused: a small pause sign inside the ring.
+        val right: View = if (t.paused) FrameLayout(context).apply {
+            addView(r, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+            addView(icon(R.drawable.ic_pause, Colors.SILVER), LayoutParams(dp(9), dp(9), Gravity.CENTER))
+        } else r
+        return Sides(roundImage(t.icon, dpf(10f), Colors.GRAPHITE, R.drawable.ic_download), right, dp(20), dp(18), dp(18))
+    }
+
+    // ----- One-time codes -----
+
+    /** Copies the code (marked sensitive, so Android doesn't show it in its clipboard preview). */
+    private fun copyCode(o: OtpInfo) {
+        try {
+            val cm = context.getSystemService(android.content.ClipboardManager::class.java) ?: return
+            val clip = android.content.ClipData.newPlainText("Code", o.code)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                clip.description.extras = android.os.PersistableBundle().apply { putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true) }
+            }
+            cm.setPrimaryClip(clip)
+        } catch (_: Exception) {
+        }
+        if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+    }
+
+    /** The code spaced out like a keypad display: "482 193". */
+    private fun spacedCode(c: String) = if (c.length == 6) c.substring(0, 3) + " " + c.substring(3) else c.toCharArray().joinToString(" ")
+
+    /** Compact: a key on the left, the code on the right. */
+    private fun compactOtp(o: OtpInfo): Sides {
+        val key = icon(R.drawable.ic_key, Colors.INK)
+        val code = text(13.5f, Color.WHITE, true).apply {
+            text = spacedCode(o.code)
+            fontFeatureSettings = "tnum"
+            letterSpacing = 0.06f
+        }
+        key.rotation = -60f
+        key.animate().rotation(0f).setDuration(520L).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+        if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        return Sides(key, code, dp(16))
+    }
+
+    /**
+     * Open: the app, then the code big in separate digit tiles that drop in
+     * one after another, a Copy button that turns into "Copied ✓", and
+     * Copy and open (copies, then opens the message's app).
+     */
+    private fun buildOtp(o: OtpInfo, w: Int, top: Float): View {
+        val col = card()
+        val tag = hRow(sized(icon(R.drawable.ic_key, Colors.INK), dp(13)), spaced(text(12f, white70, true).apply { text = "Code from ${o.appName}" }, 6))
+        col.addView(cameraRow(tag, null, w, top))
+        val b = body()
+        val tiles = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val n = o.code.length
+        val tileW = ((w - dp(40) - dp(6) * (n - 1)) / n).coerceAtMost(dp(44))
+        o.code.forEachIndexed { i, ch ->
+            val t = text(24f, Color.WHITE, true).apply {
+                text = ch.toString()
+                gravity = Gravity.CENTER
+                fontFeatureSettings = "tnum"
+                background = GradientDrawable().apply {
+                    setColor(Color.argb(30, 255, 255, 255))
+                    cornerRadius = dpf(12f)
+                    setStroke(dp(1), Color.argb(26, 255, 255, 255))
+                }
+                alpha = 0f
+                translationY = -dpf(14f)
+                animate().alpha(1f).translationY(0f).setStartDelay(80L + i * 45L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
+            }
+            tiles.addView(t, LinearLayout.LayoutParams(tileW, dp(52)).apply { if (i > 0) marginStart = dp(6) })
+            // A gap in the middle of a 6 digit code, like it's usually read.
+            if (n == 6 && i == 2) tiles.addView(View(context), LinearLayout.LayoutParams(dp(6), 1))
+        }
+        b.addView(tiles)
+        val buttons = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        lateinit var copy: TextView
+        copy = pillButton("Copy", Color.WHITE, Color.BLACK) {
+            copyCode(o)
+            copy.text = "Copied ✓"
+            copy.animate().scaleX(1.06f).scaleY(1.06f).setDuration(90).withEndAction {
+                copy.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+            }.start()
+            // Done with it: back to the camera a moment later.
+            postDelayed({ if ((content as? Content.Otp)?.otp?.key == o.key) IslandStore.setOtp(null) }, 900L)
+        }
+        buttons.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        buttons.addView(pillButton("Copy and open", Color.argb(48, 255, 255, 255), Color.WHITE) {
+            copyCode(o)
+            host.send(o.contentIntent)
+            IslandStore.setOtp(null)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        b.addView(buttons)
+        col.addView(b)
+        return col
+    }
+
+    // ----- Rides and deliveries -----
+    private var liveEta: TextView? = null
+    private var liveStatus: TextView? = null
+
+    private fun etaText(l: LiveInfo) = when {
+        l.stage >= 4 -> if (l.ride) "Done" else "Delivered"
+        l.stage == 3 -> if (l.ride) "Here" else "Arriving"
+        l.etaMin == 0 -> "Now"
+        l.etaMin > 0 -> "${l.etaMin} min"
+        else -> LiveStatus.stageNames(l.ride)[l.stage.coerceIn(0, 4)]
+    }
+
+    /** Compact: the app on the left, minutes away (or the stage) on the right. */
+    private fun compactLive(l: LiveInfo): Sides {
+        val tint = if (l.stage >= 3) Colors.GREEN else Color.WHITE
+        val right = text(12.5f, tint, true).apply {
+            text = etaText(l)
+            fontFeatureSettings = "tnum"
+            maxWidth = dp(80)
+        }
+        liveEta = right
+        return Sides(roundImage(l.icon, dpf(10f), Colors.GRAPHITE, if (l.ride) R.drawable.ic_car else R.drawable.ic_scooter), right, dp(20))
+    }
+
+    /**
+     * Open: the app and how far away; what the app says; a track with the
+     * stages (placed, preparing, on the way, arriving) and a little car or
+     * scooter that drives to where things are; and the app's own buttons
+     * (call the driver, track…), kept as they are.
+     */
+    private fun buildLive(l: LiveInfo, w: Int, top: Float): View {
+        val col = card()
+        val eta = text(13f, if (l.stage >= 3) Colors.GREEN else Color.WHITE, true).apply {
+            text = etaText(l)
+            fontFeatureSettings = "tnum"
+        }
+        liveEta = eta
+        col.addView(cameraRow(appTag(l.icon, l.appName, Colors.GRAPHITE), eta, w, top))
+        val b = body()
+        b.addView(text(16f, Color.WHITE, true).apply {
+            text = l.title
+            maxLines = 2
+        })
+        val st = text(13f, white70, false).apply {
+            text = l.status
+            maxLines = 2
+            setPadding(0, dp(3), 0, 0)
+        }
+        liveStatus = st
+        if (l.status.isNotEmpty() && l.status != l.title) b.addView(st)
+        val track = StageTrack(context).apply {
+            stage = l.stage
+            ride = l.ride
+            vehicle = context.getDrawable(if (l.ride) R.drawable.ic_car else R.drawable.ic_scooter)?.mutate()
+        }
+        b.addView(track, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(12) })
+        val names = LiveStatus.stageNames(l.ride)
+        val labels = FrameLayout(context)
+        for ((i, g) in listOf(Gravity.START, Gravity.CENTER_HORIZONTAL, Gravity.END).withIndex()) {
+            val idx = listOf(0, 2, 3)[i]
+            labels.addView(text(10.5f, if (l.stage >= idx) Color.WHITE else white55, l.stage == idx).apply { text = names[idx] }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, g))
+        }
+        b.addView(labels)
+        if (l.actions.isNotEmpty()) {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(12), 0, 0)
+            }
+            l.actions.forEachIndexed { i, (label, pi) ->
+                row.addView(pillButton(label, if (i == 0) Color.WHITE else Color.argb(48, 255, 255, 255), if (i == 0) Color.BLACK else Color.WHITE) { host.send(pi) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
+            }
+            b.addView(row)
+        }
+        col.addView(b)
+        return col
     }
 
     private fun compactNav(nv: NavInfo): Sides {
@@ -3043,19 +3244,60 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         return col
     }
 
+    private var transferDetail: TextView? = null
+
+    /**
+     * Downloads and uploads: the app, the percentage (or Paused), the file,
+     * a progress line, the app's own line (size, speed, time left), and its
+     * own buttons, Pause, Resume and Cancel, working exactly as in the app.
+     */
     private fun buildExpandedTransfer(t: TransferInfo, w: Int, top: Float): View {
         val col = card()
-        val pct = text(12.5f, Colors.SILVER, true).apply { text = if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else "" }
+        val pct = text(12.5f, if (t.paused) Colors.ORANGE else Colors.SILVER, true).apply {
+            text = if (t.paused) "Paused" else if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else ""
+            fontFeatureSettings = "tnum"
+        }
         percentText = pct
         col.addView(cameraRow(appTag(t.icon, t.appName, Colors.GRAPHITE), pct, w, top))
         val b = body()
-        b.addView(text(15.5f, Color.WHITE, true).apply { text = t.title })
+        b.addView(text(15.5f, Color.WHITE, true).apply {
+            text = t.title
+            maxLines = 2
+        })
         val bar = ProgressLine(context).apply {
-            color = Colors.INK
+            color = if (t.paused) Colors.SILVER else Colors.INK
             fraction = max(0f, t.progress)
         }
         progress = bar
         b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)).apply { topMargin = dp(10) })
+        val detail = text(11.5f, white55, false).apply {
+            text = t.detail
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            fontFeatureSettings = "tnum"
+        }
+        transferDetail = detail
+        if (t.detail.isNotEmpty()) b.addView(detail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
+        if (t.actions.isNotEmpty()) {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(12), 0, 0)
+            }
+            t.actions.forEachIndexed { i, (label, pi) ->
+                val l = label.lowercase()
+                val danger = l.contains("cancel") || l.contains("delete") || l.contains("stop")
+                val main = l.contains("resume") || l.contains("retry") || l.contains("open") || l.contains("install")
+                val btn = pillButton(label, when {
+                    main -> Color.WHITE
+                    danger -> Color.argb(60, 255, 69, 58)
+                    else -> Color.argb(48, 255, 255, 255)
+                }, if (main) Color.BLACK else Color.WHITE) {
+                    host.send(pi)
+                }
+                row.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
+            }
+            b.addView(row)
+        }
         col.addView(b)
         return col
     }
@@ -3788,6 +4030,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Transfer -> host.send(c.transfer.contentIntent)
             is Content.Nav -> host.send(c.nav.contentIntent)
             is Content.Alarm -> host.send(c.alarm.contentIntent)
+            is Content.Otp -> host.send(c.otp.contentIntent)
+            is Content.Live -> host.send(c.live.contentIntent)
             else -> return
         }
         haptic()

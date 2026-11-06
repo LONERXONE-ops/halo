@@ -220,6 +220,9 @@ class HaloNotificationListener : NotificationListenerService() {
         if (IslandStore.timer?.key == sbn.key) IslandStore.setTimer(null)
         lastClock.remove(sbn.key)
         if (IslandStore.alarm?.key == sbn.key) IslandStore.setAlarm(null)
+        if (IslandStore.otp?.key == sbn.key) IslandStore.setOtp(null)
+        // A ride or delivery's notification went: unless it just said "Delivered", it's over.
+        IslandStore.live?.let { l -> if (l.key == sbn.key && l.stage < 4) IslandStore.setLive(null) }
         IslandStore.rec?.let { if (!it.own && it.key == sbn.key) IslandStore.setRec(null) }
         if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
         if (IslandStore.transfer?.key == sbn.key) IslandStore.setTransfer(null)
@@ -596,13 +599,47 @@ class HaloNotificationListener : NotificationListenerService() {
             return true
         }
 
+        // Rides and deliveries (Bolt, Uber, Chowdeck, Glovo…): live progress on the island.
+        if (pkg != packageName && pkg !in Prefs.blocked(this) && prefs.getBoolean(Prefs.LIVE, true)) {
+            val sub = ex.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
+            val big = ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim().orEmpty()
+            val body = listOf(text, big, sub).filter { it.isNotEmpty() }.distinct().joinToString(" · ")
+            val r = LiveStatus.read(pkg, title, body, sbn.isOngoing)
+            if (r != null) {
+                val prev = IslandStore.live?.takeIf { it.packageName == pkg }
+                IslandStore.setLive(
+                    LiveInfo(
+                        key = sbn.key,
+                        packageName = pkg,
+                        appName = appName(pkg),
+                        icon = appIcon(pkg),
+                        title = title.ifEmpty { appName(pkg) },
+                        status = text.ifEmpty { big.ifEmpty { sub } },
+                        // Keep the last time the app gave, until it gives a new one.
+                        etaMin = if (r.etaMin >= 0) r.etaMin else if (r.stage >= 3) -1 else prev?.etaMin ?: -1,
+                        stage = r.stage,
+                        ride = r.ride,
+                        contentIntent = n.contentIntent,
+                        actions = n.actions?.filter { it.actionIntent != null && !it.title.isNullOrBlank() }?.take(3)?.map { it.title.toString() to it.actionIntent }.orEmpty(),
+                    ),
+                )
+                Debug.lastNotification = "${appName(pkg)}: live (${LiveStatus.stageNames(r.ride)[r.stage]})"
+                return true
+            }
+        }
+
         // Downloads, uploads and installs
         val max = ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
         val prog = ex.getInt(Notification.EXTRA_PROGRESS, 0)
         val indeterminate = ex.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)
         val hasBar = max > 0 || (indeterminate && n.category == Notification.CATEGORY_PROGRESS)
-        if (hasBar && sbn.isOngoing) {
+        val actionTitles = n.actions?.map { it.title?.toString()?.lowercase().orEmpty() }.orEmpty()
+        val sayPaused = Regex("\\b(paused|waiting for (network|wi-?fi)|queued)\\b", RegexOption.IGNORE_CASE).containsMatchIn("$title $text") ||
+            (actionTitles.any { it.contains("resume") } && actionTitles.none { it.contains("pause") })
+        // A paused download often stops being "ongoing"; it's still the same download.
+        if (hasBar && (sbn.isOngoing || (sayPaused && IslandStore.transfer?.key == sbn.key))) {
             if (!prefs.getBoolean(Prefs.TRANSFERS, true)) return true
+            val sub = ex.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim().orEmpty()
             IslandStore.setTransfer(
                 TransferInfo(
                     key = sbn.key,
@@ -611,6 +648,9 @@ class HaloNotificationListener : NotificationListenerService() {
                     icon = appIcon(pkg),
                     progress = if (max > 0) (prog.toFloat() / max).coerceIn(0f, 1f) else -1f,
                     contentIntent = n.contentIntent,
+                    detail = listOf(if (title.isNotEmpty()) text else "", sub).filter { it.isNotEmpty() }.distinct().joinToString(" · "),
+                    paused = sayPaused,
+                    actions = n.actions?.filter { it.actionIntent != null && !it.title.isNullOrBlank() }?.take(3)?.map { it.title.toString() to it.actionIntent }.orEmpty(),
                 ),
             )
             return true
@@ -699,6 +739,17 @@ class HaloNotificationListener : NotificationListenerService() {
         }
         shown[sbn.key] = fingerprint
         if (shown.size > 200) shown.clear()
+
+        // A one-time code: shown big on the island with a Copy button (instead of a plain pop).
+        if (prefs.getBoolean(Prefs.OTP, true) && !hideText) {
+            val code = Otp.find(title, text + " " + rich.text)
+            if (code != null) {
+                IslandStore.setOtp(OtpInfo(sbn.key, pkg, app, rich.appIcon, code, n.contentIntent))
+                Debug.lastNotification = "$app: code"
+                Debug.note("$app: one-time code on the island")
+                return
+            }
+        }
 
         // Cooldown: an app that fires 3+ alerts within 20 s stops popping the island
         // (everything still shows in the notification center).

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- A key: round bow with a hole, a shaft and two teeth. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.5,7a5,5 0,1 1,-0.001 0zM7.5,10a2,2 0,1 0,0.001 0zM11.6,11h10.4v2.6h-2v2.4h-2.4v-2.4h-1.8v1.6h-2.4v-1.6h-1.8z" />
+</vector>
