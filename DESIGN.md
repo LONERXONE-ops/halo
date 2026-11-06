@@ -40,19 +40,28 @@ and how is it going (right).
 Spatial springs, after Material 3 Expressive's tokens:
 
 - Stiffness 640 for opening, closing and resizing; 720 for quick moments.
-- Damping 0.5 while growing (about 15% overshoot, the "alive" bounce) and
-  0.66 while shrinking (settles cleanly).
+- Damping 0.4 while growing (about 25% overshoot, the "alive" bounce) and
+  0.55 while shrinking (still springy as it settles). Halo leans bouncy on purpose.
 - The user's Motion speed scales stiffness (Relaxed 0.6x, Quick 1.45x) and
-  Bounce shifts damping (Subtle +0.16, Bouncy -0.12).
-- Content appears once the shape is 45% open (270 ms fade and scale-in),
+  Bounce shifts damping (Subtle +0.14, Bouncy -0.1).
+- Content appears once the shape is 45% open (300 ms springy scale-in),
   so it feels instant. Old content fades out in 100 ms.
-- Opened cards: rows rise in one after another, 38 ms apart.
+- Opened cards: rows rise in one after another, 42 ms apart.
 - New content at the same size: a single jelly squish (a spring kicked from
   its own resting place), never two chained animations.
 - Taps: a quick press-in, and a springy release that carries the finger's
   motion.
 - Feedback that matters gets a haptic: arrivals, ring and vibrate, a wrong
   PIN (the island shakes no), copying a code.
+
+## Notifications
+
+- A new alert always arrives as a pill: photo with the app's badge and the
+  sender on the left of the camera, the message on the right (each up to
+  about 100 dp, one line). The photo pops in with a spin, then the name
+  and the message spring out from the camera.
+- Tap or pull down: it opens into the full card. Swipe up: dismiss. Hold:
+  open the app.
 
 ## Quick moments
 

@@ -493,6 +493,10 @@ object IslandStore {
     /** All your current notifications (from the listener), for swiping through. */
     var noteSource: (() -> List<NotifInfo>)? = null
 
+    /** Goes up by one each time a new alert arrives (so the island knows to start it as a pill). */
+    var notifArrival = 0
+        private set
+
     fun showNotif(n: NotifInfo, durationMs: Long) {
         // The new alert first, then every other notification you have (any app),
         // newest first: swipe sideways to go through them all.
@@ -502,6 +506,7 @@ object IslandStore {
         } catch (_: Exception) {
             emptyList()
         }
+        notifArrival++
         recentNotes.clear()
         recentNotes.add(n)
         recentNotes.addAll(others)

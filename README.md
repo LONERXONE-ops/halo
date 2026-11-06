@@ -5,8 +5,8 @@
 <h1 align="center">Halo</h1>
 
 <p align="center">
-  A dynamic island for Android. A black shape around your camera that grows into music, calls,
-  messages, timers and more, then tucks itself back into the lens.<br>
+  A dynamic island for Android. A black shape around your camera that springs open into
+  notifications, music, calls, codes, rides, timers and more, then tucks itself back into the lens.<br>
   Works on Android 11 and newer, and feels most at home on Samsung One UI.
 </p>
 
@@ -18,59 +18,87 @@
 
 1. Download `Halo-x.y.z.apk` from **Assets** and open it. Allow your browser to install unknown apps if asked.
 2. Open **Halo** and go to **Permissions**. Every row should say **On**.
-3. After that you never need the browser again: **Halo → Updates → Download & install** fetches new versions from this page.
+3. From then on Halo updates itself: it checks every few hours, sends a notification when a new
+   version is out, and **Halo → Updates** downloads and installs it (with what's new, size, speed
+   and time left).
 
 > **A switch is greyed out?** Android blocks sideloaded apps from accessibility and notification
 > access until you allow it: **Settings → Apps → Halo → ⋮ → Allow restricted settings**, then try again.
+>
+> **After some updates** (new abilities like the screenshot switch), turn Halo off and on once in
+> **Settings → Accessibility** so Android grants them.
 
 ## What it does
 
+### Notifications
 | | |
 |---|---|
-| **Camera circle** | At rest, Halo is a black circle sitting exactly on your camera, so you don't see it. Tap the camera to open it. |
-| **Camera fit** | Finds the front camera on any phone: centred punch-holes, corner punch-holes, waterdrop and wide notches. Corner cameras keep the circle on the lens while the pill opens in the middle; phones with no cutout get an invisible tap zone at the top. Fine-tune it in Settings → Camera fit. |
-| **Notification center** | Tap the camera (or the bell beside the pill): date and time beside the lens, then a row of chips (battery, plus anything that's on: flashlight, Do Not Disturb, silent, power saving) that you tap to switch off, up to four buttons of your choice beside the title (mobile data, Wi-Fi, Bluetooth, airplane mode, screenshot, flashlight, Do Not Disturb, auto-rotate, location, hotspot), a mini music player, then your notifications. Scroll, swipe to dismiss, tap to read, or Clear all. |
-| **Reply sheet** | Opening a notification shows the whole chat (WhatsApp, Telegram, SMS…) with a reply box, plus Open, Mark as read and Dismiss. |
-| **Music** | Cover on the left, bouncing bars on the right. Tap for the full player: blurred cover behind, big play button, a seek bar you can drag. Swipe sideways to skip. |
-| **Messages** | Chats get the contact or group photo with the app badge, who said what in groups, unread count and image previews; every other app gets its own icon as a tile and up to three lines of text. Reply / Mark as read (or Open / Dismiss) right on the banner. Follows Do Not Disturb and lock screen privacy. Banking and OTP apps are off by default. |
-| **Calls** | Caller and a live timer; tap for end call (and answer while ringing). |
-| **Timers** | Countdown or stopwatch from the Clock app, with its Pause / Cancel buttons. |
-| **Downloads** | A progress ring for downloads, uploads and app installs, and a "Done" pop at the end. |
+| **Alert pills** | A new notification arrives as a pill: the photo (with the app's badge) and who it's from on one side of the camera, the message on the other. Tap it (or pull it down) and it opens into the whole notification; swipe it up to dismiss, hold it to open the app. |
+| **Full alerts** | Contact and group photos, who said what in groups, unread count, image previews, and Reply / Mark as read (or Open / Dismiss). Swipe sideways to go through your other notifications. |
+| **Reply center** | The whole chat with a reply box, quick reply chips (the app's own suggestions, Android's smart replies, everyday ones) and Open, Mark as read, Dismiss. Works in more apps than usual (it also uses replies apps only give watches). |
+| **Notification center** | Tap the camera: date and time, chips (battery, flashlight, Do Not Disturb, silent…), your quick buttons, a mini player, then every notification. It stays up to date while open; clearing the last one shows "You're all caught up". |
+| **One-time codes** | A code in a message (OTP, verification code) shows on the island with a key. Open it for big digit tiles, **Copy** and **Copy and open**. Copies are marked sensitive. |
+| **Privacy** | Follows Do Not Disturb, silent channels and lock screen privacy. Banking apps start switched off; choose which apps may pop up. |
+
+### Live activities
+| | |
+|---|---|
+| **Music** | A tiny round cover and the beat in the pill. Open it: the album's colour, soft waves that move with the bass, mids and highs, a Samsung-style wave scrubber you can drag, where it's playing (your earbuds' name), and the app's own buttons (like, shuffle, add) that change the moment you tap. |
+| **Calls** | Caller and a timer that starts when they pick up ("Calling…" before); answer and hang up. |
+| **Rides and deliveries** | Bolt, Uber, inDrive, Chowdeck, Glovo and others: minutes away in the pill; open it for the status, a track with the stages and a little car or scooter, and the app's buttons. |
+| **Alarms** | An alarm going off (or a timer ending) opens big with Snooze and Stop. |
+| **Timers** | Countdown or stopwatch from the Clock app, ticking in step with it, with its own buttons. |
+| **Downloads** | A progress ring; open it for the size and speed line and the app's own Pause, Resume and Cancel. |
+| **Screen recording** | Halo's own recorder (with quality and sound choices) or another app's: a red dot and timer, pause and stop. |
 | **Navigation** | Next turn and distance from Google Maps. |
-| **Split bubble** | Two things at once (say a timer while music plays): the second one sits in a circle beside the pill. With only one, a small bell sits there instead and opens the notification center. |
-| **Charging** | A pop when you plug in; tap it for the charging card: big percentage, wattage, time to full and temperature. |
-| **Flashlight** | Shows on the island for a few seconds, then settles back into the camera. Tap the camera: a Flashlight chip switches it off. |
-| **Halo handles pop-ups** | Optional: switch off Android's own pop-up banners so new notifications only show on the island (they still reach your shade and still ring). Needs a one-time ADB unlock, explained in the app; banners come back by themselves if the island stops. |
-| **Pictures** | Put your own picture inside the island (wide) and behind the notification center (tall), with a dimming slider so text stays readable. |
-| **Look** | White and grey on black, everywhere. Only charging stays green, and the answer / hang-up buttons keep their colours. |
-| **Little pops** | Fully charged, low battery, silent / vibrate / ring, earbuds connected (with their battery), Do Not Disturb, Wi-Fi, airplane mode, power saving. |
+| **Split bubble** | Two at once: the second sits in a circle beside the pill. Tap it to swap. |
 
-Touch anywhere else on the screen and an open island retracts. Apps that fire lots of alerts in a row get a short cooldown so they can't flood the island.
+### System moments
+Short moments that flick out and tuck back in, each with its own switch and a preview button:
+ring, vibrate and silent (the island shakes with vibrate and sways with ring), Do Not Disturb,
+Bluetooth gear connecting and leaving, Bluetooth on and off, earbuds' battery, Wi-Fi connecting
+and really dropping, hotspot, airplane mode, power saving, charging (tap it for the charging card)
+and low battery at 20%, 10% and 5%.
 
-## Settings
+### Lock screen
+A padlock that springs open when you unlock. A wrong PIN, pattern or fingerprint makes the island
+**shake no**, like an iPhone.
 
-- **On the island**: turn each activity on or off, and choose which apps may pop up.
-- **Look & feel**: island size, move it left/right/up/down, glass strength (0 = pure black), blurred album art, hide in fullscreen, haptics, low-power mode.
-- **Live status**: shows exactly what Halo sees right now (music sessions, last notification, why it is hidden). Screenshot it when something looks wrong.
+### Look and feel
+- Pure black, white and grey, with colour only where it means something (green, red, orange) and in music.
+- **Motion**: Speed (Relaxed, Normal, Quick) and Bounce (Subtle, Normal, Bouncy). Everything springs.
+- **Fine sizing**: pill height, pill width and open card width, with − and + for exact steps; move it left, right, up and down.
+- Glass strength, your own pictures inside the island and behind the notification center, low-power mode.
+- **Show in screenshots**: switch off and the island steps out of button screenshots.
+- Every settings page has its own **Reset** at the top.
 
 ## How it works
 
-- **Accessibility service**, used only to draw the island above the status bar. Halo never reads what is on your screen.
-- **Notification access**, used for music sessions, messages, calls, timers, downloads and navigation.
-- Two overlay windows: a fixed one that draws (so Android never stretches frames mid-animation) and a small invisible one that follows the shape and catches touches.
+- **Accessibility service**, used to draw the island above everything. Halo never reads your apps;
+  only while the phone is locked does it read the lock screen's message line (for the shake).
+- **Notification access**, for music sessions, messages, codes, rides, calls, timers, downloads and navigation.
+- Two overlay windows: a fixed one that draws (so frames are never stretched) and a small invisible one that follows the shape and catches touches.
 - Every part of the shape (width, height, corners, position) moves on its own spring, solved exactly each frame, so motion is the same at 60 or 120 Hz and can be interrupted without snapping.
-- Nothing leaves your phone. The only network call is the update check against this repository's releases.
+- The rules every feature follows (sizes, colours, springs, timings) are in **[DESIGN.md](DESIGN.md)**, and in code in `HaloTheme.kt`.
+- Nothing leaves your phone except the update check against this repository's releases.
+
+## Works with Halo Launcher
+
+[Halo Launcher](https://github.com/LONERXONE-ops/halo-launcher) is a home screen made for Halo:
+its music widget, notification badges and quick commands talk to the island, and each app's
+Updates page shows the other's version.
 
 ## Samsung tips
 
 - **Battery**: Setup → *Battery: unrestricted*. Also add Halo to *Settings → Battery → Background usage limits → Never sleeping apps*.
-- **Animation speed** follows *Developer options → Animator duration scale*.
-- If the island sits slightly off your camera, nudge it in *Look & feel*.
+- **Animation speed** also follows *Developer options → Animator duration scale*.
+- If the island sits slightly off your camera, fine-tune it in *Camera fit*.
 
 ## Building
 
-Every push to `main` builds a signed APK with GitHub Actions and publishes it as a release.
-Kotlin, plain Android views, no extra libraries. `minSdk 30`, `targetSdk 35`.
+Every push to `main` builds a signed APK with GitHub Actions and publishes it as a release, with
+the commit message as its notes. Kotlin, plain Android views, no extra libraries.
+`minSdk 30`, `targetSdk 35`.
 
 ## Made by
 
@@ -78,8 +106,13 @@ Kotlin, plain Android views, no extra libraries. `minSdk 30`, `targetSdk 35`.
 
 ## Thanks
 
-Ideas and lessons from other open-source islands, each worth a look:
-[Smart Island](https://github.com/agupta07505/SmartIsland) (pill proportions and outside-tap retract),
-[Island](https://github.com/Arnav-Dugad/dynamic-island-android) (closed-form spring physics, audio-only Bluetooth pops),
-and [Islandify](https://github.com/Ctps1234/Islandify) (time and battery inside the island).
+Ideas and lessons from other islands and design systems, each worth a look:
+[Smart Island](https://github.com/agupta07505/SmartIsland),
+[expressive-cutout](https://github.com/EvanKoe/expressive-cutout) (Material Expressive motion),
+DroidBubble,
+[LiveBridge](https://github.com/appsfolder/livebridge) and
+[HyperBridge](https://github.com/D4vidDf/HyperBridge) (notification parsing ideas),
+[Island](https://github.com/Arnav-Dugad/dynamic-island-android),
+[Islandify](https://github.com/bughunter11/Islandify),
+Apple's Human Interface Guidelines and Samsung One UI.
 Halo's code is written from scratch.

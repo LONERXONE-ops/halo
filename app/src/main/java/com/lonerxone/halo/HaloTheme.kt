@@ -30,9 +30,9 @@ object HaloTheme {
     const val STIFF = 640f
     /** A little stiffer for quick moments, so they flick out and tuck back in. */
     const val STIFF_MOMENT = 720f
-    /** Damping while growing (bouncy, about 15% overshoot) and shrinking (settles cleanly). */
-    const val DAMP_GROW = 0.5f
-    const val DAMP_SHRINK = 0.66f
+    /** Damping while growing (very bouncy, about 25% overshoot) and shrinking (still springy). */
+    const val DAMP_GROW = 0.4f
+    const val DAMP_SHRINK = 0.55f
 
     /** The user's Motion speed: Relaxed, Normal, Quick (stiffness multiplier). */
     fun speed(choice: Int) = when (choice) {
@@ -43,17 +43,17 @@ object HaloTheme {
 
     /** The user's Bounce: Subtle, Normal, Bouncy (added to the damping; lower = bouncier). */
     fun bounce(choice: Int) = when (choice) {
-        0 -> 0.16f
-        2 -> -0.12f
+        0 -> 0.14f
+        2 -> -0.1f
         else -> 0f
     }
 
     // ----- Content timing -----
     /** Content appears once the shape is this far open (0..1), so it feels instant. */
     const val REVEAL_AT = 0.45f
-    const val REVEAL_MS = 270L
+    const val REVEAL_MS = 300L
     /** Old content fades out this fast when something new arrives. */
     const val SWAP_OUT_MS = 100L
     /** Rows of an opened card rise in one after another, this far apart. */
-    const val CASCADE_STEP_MS = 38L
+    const val CASCADE_STEP_MS = 42L
 }

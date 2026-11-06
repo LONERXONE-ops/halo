@@ -288,7 +288,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // Public API
     // =====================================================================
 
+    /** The alert has been tapped open (a new alert always arrives as a pill). */
+    private var noteOpen = false
+    private var seenArrival = -1
+
     fun setState(newContent: Content, newBubble: Bubble?, hide: Boolean) {
+        if (newContent is Content.Note) {
+            if (IslandStore.notifArrival != seenArrival) {
+                seenArrival = IslandStore.notifArrival
+                noteOpen = false
+            }
+        } else {
+            noteOpen = false
+        }
         val wasCall = content is Content.Call
         // The bubble's activity is becoming the main one (you tapped the bubble):
         // remember where the bubble is so the pill grows out of it, and the old
@@ -430,7 +442,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (panelOpen) return Mode.PANEL
         return when (c) {
             is Content.None -> if (idleEnabled || previewing()) Mode.IDLE else Mode.HIDDEN
-            is Content.Note -> Mode.EXPANDED
+            // A new alert arrives as a pill; tap it (or pull it down) for the whole thing.
+            is Content.Note -> if (noteOpen) Mode.EXPANDED else Mode.COMPACT
             is Content.Popup -> if (expanded && c.pop.kind == "charge") Mode.EXPANDED else Mode.COMPACT
             is Content.Torch -> Mode.COMPACT
             is Content.Lock -> Mode.COMPACT
@@ -541,6 +554,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val h = compactH()
                 val sides = when (val c = content) {
                     is Content.Music -> compactMusic(c.info)
+                    is Content.Note -> compactNote(c.note).also { glowColor = c.note.accent; glow = 0.45f }
                     is Content.Popup -> compactPop(c.pop).also { glowColor = if (c.pop.accent == 0) tone(c.pop) else c.pop.accent; glow = 0.7f }
                     is Content.Call -> compactCall(c.call).also { glowColor = Colors.GREEN; glow = 0.55f }
                     is Content.Timer -> compactTimer()
@@ -558,6 +572,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 swapContent(sides.build(), w.toInt(), h.toInt(), h / 2f, cy)
                 animateTo(w, h, h / 2f, 1f, 0f, 0f, 0f, cy, grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
                 if (previous == Mode.EXPANDED || previous == Mode.PANEL || content is Content.Popup) haptic()
+                if (content is Content.Note && (content as Content.Note).note.silent.not() && previous != Mode.EXPANDED) haptic()
             }
             Mode.EXPANDED, Mode.PANEL -> {
                 val w = expandedW()
@@ -969,7 +984,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Quick moments (system capsules) snap out a little faster still.
         val base = (if (content is Content.Popup && mode == Mode.COMPACT) HaloTheme.STIFF_MOMENT else HaloTheme.STIFF) * motionSpeed
         k = if (scale <= 0f) base else base / (scale * scale)
-        zeta = ((if (grow) HaloTheme.DAMP_GROW else HaloTheme.DAMP_SHRINK) + motionBounce).coerceIn(0.32f, 0.95f)
+        zeta = ((if (grow) HaloTheme.DAMP_GROW else HaloTheme.DAMP_SHRINK) + motionBounce).coerceIn(0.28f, 0.95f)
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
         // Swapping with the bubble: the new pill (or card) starts as the bubble,
@@ -990,8 +1005,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // jelly squish so the change is felt, then it settles back.
         val sameSize = abs(w - t(0)) < dpf(4f) && abs(h - t(1)) < dpf(4f) && w > dpf(60f)
         if (sameSize && springs[0].atRest && springs[1].atRest && scale > 0f) {
-            springs[0].kick(w * 1.1f)
-            springs[1].kick(-h * 0.9f)
+            springs[0].kick(w * 1.5f)
+            springs[1].kick(-h * 1.25f)
         }
         // Opening: width leads height. Closing: height leads width. Both read as one organic motion.
         springs[0].to(w, if (grow) k * 1.15f else k, zeta)
@@ -1494,7 +1509,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun reveal() {
         revealed = true
-        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(HaloTheme.REVEAL_MS)?.withLayer()?.start()
+        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(2.4f))?.setDuration(HaloTheme.REVEAL_MS)?.withLayer()?.start()
         // Opened cards: their parts rise in one after another instead of all at once.
         if (mode == Mode.EXPANDED || mode == Mode.PANEL) cascade()
     }
@@ -2342,6 +2357,60 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             val wait = if (t.countDown) into + 4L else 1000L - into + 4L
             postDelayed(this, wait.coerceIn(16L, 1004L))
         }
+    }
+
+    /**
+     * An alert as a pill: the photo (with the app's badge) and who it's from
+     * on the left of the camera, the message on the right. Tap for all of it.
+     */
+    private fun compactNote(n: NotifInfo): Sides {
+        val avatar = FrameLayout(context).apply { clipChildren = false }
+        avatar.addView(roundImage(n.icon, dpf(11f), n.accent, R.drawable.ic_bell), LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        // The app's icon as a little badge when the big picture is a contact photo.
+        if (n.rich.avatar != null && n.rich.appIcon != null) {
+            avatar.addView(roundImage(n.rich.appIcon, dpf(5f), n.accent, R.drawable.ic_bell).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.BLACK)
+                }
+                setPadding(dp(1), dp(1), dp(1), dp(1))
+            }, LayoutParams(dp(11), dp(11), Gravity.END or Gravity.BOTTOM).apply {
+                marginEnd = -dp(2)
+                bottomMargin = -dp(2)
+            })
+        }
+        val who = text(12.5f, Color.WHITE, true).apply {
+            text = n.title
+            maxWidth = dp(92)
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val left = hRow().apply {
+            clipChildren = false
+            addView(avatar, LinearLayout.LayoutParams(dp(24), dp(24)))
+            addView(who, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(7) })
+        }
+        val msg = text(12f, white70, false).apply {
+            text = if (n.rich.picture != null && n.text.isEmpty()) "Photo" else n.text.ifEmpty { n.appName }
+            maxWidth = dp(104)
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        // In: the photo pops with a spin, then the name and the message spring
+        // out from the camera, one after the other.
+        if (animScale() > 0f) {
+            avatar.scaleX = 0.2f
+            avatar.scaleY = 0.2f
+            avatar.rotation = -35f
+            avatar.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(60L).setDuration(460L).setInterpolator(android.view.animation.OvershootInterpolator(3.4f)).start()
+            who.alpha = 0f
+            who.translationX = dpf(18f)
+            who.animate().alpha(1f).translationX(0f).setStartDelay(130L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
+            msg.alpha = 0f
+            msg.translationX = -dpf(18f)
+            msg.animate().alpha(1f).translationX(0f).setStartDelay(190L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
+        }
+        return Sides(left, msg)
     }
 
     private fun compactTransfer(t: TransferInfo): Sides {
@@ -4204,7 +4273,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             when {
                 mode == Mode.IDLE -> openPanel()
                 mode == Mode.PANEL -> {}
-                content is Content.Note -> openCurrent()
+                content is Content.Note -> if (mode == Mode.COMPACT) openNote() else openCurrent()
                 content is Content.Popup && (content as Content.Popup).pop.kind == "charge" && mode == Mode.COMPACT -> {
                     IslandStore.holdPop(10_000L)
                     expanded = true
@@ -4274,7 +4343,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         expanded = true
                         refresh()
                     }
-                    content is Content.Note -> openCurrent()
+                    content is Content.Note -> if (mode == Mode.COMPACT) openNote() else openCurrent()
                 }
                 return true
             }
@@ -4311,13 +4380,21 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 // Let go: snaps back with a wobble (the morph to the new shape carries on from here).
-                animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setDuration(520L).setInterpolator(android.view.animation.OvershootInterpolator(3.2f)).start()
+                animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setDuration(560L).setInterpolator(android.view.animation.OvershootInterpolator(3.8f)).start()
                 if (pressGlow > 0f || lit) glowTo(0f)
             }
         }
         lastTouch = SystemClock.uptimeMillis()
         if (content is Content.Note) IslandStore.holdNotif(4_000L)
         return super.dispatchTouchEvent(ev)
+    }
+
+    /** Tap the alert pill: it opens into the whole notification (and stays a little longer). */
+    private fun openNote() {
+        noteOpen = true
+        IslandStore.holdNotif(9_000L)
+        haptic()
+        refresh()
     }
 
     // ----- Swiping between alerts -----
