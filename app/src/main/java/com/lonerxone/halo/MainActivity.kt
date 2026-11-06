@@ -1128,7 +1128,7 @@ class MainActivity : Activity() {
         c.addView(iconRow(R.drawable.ic_apps, if (newer) Colors.GREEN else Colors.GRAPHITE, if (newer) "Update Halo Launcher" else "Halo Launcher", summary) {
             try {
                 if (installed != null) {
-                    startActivity(Intent().setClassName(LauncherLink.LAUNCHER, LauncherLink.LAUNCHER + ".SettingsShortcut").putExtra("page", "updates").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    startActivity(Intent().setClassName(LauncherLink.LAUNCHER, LauncherLink.LAUNCHER + ".SettingsShortcut").putExtra("page", "updates").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
                 } else {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/LONERXONE-ops/halo-launcher/releases/latest")))
                 }
