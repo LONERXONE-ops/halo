@@ -111,11 +111,12 @@ class MainActivity : Activity() {
         ABOUT("About"),
         REC_QUALITY("Recording quality"),
         REC_SOUND("Recording sound"),
+        MOMENTS("System moments"),
     }
 
     /** Where Back goes from a page. */
     private fun parentOf(p: Page): Page = when (p) {
-        Page.REC_QUALITY, Page.REC_SOUND -> Page.ISLAND
+        Page.REC_QUALITY, Page.REC_SOUND, Page.MOMENTS -> Page.ISLAND
         else -> Page.HOME
     }
 
@@ -175,6 +176,7 @@ class MainActivity : Activity() {
             Page.ABOUT -> aboutPage(col)
             Page.REC_QUALITY -> recQualityPage(col)
             Page.REC_SOUND -> recSoundPage(col)
+            Page.MOMENTS -> momentsPage(col)
         }
 
         // Same page re-rendered (a status change): keep the scroll position.
@@ -241,7 +243,37 @@ class MainActivity : Activity() {
                 isClickable = true
                 setOnClickListener { go(parentOf(page)) }
             }
-            box.addView(back, LinearLayout.LayoutParams(dp(42), dp(42)).apply { bottomMargin = dp(34) })
+            // Back on the left; on pages with settings, "Reset" on the right puts just this page back to default.
+            val top = android.widget.FrameLayout(this)
+            top.addView(back, android.widget.FrameLayout.LayoutParams(dp(42), dp(42), Gravity.START or Gravity.CENTER_VERTICAL))
+            val keys = resetKeys(page)
+            if (keys.isNotEmpty()) {
+                val reset = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(12), 0, dp(14), 0)
+                    background = GradientDrawable().apply {
+                        setColor(cardFill)
+                        cornerRadius = dp(21).toFloat()
+                        setStroke(dp(1), cardStroke)
+                    }
+                    addView(android.widget.ImageView(this@MainActivity).apply {
+                        setImageResource(R.drawable.ic_rotate)
+                        imageTintList = ColorStateList.valueOf(text1)
+                    }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(7) })
+                    addView(label("Reset", 13.5f, text1, true))
+                    isClickable = true
+                    contentDescription = "Reset this page to default"
+                    setOnClickListener { v ->
+                        v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(70).withEndAction {
+                            v.animate().scaleX(1f).scaleY(1f).setDuration(300).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                        }.start()
+                        confirmPageReset(page, keys)
+                    }
+                }
+                top.addView(reset, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), Gravity.END or Gravity.CENTER_VERTICAL))
+            }
+            box.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply { bottomMargin = dp(34) })
         }
         if (page == Page.HOME) {
             // The brand: the halo logo, glowing on black.
@@ -310,9 +342,44 @@ class MainActivity : Activity() {
             },
             iconRow(R.drawable.ic_info, Colors.GRAPHITE, "About", "Creator, privacy, diagnostics") { go(Page.ABOUT) },
         ))
-        gap(col)
-        col.addView(group(iconRow(R.drawable.ic_update, Colors.RED, "Back to default settings", "Every setting as it was when you installed Halo. Your pictures stay.") { confirmReset() }))
         credit(col)
+    }
+
+    /** The settings each page owns (what its Reset puts back). Pages without settings have none. */
+    private fun resetKeys(p: Page): List<String> = when (p) {
+        Page.ISLAND -> listOf(
+            Prefs.MUSIC, Prefs.BEAT, Prefs.CALLS, Prefs.LOCK_MODE, Prefs.LOCK_SHAKE, Prefs.ALARMS, Prefs.TIMERS, Prefs.TRANSFERS,
+            Prefs.NAV, Prefs.TORCH, Prefs.RECORDING, Prefs.NOTIFS, Prefs.HIDE_TEXT, Prefs.DND_PEEK, Prefs.CHARGING,
+        )
+        Page.MOMENTS -> listOf(
+            Prefs.SYSTEM_POPS, Prefs.CONNECTIVITY, Prefs.EV_RINGER, Prefs.EV_DND, Prefs.EV_BT, Prefs.EV_WIFI, Prefs.EV_HOTSPOT,
+            Prefs.EV_AIRPLANE, Prefs.EV_SAVER, Prefs.EV_BATTERY, Prefs.EV_BUDS,
+        )
+        Page.LOOK -> listOf(
+            Prefs.IDLE, Prefs.SCALE, Prefs.CAP_H, Prefs.CAP_W, Prefs.CARD_W, Prefs.GLASS, Prefs.ART_BACKDROP,
+            Prefs.OFFSET_X, Prefs.OFFSET_Y, Prefs.HIDE_FULLSCREEN, Prefs.HAPTICS, Prefs.LOW_POWER, Prefs.IN_SHOTS,
+        )
+        Page.CAMERA -> listOf(Prefs.CAM_X, Prefs.CAM_Y, Prefs.CAM_SIZE)
+        Page.PICTURES -> listOf(Prefs.PIC_DIM)
+        Page.REC_QUALITY -> listOf(Prefs.REC_QUALITY)
+        Page.REC_SOUND -> listOf(Prefs.REC_AUDIO)
+        else -> emptyList()
+    }
+
+    private fun confirmPageReset(p: Page, keys: List<String>) {
+        android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Reset ${p.title}?")
+            .setMessage(if (p == Page.PICTURES) "The dimming goes back to default. Your pictures stay." else "Everything on this page goes back to how it was when you installed Halo. Other pages stay as they are.")
+            .setPositiveButton("Reset") { _, _ ->
+                val e = Prefs.get(this).edit()
+                keys.forEach { e.remove(it) }
+                e.apply()
+                if (p == Page.CAMERA) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
+                Toast.makeText(this, "${p.title} is back to default", Toast.LENGTH_SHORT).show()
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /**
@@ -410,6 +477,8 @@ class MainActivity : Activity() {
             switchRowDefault("Bars follow the beat", "The music bars move with the real sound", Prefs.BEAT, false),
             switchRow("Calls", "Caller photo, Accept / Decline, Mute, Speaker and End", Prefs.CALLS),
             switchRow("Lock screen", "A padlock on the lock screen that springs open when you unlock", Prefs.LOCK_MODE),
+            switchRow("Shake on a wrong try", "The island shakes no when the PIN, pattern or fingerprint is wrong, like an iPhone", Prefs.LOCK_SHAKE),
+            switchRow("Alarms", "An alarm going off (or a timer ending) with big Snooze and Stop buttons", Prefs.ALARMS),
             switchRow("Timers & stopwatch", "Countdown from the Clock app", Prefs.TIMERS),
             switchRow("Downloads & installs", "Progress ring for files and apps", Prefs.TRANSFERS),
             switchRow("Navigation", "Next turn from Google Maps", Prefs.NAV),
@@ -428,8 +497,7 @@ class MainActivity : Activity() {
             switchRowDefault("Hide message text", "Show \"New message\" instead", Prefs.HIDE_TEXT, false),
             switchRowDefault("See messages in Do Not Disturb", "The island still shows new messages, silently. Sounds, vibration and pop-ups keep following Do Not Disturb", Prefs.DND_PEEK, false),
             switchRow("Charging", "Pop when you plug in", Prefs.CHARGING),
-            switchRow("System pops", "Low battery, full, silent, earbuds, DND", Prefs.SYSTEM_POPS),
-            switchRow("Connections & modes", "Wi-Fi, airplane mode, power saving", Prefs.CONNECTIVITY),
+            navRow("System moments", "Ring and silent, Bluetooth, Wi-Fi, hotspot, battery, earbuds, Do Not Disturb and more") { go(Page.MOMENTS) },
         ))
         gap(col, 16)
         col.addView(group(
@@ -597,6 +665,16 @@ class MainActivity : Activity() {
         col.addView(group(
             switchRow("Camera circle", "Rests on the camera; tap it for notifications", Prefs.IDLE),
             sliderRow("Size", Prefs.SCALE, 100, 80, 130, "%"),
+        ))
+        col.addView(sectionTitle("Fine sizing"))
+        col.addView(group(
+            sliderRow("Pill height", Prefs.CAP_H, 100, 80, 125, "%"),
+            sliderRow("Pill width", Prefs.CAP_W, 100, 85, 125, "%"),
+            sliderRow("Open card width", Prefs.CARD_W, 100, 80, 100, "%"),
+        ))
+        col.addView(footnote("Optional. 100% is the standard size, so nothing changes unless you move these. Use − and + for one step at a time."))
+        col.addView(sectionTitle("Glass"))
+        col.addView(group(
             sliderRow("Glass", Prefs.GLASS, 0, 0, 100, "%"),
             switchRow("Album art background", "Blurred cover behind the player", Prefs.ART_BACKDROP),
         ))
@@ -610,7 +688,9 @@ class MainActivity : Activity() {
             switchRow("Hide in fullscreen", "Videos, games and reels", Prefs.HIDE_FULLSCREEN),
             switchRow("Haptics", "Light tick on taps", Prefs.HAPTICS),
             switchRowDefault("Low-power mode", "No blur, still bars, slower updates", Prefs.LOW_POWER, false),
+            switchRow("Show in screenshots", "Off: the island steps out of the picture when you press the screenshot buttons", Prefs.IN_SHOTS),
         ))
+        if (!Prefs.get(this).getBoolean(Prefs.IN_SHOTS, true)) col.addView(footnote("Works with the button screenshot (power and volume down): while volume down is held the island fades out, and it comes back a moment later. Palm swipe and the Quick panel screenshot can't be caught. After this update, turn Halo off and on in Accessibility once so Android lets it see the volume key."))
     }
 
     // ---------------------------------------------------------------------
@@ -896,9 +976,170 @@ class MainActivity : Activity() {
         return c
     }
 
+    /**
+     * Updates, redesigned: the logo in a ring that tells you where things
+     * stand (spinning while it checks, filling while it downloads, green when
+     * you're up to date, breathing when an update is ready), one big button,
+     * the download's size, speed and time left, what's new laid out in its
+     * sections, and Halo Launcher's version beside it.
+     */
     private fun updatesPage(col: LinearLayout) {
         pageHeader(col, "Updates", "Straight from GitHub")
-        col.addView(updatesCard())
+        // First visit: look straight away instead of waiting for a tap.
+        if (latest == null && updateStatus == "Not checked yet") window.decorView.post { checkUpdates() }
+        val rel = latest
+        val newer = rel != null && rel.build > currentBuild()
+
+        // ----- The hero: logo in its ring, version, status -----
+        val hero = card().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(20), dp(26), dp(20), dp(20))
+        }
+        val ringBox = android.widget.FrameLayout(this)
+        val ring = UpdateRing(this).apply {
+            state = when {
+                downloading >= 0f -> UpdateRing.State.DOWNLOADING
+                updateStatus == "Checking…" -> UpdateRing.State.CHECKING
+                newer -> UpdateRing.State.READY
+                updateStatus == "You're up to date" -> UpdateRing.State.UP_TO_DATE
+                else -> UpdateRing.State.IDLE
+            }
+            progress = downloading.coerceAtLeast(0f)
+        }
+        ringView = ring
+        ringBox.addView(ring, android.widget.FrameLayout.LayoutParams(dp(132), dp(132)))
+        ringBox.addView(android.widget.ImageView(this).apply { setImageResource(R.drawable.logo_halo) }, android.widget.FrameLayout.LayoutParams(dp(92), dp(92), Gravity.CENTER))
+        hero.addView(ringBox, LinearLayout.LayoutParams(dp(132), dp(132)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        hero.addView(label(if (newer && rel != null) "${rel.tag} is ready" else "Halo v${version()}", 24f, text1, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+        })
+        val sub = when {
+            downloading >= 0f -> pctText(downloading, rel)
+            newer -> "You have v${version()}" + if (rel != null && rel.size > 0) "  ·  ${"%.1f".format(rel.size / 1_048_576.0)} MB download" else ""
+            updateStatus == "You're up to date" -> "You're on the latest version"
+            else -> updateStatus
+        }
+        hero.addView(label(sub, 13.5f, text2, false).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, 0)
+        }.also { pctView = it; statusView = it })
+        val btnText = when {
+            downloading >= 0f -> null
+            newer && rel != null -> "Download and install"
+            updateStatus == "Checking…" -> "Checking…"
+            else -> "Check for updates"
+        }
+        if (btnText != null) {
+            hero.addView(actionButton(btnText) {
+                when {
+                    newer && rel != null -> startUpdate(rel)
+                    updateStatus != "Checking…" -> checkUpdates()
+                }
+            }.also { progressView = it }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(18) })
+        } else {
+            progressView = null
+            hero.addView(label("Android will ask you to confirm when it's downloaded", 12f, text2, false).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(14), 0, 0)
+            })
+        }
+        col.addView(hero)
+        // The ring settles in with a little pop.
+        ringBox.scaleX = 0.8f
+        ringBox.scaleY = 0.8f
+        ringBox.alpha = 0f
+        ringBox.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(520).setInterpolator(android.view.animation.OvershootInterpolator(2f)).start()
+
+        // ----- What's new -----
+        val notes = rel?.notes.orEmpty()
+        val (headline, sections) = ReleaseNotes.parse(notes)
+        if (sections.isNotEmpty() || headline.isNotEmpty()) {
+            col.addView(sectionTitle(if (newer && rel != null) "What's new in ${rel.tag}" else "In this version"))
+            val box = card().apply { setPadding(dp(20), dp(18), dp(20), dp(16)) }
+            if (headline.isNotEmpty()) box.addView(label(headline, 16f, text1, true).apply { setPadding(0, 0, 0, dp(6)) })
+            var i = 0
+            for (sec in sections) {
+                if (sec.title.isNotEmpty()) box.addView(label(sec.title.uppercase(), 11.5f, text2, true).apply {
+                    letterSpacing = 0.08f
+                    setPadding(0, dp(14), 0, dp(4))
+                })
+                for (pt in sec.points) {
+                    val r = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, dp(5), 0, dp(5))
+                    }
+                    r.addView(View(this).apply {
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.OVAL
+                            setColor(if (newer) Colors.GREEN else text2)
+                        }
+                    }, LinearLayout.LayoutParams(dp(6), dp(6)).apply {
+                        topMargin = dp(7)
+                        marginEnd = dp(12)
+                    })
+                    r.addView(label(pt, 13.5f, text1, false).apply { setLineSpacing(0f, 1.2f) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    box.addView(r)
+                    // Points rise in one after another.
+                    r.alpha = 0f
+                    r.translationY = dp(10).toFloat()
+                    r.animate().alpha(1f).translationY(0f).setStartDelay(120L + (i++).coerceAtMost(14) * 35L).setDuration(360).setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start()
+                }
+            }
+            col.addView(box)
+        }
+
+        // ----- Halo Launcher -----
+        col.addView(sectionTitle("Halo Launcher"))
+        col.addView(launcherUpdateCard())
+        col.addView(footnote("Halo also checks by itself every few hours when you turn the screen on, and sends a notification when Halo or Halo Launcher has a new version."))
+    }
+
+    private var ringView: UpdateRing? = null
+    private var launcherLatest: Updater.Release? = null
+    private var launcherChecking = false
+
+    /** Halo Launcher's installed version and the newest one, with a button to get it. */
+    private fun launcherUpdateCard(): View {
+        val c = card()
+        val installed = try {
+            packageManager.getPackageInfo(LauncherLink.LAUNCHER, 0).versionName
+        } catch (_: Exception) {
+            null
+        }
+        val lat = launcherLatest
+        if (lat == null && !launcherChecking) {
+            launcherChecking = true
+            Updater.check(repo = "LONERXONE-ops/halo-launcher") { r ->
+                launcherChecking = false
+                if (r is Updater.Check.Ok) {
+                    launcherLatest = r.release
+                    if (page == Page.UPDATES) render()
+                }
+            }
+        }
+        val newer = installed != null && lat != null && lat.build > Updater.buildOf(installed)
+        val summary = when {
+            installed == null -> "Not installed · " + (lat?.let { "${it.tag} is the newest" } ?: "a home screen made for Halo")
+            newer && lat != null -> "v$installed installed · ${lat.tag} is out"
+            lat != null -> "v$installed · up to date"
+            else -> "v$installed"
+        }
+        c.addView(iconRow(R.drawable.ic_apps, if (newer) Colors.GREEN else Colors.GRAPHITE, if (newer) "Update Halo Launcher" else "Halo Launcher", summary) {
+            try {
+                if (installed != null) {
+                    startActivity(Intent().setClassName(LauncherLink.LAUNCHER, LauncherLink.LAUNCHER + ".SettingsShortcut").putExtra("page", "updates").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } else {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/LONERXONE-ops/halo-launcher/releases/latest")))
+                }
+            } catch (_: Exception) {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/LONERXONE-ops/halo-launcher/releases/latest")))
+                } catch (_: Exception) {
+                }
+            }
+        })
+        return c
     }
 
     private fun aboutPage(col: LinearLayout) {
@@ -906,7 +1147,7 @@ class MainActivity : Activity() {
         col.addView(group(
             infoRow("Creator", "LONERXONE"),
             infoRow("Works on", "Android 11 and newer. Tuned for Samsung One UI, where it feels most at home."),
-            infoRow("Privacy", "Halo never reads your screen. Everything stays on your phone, except the update check with GitHub."),
+            infoRow("Privacy", "Halo never reads your apps. While the phone is locked it reads only the lock screen's message line (to shake when the PIN or fingerprint is wrong). Everything stays on your phone, except the update check with GitHub."),
             infoRow("Thanks", "Ideas from Smart Island, Island and Islandify, open-source islands worth a look. Halo's code is its own."),
         ))
 
@@ -923,6 +1164,8 @@ class MainActivity : Activity() {
         col.addView(live)
         val svc = HaloService.instance
         if (svc != null) col.addView(footnote(svc.diagnostics()))
+        col.addView(sectionTitle("Start over"))
+        col.addView(group(iconRow(R.drawable.ic_rotate, Colors.RED, "Reset everything", "Every page back to default at once. Your pictures and chosen apps stay. (Each page also has its own Reset at the top.)") { confirmReset() }))
         credit(col)
     }
 
@@ -953,166 +1196,24 @@ class MainActivity : Activity() {
         accessibilityOn(), listenerOn(), batteryOk(), runtimeOk(), dndOk(), packageManager.canRequestPackageInstalls(),
     ).count { !it }
 
-    private var notesOpen = false
-    private var barView: UpdateBar? = null
     private var pctView: TextView? = null
 
-    /**
-     * The update card. Your version big, with a chip saying where you stand.
-     * When there's a newer one: "What's new" folds open into a list of what
-     * changed. While downloading: a bar fills to 100% with the percentage and
-     * size beside it. One button does the next step.
-     */
-    private fun updatesCard(): View {
-        val c = card()
-        val rel = latest
-        val newer = rel != null && rel.build > currentBuild()
-        val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(18), dp(16), dp(6))
-        }
-        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(label("Halo", 12f, text2, false))
-        left.addView(label("v" + version(), 26f, text1, true).apply { setPadding(0, dp(2), 0, 0) })
-        top.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val (chipText, chipColor) = when {
-            downloading >= 0f -> "Downloading" to Colors.BLUE
-            newer -> "${rel?.tag} is out" to Colors.GREEN
-            updateStatus == "You're up to date" -> "Up to date" to Colors.GREEN
-            else -> updateStatus.take(26) to text2
-        }
-        top.addView(label(chipText, 12f, chipColor, true).apply {
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            background = GradientDrawable().apply {
-                setColor(Color.argb(30, Color.red(chipColor), Color.green(chipColor), Color.blue(chipColor)))
-                cornerRadius = dp(14).toFloat()
-            }
-        }.also { statusView = it })
-        c.addView(top)
+    private var dlStart = 0L
 
-        // Downloading: a bar that fills to 100%.
-        if (downloading >= 0f) {
-            val box = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(20), dp(12), dp(20), dp(4))
-            }
-            val bar = UpdateBar(this).apply { set(downloading, animate = false) }
-            barView = bar
-            box.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)))
-            val info = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, dp(8), 0, 0)
-            }
-            info.addView(label("Downloading ${rel?.tag ?: ""}", 12.5f, text2, false), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            info.addView(label(pctText(downloading, rel), 12.5f, text1, true).also { pctView = it })
-            box.addView(info)
-            c.addView(box)
-        } else {
-            barView = null
-            pctView = null
-        }
-
-        // What's new, folded until you open it.
-        if (newer && rel != null) {
-            val points = whatsNew(rel.notes)
-            if (points.isNotEmpty()) {
-                c.addView(line().apply { (layoutParams as LinearLayout.LayoutParams).topMargin = dp(10) })
-                val head = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(20), dp(14), dp(16), dp(14))
-                    isClickable = true
-                }
-                head.addView(label("What's new in ${rel.tag}", 15f, text1, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                val chev = android.widget.ImageView(this).apply {
-                    setImageResource(R.drawable.ic_chevron)
-                    imageTintList = ColorStateList.valueOf(text2)
-                    rotation = if (notesOpen) 270f else 90f
-                }
-                head.addView(chev, LinearLayout.LayoutParams(dp(20), dp(20)))
-                val list = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(20), 0, dp(20), dp(10))
-                    visibility = if (notesOpen) View.VISIBLE else View.GONE
-                }
-                for (pt in points) {
-                    val r = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        setPadding(0, dp(5), 0, dp(5))
-                    }
-                    r.addView(View(this).apply {
-                        background = GradientDrawable().apply {
-                            shape = GradientDrawable.OVAL
-                            setColor(Colors.GREEN)
-                        }
-                    }, LinearLayout.LayoutParams(dp(6), dp(6)).apply {
-                        topMargin = dp(7)
-                        marginEnd = dp(12)
-                    })
-                    r.addView(label(pt, 13.5f, text1, false).apply { setLineSpacing(0f, 1.2f) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    list.addView(r)
-                }
-                head.setOnClickListener {
-                    notesOpen = !notesOpen
-                    chev.animate().rotation(if (notesOpen) 270f else 90f).setDuration(260L).setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start()
-                    if (notesOpen) {
-                        list.visibility = View.VISIBLE
-                        list.alpha = 0f
-                        list.translationY = -dp(8).toFloat()
-                        list.animate().alpha(1f).translationY(0f).setDuration(260L).start()
-                    } else {
-                        list.visibility = View.GONE
-                    }
-                }
-                c.layoutTransition = android.animation.LayoutTransition().apply { enableTransitionType(android.animation.LayoutTransition.CHANGING) }
-                c.addView(head)
-                c.addView(list)
-            }
-        }
-
-        // The one button.
-        val btnText = when {
-            downloading >= 0f -> null
-            newer && rel != null -> "Download & install ${rel.tag}" + if (rel.size > 0) "  ·  ${"%.1f".format(rel.size / 1_048_576.0)} MB" else ""
-            updateStatus == "Checking…" -> "Checking…"
-            else -> "Check for updates"
-        }
-        if (btnText != null) {
-            c.addView(actionButton(btnText) {
-                when {
-                    newer && rel != null -> startUpdate(rel)
-                    updateStatus != "Checking…" -> checkUpdates()
-                }
-            }.also { progressView = it }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
-                topMargin = dp(10)
-                bottomMargin = dp(18)
-                marginStart = dp(16)
-                marginEnd = dp(16)
-            })
-        } else {
-            progressView = null
-            c.addView(View(this), LinearLayout.LayoutParams(1, dp(14)))
-        }
-        return c
-    }
-
+    /** "42%  ·  7.6 of 18.0 MB  ·  1.2 MB/s  ·  9s left" */
     private fun pctText(f: Float, rel: Updater.Release?): String {
         val pct = (f * 100).toInt().coerceIn(0, 100)
         val size = rel?.size ?: 0L
-        return if (size > 0) "$pct%  ·  ${"%.1f".format(size * f / 1_048_576.0)} of ${"%.1f".format(size / 1_048_576.0)} MB" else "$pct%"
-    }
-
-    /** A release's notes as short points, without the commit sign-off lines. */
-    private fun whatsNew(notes: String): List<String> {
-        val body = notes.lines().filterNot { l ->
-            val t = l.trim()
-            t.startsWith("Co-Authored-By", true) || t.startsWith("Claude-Session", true) || t.startsWith("http") || t.isBlank()
-        }.joinToString(" ")
-        return body.split(Regex("[;\\n]|(?<=[a-z])\\. ")).map { it.trim().trimEnd('.') }
-            .filter { it.length > 3 }
-            .map { it.replaceFirstChar { ch -> ch.uppercase() } }
-            .take(10)
+        if (size <= 0) return "$pct%"
+        val done = size * f
+        val secs = (android.os.SystemClock.elapsedRealtime() - dlStart) / 1000.0
+        val speed = if (secs > 0.5) done / secs else 0.0
+        val left = if (speed > 0) ((size - done) / speed).toInt() else -1
+        return buildString {
+            append("$pct%  ·  ${"%.1f".format(done / 1_048_576.0)} of ${"%.1f".format(size / 1_048_576.0)} MB")
+            if (speed > 0) append("  ·  ${"%.1f".format(speed / 1_048_576.0)} MB/s")
+            if (left >= 0) append("  ·  ${if (left >= 60) "${left / 60}m ${left % 60}s" else "${left}s"} left")
+        }
     }
 
     // =====================================================================
@@ -1148,17 +1249,19 @@ class MainActivity : Activity() {
             return
         }
         downloading = 0f
+        dlStart = android.os.SystemClock.elapsedRealtime()
         updateStatus = "Downloading ${rel.tag}"
         render()
         Updater.install(this, rel, progress = { f ->
             val pct = (downloading * 100).toInt()
             downloading = if (f >= 1f) -1f else f
             updateStatus = if (f >= 1f) "Confirm the install" else "Downloading ${rel.tag}"
-            // Download progress only changes two texts; rebuilding the whole
-            // page every percent is what made it flicker and jump.
-            val bar = barView
-            if (f < 1f && bar != null && bar.isAttachedToWindow) {
-                bar.set(f, animate = true)
+            // Download progress only changes the ring and one line; rebuilding
+            // the whole page every percent is what made it flicker and jump.
+            val ring = ringView
+            if (f < 1f && ring != null && ring.isAttachedToWindow) {
+                ring.progress = f
+                ring.invalidate()
                 if ((f * 100).toInt() != pct) pctView?.text = pctText(f, rel)
             } else {
                 render()
@@ -1436,6 +1539,62 @@ class MainActivity : Activity() {
         return c
     }
 
+    /**
+     * Every short system moment, each with its own switch and a button that
+     * shows it on the island right now, so you can see exactly how it looks.
+     */
+    private fun momentsPage(col: LinearLayout) {
+        pageHeader(col, "System moments", "Quick moments that flick out of the island and tuck back in")
+        col.addView(group(switchRow("System moments", "All of them at once", Prefs.SYSTEM_POPS)))
+        if (!Prefs.get(this).getBoolean(Prefs.SYSTEM_POPS, true)) {
+            col.addView(footnote("Turn this on to choose them one by one."))
+            return
+        }
+        fun moment(icon: Int, tint: Int, title: String, summary: String, key: String, show: () -> Unit): View {
+            val row = switchRow(title, summary, key) as LinearLayout
+            val play = android.widget.ImageView(this).apply {
+                setImageResource(icon)
+                imageTintList = ColorStateList.valueOf(tint)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.argb(30, Color.red(tint), Color.green(tint), Color.blue(tint)))
+                }
+                contentDescription = "Show $title on the island"
+                isClickable = true
+                setOnClickListener { b ->
+                    b.animate().scaleX(0.8f).scaleY(0.8f).setDuration(70).withEndAction {
+                        b.animate().scaleX(1f).scaleY(1f).setDuration(300).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                    }.start()
+                    if (HaloService.instance == null) Toast.makeText(this@MainActivity, "Turn the island on first", Toast.LENGTH_SHORT).show() else show()
+                }
+            }
+            row.addView(play, 0, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(12) })
+            return row
+        }
+        col.addView(footnote("Tap an icon to see that moment on the island now."))
+        col.addView(sectionTitle("Sound"))
+        col.addView(group(
+            moment(R.drawable.ic_bell_off, Colors.RED, "Ring, vibrate and silent", "The bell and the mode's word", Prefs.EV_RINGER) { Moments.ringer(android.media.AudioManager.RINGER_MODE_SILENT) },
+            moment(R.drawable.ic_moon, 0xFF7D7AFF.toInt(), "Do Not Disturb", "A moon and a switch", Prefs.EV_DND) { Moments.toggle("Do Not Disturb", true, 0xFF7D7AFF.toInt(), R.drawable.ic_moon) },
+        ))
+        col.addView(sectionTitle("Connections"))
+        col.addView(group(
+            moment(R.drawable.ic_bluetooth, Colors.BLUE, "Bluetooth", "Earbuds, speakers and cars connecting and leaving; Bluetooth on and off", Prefs.EV_BT) { Moments.device("Galaxy Buds", true) },
+            moment(R.drawable.ic_headphones, Colors.GREEN, "Earbuds battery", "Their level as a ring, when they share it", Prefs.EV_BUDS) { Moments.buds("Galaxy Buds", 84) },
+            moment(R.drawable.ic_wifi, Colors.BLUE, "Wi-Fi", "Connected, and when it really drops", Prefs.EV_WIFI) { Moments.wifi(true) },
+            moment(R.drawable.ic_hotspot, Colors.GREEN, "Hotspot", "On and off", Prefs.EV_HOTSPOT) { Moments.toggle("Hotspot", true, Colors.GREEN, R.drawable.ic_hotspot) },
+            moment(R.drawable.ic_airplane, Colors.ORANGE, "Airplane mode", "On and off", Prefs.EV_AIRPLANE) { Moments.toggle("Airplane mode", true, Colors.ORANGE, R.drawable.ic_airplane) },
+        ))
+        col.addView(sectionTitle("Battery"))
+        col.addView(group(
+            moment(R.drawable.ic_battery_low, Colors.ORANGE, "Low battery", "At 20%, then 10% and 5% in red", Prefs.EV_BATTERY) { Moments.battery(20, critical = false) },
+            moment(R.drawable.ic_leaf, Colors.YELLOW, "Power saving", "On and off", Prefs.EV_SAVER) { Moments.toggle("Power saving", true, Colors.YELLOW, R.drawable.ic_leaf) },
+            moment(R.drawable.ic_bolt, Colors.GREEN, "Charging", "When you plug in (tap it for the charging card)", Prefs.CHARGING) { Moments.charging(64) },
+        ))
+        col.addView(footnote("Bluetooth only counts real listening gear (earbuds, headphones, speakers, car kits), so watches and trackers never pop up. Background news like Wi-Fi and earbuds waits while Do Not Disturb is on; things you switch yourself still show."))
+    }
+
     private fun recQualityPage(col: LinearLayout) {
         pageHeader(col, "Quality", "Sharper video means bigger files")
         val p = Prefs.get(this)
@@ -1480,6 +1639,8 @@ class MainActivity : Activity() {
 
     private fun switchRow(title: String, summary: String, key: String): View = switchRowDefault(title, summary, key, true)
 
+    private fun postDelayedRender() = window.decorView.postDelayed({ render() }, 220L)
+
     @Suppress("UseSwitchCompatOrMaterialCode")
     private fun switchRowDefault(title: String, summary: String, key: String, def: Boolean): View {
         val row = rowBase(title, summary)
@@ -1492,6 +1653,8 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().putBoolean(key, checked).apply()
                 HaloService.instance?.reloadPrefs()
+                // These switches show or hide more options below them.
+                if (key == Prefs.SYSTEM_POPS || key == Prefs.IN_SHOTS) postDelayedRender()
                 if (key == Prefs.BEAT && checked && !Beat.allowed(this@MainActivity)) {
                     Toast.makeText(this@MainActivity, "Android calls this the microphone. Halo only reads the music playing, never records.", Toast.LENGTH_LONG).show()
                     requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_BEAT)
@@ -1515,8 +1678,34 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         head.addView(label(title, 16f, text1, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val v = label("$value$unit", 14f, accent, true)
-        head.addView(v)
+        val v = label("$value$unit", 14f, accent, true).apply {
+            gravity = Gravity.CENTER
+            fontFeatureSettings = "tnum"
+        }
+        // − and + for exact, one-step changes (the slider is for big moves).
+        var seekRef: SeekBar? = null
+        fun step(d: Int): View = label(if (d < 0) "−" else "+", 18f, text1, true).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(26, 255, 255, 255))
+            }
+            isClickable = true
+            setOnClickListener { b ->
+                val now = (prefs.getInt(key, def) + d).coerceIn(min, max)
+                prefs.edit().putInt(key, now).apply()
+                seekRef?.progress = now - min
+                v.text = "$now$unit"
+                b.animate().scaleX(0.82f).scaleY(0.82f).setDuration(60).withEndAction {
+                    b.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                }.start()
+                b.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                if (camera) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
+            }
+        }
+        head.addView(step(-1), LinearLayout.LayoutParams(dp(30), dp(30)))
+        head.addView(v, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT))
+        head.addView(step(1), LinearLayout.LayoutParams(dp(30), dp(30)))
         box.addView(head)
         val seek = SeekBar(this).apply {
             this.max = max - min
@@ -1537,6 +1726,7 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(sb: SeekBar?) {}
             })
         }
+        seekRef = seek
         box.addView(seek, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         return box
     }

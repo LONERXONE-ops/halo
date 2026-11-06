@@ -2,12 +2,19 @@
 <!--
   canRetrieveWindowContent lets Halo find and tap a Quick Settings tile
   (mobile data, Bluetooth, airplane mode) when you press its button in the
-  notification center. Halo reads nothing else on screen.
+  notification center. Halo reads nothing else on screen. While the phone
+  is locked (and only then) it also reads the lock screen's message line,
+  so a wrong PIN or fingerprint can shake the island.
+
+  canRequestFilterKeyEvents is used only when you turn off "Show in
+  screenshots": the island steps aside while volume down is held (the
+  screenshot buttons). Keys always pass straight through.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
     android:canRetrieveWindowContent="true"
+    android:canRequestFilterKeyEvents="true"
     android:description="@string/accessibility_desc"
     android:notificationTimeout="100" />

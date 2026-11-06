@@ -319,7 +319,7 @@ class NotificationActivity : Activity() {
         val title = listener.richOf(sbn, false).title.ifEmpty { app }
         val avatar = listener.iconBitmap(n.getLargeIcon())
         val appIcon = listener.appIcon(sbn.packageName)
-        val replyAction = n.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
+        val replyAction = HaloNotificationListener.replyActionOf(n)
         val readAction = n.actions?.firstOrNull { a ->
             val t = a.title?.toString()?.lowercase().orEmpty()
             t.contains("read") && a.remoteInputs.isNullOrEmpty()
@@ -477,7 +477,7 @@ class NotificationActivity : Activity() {
             val doSend = {
                 val typed = input.text?.toString()?.trim().orEmpty()
                 if (typed.isNotEmpty()) {
-                    val latest = current?.notification?.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true } ?: replyAction
+                    val latest = current?.notification?.let { HaloNotificationListener.replyActionOf(it) } ?: replyAction
                     if (sendReply(latest, typed)) {
                         sentTexts += typed
                         val mine = bubble(Msg(null, typed, null, null), mine = true)
@@ -544,6 +544,43 @@ class NotificationActivity : Activity() {
                     false
                 }
             }
+            // Quick replies: the app's own choices, Android's smart replies, then a few everyday ones.
+            val replies = LinkedHashSet<String>()
+            replyAction.remoteInputs?.firstOrNull()?.choices?.forEach { replies += it.toString() }
+            listener.smartReplies(sbn).forEach { replies += it.toString() }
+            if (replies.size < 4) listOf("👍", "Okay", "On my way", "Thanks!", "Can't talk now", "Call you later").forEach { replies += it }
+            val chips = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(basePad, 0, basePad, 0)
+            }
+            for ((i, r) in replies.take(7).withIndex()) {
+                val c = label(r, 13.5f, text1, true).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(dp(14), dp(8), dp(14), dp(8))
+                    background = pill(Color.argb(120, 40, 40, 46), dpf(18f))
+                    pressy()
+                    setOnClickListener { v ->
+                        // The chip jumps up into the chat as it's sent.
+                        v.animate().translationY(-dpf(10f)).scaleX(1.08f).scaleY(1.08f).setDuration(120L).withEndAction {
+                            v.animate().translationY(0f).scaleX(1f).scaleY(1f).setDuration(360L).setInterpolator(Springy(0.5f)).start()
+                        }.start()
+                        input.setText(r)
+                        doSend()
+                    }
+                    alpha = 0f
+                    translationX = dpf(24f)
+                    animate().alpha(1f).translationX(0f).setStartDelay(220L + i * 50L).setDuration(380L).setInterpolator(Springy(0.45f)).start()
+                }
+                chips.addView(c, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) marginStart = dp(8) })
+            }
+            val chipScroll = android.widget.HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                isHorizontalFadingEdgeEnabled = true
+                setFadingEdgeLength(dp(24))
+                clipToPadding = false
+                addView(chips)
+            }
+            s.addView(chipScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
             row.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(send, LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginStart = dp(8) })
             s.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {

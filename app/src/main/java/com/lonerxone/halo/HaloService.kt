@@ -29,6 +29,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.view.Display
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
@@ -84,8 +85,25 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     if (!isInitialStickyBroadcast) onRinger(intent)
                     return
                 }
-                BluetoothDevice.ACTION_ACL_CONNECTED -> {
-                    onBluetooth(intent)
+                BluetoothDevice.ACTION_ACL_CONNECTED, BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    onBluetooth(intent, intent.action == BluetoothDevice.ACTION_ACL_CONNECTED)
+                    return
+                }
+                android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    val st = intent.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1)
+                    if (st == android.bluetooth.BluetoothAdapter.STATE_ON || st == android.bluetooth.BluetoothAdapter.STATE_OFF) {
+                        if (ev(Prefs.EV_BT)) Moments.toggle("Bluetooth", st == android.bluetooth.BluetoothAdapter.STATE_ON, Colors.BLUE, R.drawable.ic_bluetooth)
+                    }
+                    return
+                }
+                ACTION_HOTSPOT -> {
+                    // 13 = on, 11 = off (the in-between states are ignored).
+                    val st = intent.getIntExtra("wifi_state", -1)
+                    if ((st == 13 || st == 11) && st != lastHotspot) {
+                        val first = lastHotspot == -1
+                        lastHotspot = st
+                        if (!first && ev(Prefs.EV_HOTSPOT)) Moments.toggle("Hotspot", st == 13, Colors.GREEN, R.drawable.ic_hotspot)
+                    }
                     return
                 }
                 NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED -> {
@@ -93,9 +111,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
                     return
                 }
                 Intent.ACTION_AIRPLANE_MODE_CHANGED -> {
-                    if (connectivityOn()) {
-                        val on = intent.getBooleanExtra("state", false)
-                        IslandStore.showPop("Airplane mode", if (on) "On" else "Off", 0xFFFF9F0A.toInt(), R.drawable.ic_airplane, 2_200L, kind = "toggle")
+                    if (connectivityOn() && ev(Prefs.EV_AIRPLANE)) {
+                        Moments.toggle("Airplane mode", intent.getBooleanExtra("state", false), Colors.ORANGE, R.drawable.ic_airplane)
                     }
                     return
                 }
@@ -105,9 +122,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
                         applyPrefs(it)
                         it.rebuild()
                     }
-                    if (connectivityOn()) {
-                        val on = getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
-                        IslandStore.showPop("Power saving", if (on) "On" else "Off", 0xFFFFD60A.toInt(), R.drawable.ic_leaf, 2_200L, kind = "toggle")
+                    if (connectivityOn() && ev(Prefs.EV_SAVER)) {
+                        Moments.toggle("Power saving", getSystemService(PowerManager::class.java)?.isPowerSaveMode == true, Colors.YELLOW, R.drawable.ic_leaf)
                     }
                     return
                 }
@@ -172,6 +188,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         locked = keyguard().isKeyguardLocked
+        listenToLockScreen(locked)
+        applyShots()
         attach()
         IslandStore.addListener(storeListener)
         val filter = IntentFilter().apply {
@@ -182,6 +200,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(ACTION_HOTSPOT)
             addAction(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED)
             addAction(Intent.ACTION_AIRPLANE_MODE_CHANGED)
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
@@ -259,6 +280,10 @@ class HaloService : AccessibilityService(), IslandView.Host {
     private fun setLocked(now: Boolean) {
         val was = locked
         locked = now
+        if (was != now) {
+            listenToLockScreen(now)
+            lastLockText = ""
+        }
         if (was && !now) {
             // Just unlocked: show the padlock opening, then settle back.
             unlockUntil = android.os.SystemClock.uptimeMillis() + 1500L
@@ -367,7 +392,101 @@ class HaloService : AccessibilityService(), IslandView.Host {
         }
     }
 
+    /** Words the lock screen shows when the PIN, pattern, password or fingerprint was wrong. */
+    private val wrongWords = Regex(
+        "wrong|incorrect|not recogni[sz]ed|no match|doesn.t match|didn.t match|not match|try again|invalid|couldn.t recogni|unrecogni|attempts? (left|remaining)",
+        RegexOption.IGNORE_CASE,
+    )
+    private var lastShake = 0L
+    private var lastLockText = ""
+
+    /**
+     * While locked only: also listen to what the lock screen says (its
+     * message line), so a wrong PIN or fingerprint can shake the island.
+     * Switched off the moment you unlock, so apps are never read.
+     */
+    private fun listenToLockScreen(on: Boolean) {
+        val info = serviceInfo ?: return
+        val extra = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or AccessibilityEvent.TYPE_ANNOUNCEMENT
+        val want = if (on && Prefs.get(this).getBoolean(Prefs.LOCK_SHAKE, true)) info.eventTypes or extra else info.eventTypes and extra.inv()
+        if (want == info.eventTypes) return
+        info.eventTypes = want
+        try {
+            serviceInfo = info
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * "Show in screenshots" off: listen to the volume keys (Android sends
+     * them on unchanged; Halo only looks). Volume down is half of the
+     * screenshot buttons, so while it's held the island fades out of the
+     * picture, and comes back a moment after.
+     */
+    private fun applyShots() {
+        val info = serviceInfo ?: return
+        val f = android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+        val want = if (!Prefs.get(this).getBoolean(Prefs.IN_SHOTS, true)) info.flags or f else info.flags and f.inv()
+        if (want == info.flags) return
+        info.flags = want
+        try {
+            serviceInfo = info
+        } catch (_: Exception) {
+        }
+    }
+
+    private val showAgain = Runnable { island?.animate()?.alpha(1f)?.setDuration(220L)?.start() }
+
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event?.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN && !Prefs.get(this).getBoolean(Prefs.IN_SHOTS, true)) {
+            val v = island
+            if (v != null) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    main.removeCallbacks(showAgain)
+                    v.animate().cancel()
+                    v.alpha = 0f
+                } else if (event.action == KeyEvent.ACTION_UP) {
+                    // The screenshot is taken a beat after the buttons: stay out of it a little longer.
+                    main.postDelayed(showAgain, 900L)
+                }
+            }
+        }
+        return false
+    }
+
+    private fun lockScreenSaid(event: AccessibilityEvent) {
+        if (!locked) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg != "com.android.systemui" && !pkg.contains("keyguard", true)) return
+        val said = buildString {
+            event.text?.forEach { append(it).append(' ') }
+            if (isEmpty() && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+                (event.contentChangeTypes and AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT) != 0
+            ) {
+                try {
+                    event.source?.let { n ->
+                        append(n.text ?: "")
+                        @Suppress("DEPRECATION") n.recycle()
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }.trim()
+        if (said.isEmpty()) return
+        val now = android.os.SystemClock.uptimeMillis()
+        // The same message staying up isn't a new failure; a new attempt changes it or comes a moment later.
+        if (said == lastLockText && now - lastShake < 1_500L) return
+        lastLockText = said
+        if (!wrongWords.containsMatchIn(said) || now - lastShake < 600L) return
+        lastShake = now
+        island?.shake()
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event != null && (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || event.eventType == AccessibilityEvent.TYPE_ANNOUNCEMENT)) {
+            lockScreenSaid(event)
+            if (event.eventType == AccessibilityEvent.TYPE_ANNOUNCEMENT || !locked) return
+        }
         // Window changes are a cheap moment to re-check the lock screen state.
         val now = try {
             keyguard().isKeyguardLocked
@@ -555,6 +674,9 @@ class HaloService : AccessibilityService(), IslandView.Host {
         v.idleEnabled = p.getBoolean(Prefs.IDLE, true)
         v.hapticsEnabled = p.getBoolean(Prefs.HAPTICS, true)
         v.sizeScale = p.getInt(Prefs.SCALE, 100) / 100f
+        v.capH = p.getInt(Prefs.CAP_H, 100).coerceIn(80, 125) / 100f
+        v.capW = p.getInt(Prefs.CAP_W, 100).coerceIn(85, 125) / 100f
+        v.cardW = p.getInt(Prefs.CARD_W, 100).coerceIn(80, 100) / 100f
         val d = resources.displayMetrics.density
         v.offsetX = p.getInt(Prefs.OFFSET_X, 0) * d
         v.offsetY = p.getInt(Prefs.OFFSET_Y, 0) * d
@@ -592,6 +714,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     /** Called by the settings screen after a change. */
     fun reloadPrefs() {
+        applyShots()
+        listenToLockScreen(locked)
         val v = island ?: return
         applyPrefs(v)
         v.geometry = geometry()
@@ -618,6 +742,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         // second sits in the round bubble beside it (like the iPhone split).
         val live0 = buildList<IslandView.Content> {
             IslandStore.call?.takeIf { p.getBoolean(Prefs.CALLS, true) }?.let { add(IslandView.Content.Call(it)) }
+            IslandStore.alarm?.takeIf { p.getBoolean(Prefs.ALARMS, true) }?.let { add(IslandView.Content.Alarm(it)) }
             // Halo's own recording always shows (it's how you stop it); another app's follows the setting.
             IslandStore.rec?.takeIf { it.own || p.getBoolean(Prefs.RECORDING, true) }?.let { add(IslandView.Content.Rec(it)) }
             IslandStore.timer?.takeIf { p.getBoolean(Prefs.TIMERS, true) }?.let { add(IslandView.Content.Timer(it)) }
@@ -700,6 +825,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         is IslandView.Content.Nav -> "g"
         is IslandView.Content.Torch -> "f"
         is IslandView.Content.Rec -> "r"
+        is IslandView.Content.Alarm -> "a"
         else -> null
     }
 
@@ -722,6 +848,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         is IslandView.Content.Nav -> IslandView.Bubble("g", c.nav.arrow, R.drawable.ic_nav, Colors.GREEN, -1f, onHold = { send(c.nav.contentIntent) }) { bringForward("g") }
         is IslandView.Content.Torch -> IslandView.Bubble("f", null, R.drawable.ic_flashlight, Colors.INK, -1f, onHold = { torchOff() }) { torchOff() }
         is IslandView.Content.Rec -> IslandView.Bubble("r", null, R.drawable.ic_record, Colors.RED, -1f, onHold = { recStop() }) { bringForward("r") }
+        is IslandView.Content.Alarm -> IslandView.Bubble("a", null, R.drawable.ic_alarm, Colors.ORANGE, -1f, onHold = { send(c.alarm.stop) }) { bringForward("a") }
         else -> null
     }
 
@@ -734,6 +861,15 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     private fun popsOn() = Prefs.get(this).getBoolean(Prefs.SYSTEM_POPS, true)
 
+    /** This one moment is on (the master switch for system moments, then its own). */
+    private fun ev(key: String) = popsOn() && Prefs.get(this).getBoolean(key, true)
+
+    private var lastHotspot = -1
+
+    /**
+     * Battery: a warning at 20%, 10% and 5% (each once on the way down, like
+     * iOS), and "Charged" when it reaches 100% on the charger.
+     */
     private fun onBattery(i: Intent) {
         val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
@@ -742,31 +878,28 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val plugged = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
         val prev = lastBattery
         lastBattery = pct
-        if (prev < 0 || !popsOn()) return
+        if (prev < 0 || !ev(Prefs.EV_BATTERY)) return
         when {
-            !plugged && prev > 15 && pct <= 15 -> IslandStore.showPop("Low battery", "$pct%", Colors.RED, R.drawable.ic_battery_low, 3_500L, kind = "battery")
-            !plugged && prev > 5 && pct <= 5 -> IslandStore.showPop("Battery", "$pct%", Colors.RED, R.drawable.ic_battery_low, 4_000L, kind = "battery")
-            plugged && prev < 100 && pct >= 100 -> IslandStore.showPop("Charged", "100%", Colors.GREEN, R.drawable.ic_battery_full, 3_000L, kind = "battery")
+            !plugged && prev > 5 && pct <= 5 -> Moments.battery(pct, critical = true)
+            !plugged && prev > 10 && pct <= 10 -> Moments.battery(pct, critical = true)
+            !plugged && prev > 20 && pct <= 20 -> Moments.battery(pct, critical = false)
+            plugged && prev < 100 && pct >= 100 -> Moments.charged()
         }
     }
 
     private fun onRinger(i: Intent) {
-        if (!popsOn()) return
-        when (i.getIntExtra(AudioManager.EXTRA_RINGER_MODE, -1)) {
-            AudioManager.RINGER_MODE_SILENT -> IslandStore.showPop("Silent", "On", Colors.RED, R.drawable.ic_bell_off, 2_000L, kind = "toggle")
-            AudioManager.RINGER_MODE_VIBRATE -> IslandStore.showPop("Vibrate", "On", 0xFFBF5AF2.toInt(), R.drawable.ic_vibrate, 2_000L, kind = "toggle")
-            AudioManager.RINGER_MODE_NORMAL -> IslandStore.showPop("Ring", "On", Colors.INK, R.drawable.ic_bell, 2_000L, kind = "toggle")
-        }
+        if (!ev(Prefs.EV_RINGER)) return
+        Moments.ringer(i.getIntExtra(AudioManager.EXTRA_RINGER_MODE, -1))
     }
 
     /**
      * Only real listening devices count: bonded (paired) audio gear such as
-     * earbuds, headphones and car kits. Plain Bluetooth links (watches, tags,
-     * background scans) used to trigger a bogus "Connected" pop.
+     * earbuds, headphones, speakers and car kits. Plain Bluetooth links
+     * (watches, tags, background scans) never show.
      */
     @Suppress("DEPRECATION")
-    private fun onBluetooth(i: Intent) {
-        if (!popsOn()) return
+    private fun onBluetooth(i: Intent, connected: Boolean) {
+        if (!ev(Prefs.EV_BT)) return
         val device: BluetoothDevice = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
         } else {
@@ -776,17 +909,22 @@ class HaloService : AccessibilityService(), IslandView.Host {
             val bonded = device.bondState == BluetoothDevice.BOND_BONDED
             val major = device.bluetoothClass?.majorDeviceClass
             val audio = major == BluetoothClass.Device.Major.AUDIO_VIDEO || major == BluetoothClass.Device.Major.WEARABLE
-            if (bonded && audio) device.name else null
+            if (bonded && audio) (device.alias ?: device.name) else null
         } catch (_: SecurityException) {
             null
         } ?: return
         val now = System.currentTimeMillis()
-        if (now - lastBt < 8_000L) return
+        // The same device dropping in and out within a few seconds is one moment, not five.
+        val k = (if (connected) "+" else "-") + info
+        if (k == lastBtKey && now - lastBt < 8_000L) return
         lastBt = now
-        lastBudsName = info
+        lastBtKey = k
+        if (connected) lastBudsName = info
         if (dndOn()) return
-        IslandStore.showPop("Connected", info.take(18), Colors.BLUE, R.drawable.ic_bluetooth, 3_000L, kind = "device")
+        Moments.device(info, connected)
     }
+
+    private var lastBtKey = ""
 
     /** Do Not Disturb is on: background news (Wi-Fi, earbuds) waits; things you just did still show. */
     private fun dndOn(): Boolean = try {
@@ -1077,13 +1215,28 @@ class HaloService : AccessibilityService(), IslandView.Host {
     // ----- Wi-Fi -----
     private var wifiWatchStarted = 0L
     private var lastWifi = 0L
+    private var wifiUp = false
     private val wifiCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             val now = System.currentTimeMillis()
+            val was = wifiUp
+            wifiUp = true
             // The callback fires straight away for the current network; that is not news.
-            if (now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn() || dndOn()) return
+            if (was || now - wifiWatchStarted < 4_000L || now - lastWifi < 15_000L || !connectivityOn() || !ev(Prefs.EV_WIFI) || dndOn()) return
             lastWifi = now
-            IslandStore.showPop("Wi-Fi", "Connected", Colors.BLUE, R.drawable.ic_wifi, 2_200L, kind = "device")
+            main.post { Moments.wifi(true) }
+        }
+
+        override fun onLost(network: Network) {
+            val now = System.currentTimeMillis()
+            if (!wifiUp) return
+            wifiUp = false
+            // Only a real drop (not a hand-over between access points): check again in a moment.
+            main.postDelayed({
+                if (wifiUp || !connectivityOn() || !ev(Prefs.EV_WIFI) || dndOn() || System.currentTimeMillis() - lastWifi < 15_000L) return@postDelayed
+                lastWifi = now
+                Moments.wifi(false)
+            }, 2_500L)
         }
     }
 
@@ -1101,27 +1254,31 @@ class HaloService : AccessibilityService(), IslandView.Host {
 
     @Suppress("DEPRECATION")
     private fun onBudsBattery(i: Intent) {
-        if (!popsOn()) return
+        if (!ev(Prefs.EV_BUDS)) return
         val level = i.getIntExtra(EXTRA_BT_BATTERY, -1)
         if (level !in 0..100) return
         if (System.currentTimeMillis() - lastBt > 20_000L || dndOn()) return
         val name = lastBudsName ?: return
-        IslandStore.showPop(name.take(16), "$level%", if (level <= 20) Colors.RED else Colors.BLUE, R.drawable.ic_headphones, 3_000L, kind = "battery")
+        Moments.buds(name, level)
         lastBudsName = null
     }
 
+    private var lastDnd: Boolean? = null
+
     private fun onDnd() {
-        if (!popsOn()) return
+        if (!ev(Prefs.EV_DND)) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
         val on = nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
-        IslandStore.showPop("Do Not Disturb", if (on) "On" else "Off", 0xFF5E5CE6.toInt(), R.drawable.ic_moon, 2_000L, kind = "toggle")
+        if (on == lastDnd) return
+        lastDnd = on
+        Moments.toggle("Do Not Disturb", on, 0xFF7D7AFF.toInt(), R.drawable.ic_moon)
     }
 
     private fun onCharging() {
         if (!Prefs.get(this).getBoolean(Prefs.CHARGING, true)) return
         val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
         val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        IslandStore.showPop("Charging", "$pct%", Colors.GREEN, R.drawable.ic_bolt, 3_500L, kind = "charge")
+        Moments.charging(pct)
     }
 
     private fun geometry(): IslandView.Geometry {
@@ -1252,6 +1409,8 @@ class HaloService : AccessibilityService(), IslandView.Host {
         private const val SETTLE_MS = 12_000L
 
         private const val ACTION_BT_BATTERY = "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"
+        /** Sent by the Wi-Fi service when the hotspot turns on or off (hidden in the SDK, stable for years). */
+        private const val ACTION_HOTSPOT = "android.net.wifi.WIFI_AP_STATE_CHANGED"
         private const val EXTRA_BT_BATTERY = "android.bluetooth.device.extra.BATTERY_LEVEL"
 
         private const val COMMON =

@@ -100,6 +100,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         data class Lock(val unlocked: Boolean) : Content()
         /** A screen recording (Halo's or another app's): red dot and timer. */
         data class Rec(val rec: RecInfo) : Content()
+        /** An alarm going off, or a timer that just finished. */
+        data class Alarm(val alarm: AlarmInfo) : Content()
     }
 
     /** On the lock screen: the notification center stays shut (your notifications are private). */
@@ -128,6 +130,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         is Content.Nav -> "g"
         is Content.Torch -> "f"
         is Content.Rec -> "r"
+        is Content.Alarm -> "a"
         else -> null
     }
 
@@ -143,6 +146,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     var idleEnabled = true
     var hapticsEnabled = true
     var sizeScale = 1f
+    /** Fine sizing on top of [sizeScale]: the pill's height and width, and the open card's width (1 = standard). */
+    var capH = 1f
+    var capW = 1f
+    var cardW = 1f
     var offsetX = 0f
     var offsetY = 0f
     /** 0 = pure black (default), 1 = most see-through. */
@@ -370,9 +377,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun idleD(): Float = if (geometry.notch != null) max(min(notchW(), notchH()).toFloat(), dpf(20f)) else dpf(22f)
-    private fun compactH(): Float = dpf(34f) * sizeScale
-    private fun baseCompactW(): Float = max(dpf(123f) * sizeScale, wrapW() + dpf(86f))
-    private fun expandedW(): Float = min(dpf(372f), geometry.screenW - dpf(16f)) * min(sizeScale, 1.05f)
+    private fun compactH(): Float = dpf(34f) * sizeScale * capH
+    private fun baseCompactW(): Float = max(dpf(123f) * sizeScale * capW, wrapW() + dpf(86f) * capW)
+    private fun expandedW(): Float = min(min(dpf(372f), geometry.screenW - dpf(16f)) * min(sizeScale, 1.05f) * cardW, geometry.screenW - dpf(12f))
     private fun panelMaxH(): Float = geometry.screenH * 0.62f
     private fun gapTop(): Float = dpf(6f)
 
@@ -407,6 +414,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (hidden) return Mode.HIDDEN
         val c = content
         if (c is Content.Call && c.call.ringing) return Mode.EXPANDED
+        // A ringing alarm always opens: Snooze and Stop right there.
+        if (c is Content.Alarm) return Mode.EXPANDED
         if (panelOpen) return Mode.PANEL
         return when (c) {
             is Content.None -> if (idleEnabled || previewing()) Mode.IDLE else Mode.HIDDEN
@@ -435,10 +444,15 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Nav -> "g:" + c.nav.key
             is Content.Torch -> "f:" + c.cameraId
             is Content.Rec -> "r:" + c.rec.key + ":" + c.rec.paused + ":" + (c.rec.countdownUntil > 0L)
+            is Content.Alarm -> "a:" + c.alarm.key + ":" + c.alarm.label
         }
     }
 
+    private var alarmShake: android.animation.Animator? = null
+
     private fun clearRefs() {
+        alarmShake?.cancel()
+        alarmShake = null
         removeCallbacks(timerTick)
         timerRing = null
         timerBar = null
@@ -507,7 +521,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val h = compactH()
                 val sides = when (val c = content) {
                     is Content.Music -> compactMusic(c.info)
-                    is Content.Popup -> compactPop(c.pop).also { glowColor = if (c.pop.accent == 0) tone(c.pop) else c.pop.accent; glow = 1f }
+                    is Content.Popup -> compactPop(c.pop).also { glowColor = if (c.pop.accent == 0) tone(c.pop) else c.pop.accent; glow = 0.7f }
                     is Content.Call -> compactCall(c.call).also { glowColor = Colors.GREEN; glow = 0.55f }
                     is Content.Timer -> compactTimer()
                     is Content.Transfer -> compactTransfer(c.transfer)
@@ -545,6 +559,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         is Content.Nav -> buildExpandedNav(c.nav, w.toInt(), top)
                         is Content.Rec -> buildExpandedRec(c.rec, w.toInt(), top).also { glowColor = Colors.RED; glow = 0.4f }
                         is Content.Popup -> buildCharge(w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.6f }
+                        is Content.Alarm -> buildAlarm(c.alarm, w.toInt(), top).also { glowColor = Colors.ORANGE; glow = 0.8f }
                         else -> View(context)
                     }
                 }
@@ -570,10 +585,39 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     /** Same activity, same mode: update what changed without redrawing the shape. */
+    /**
+     * The notification center is open and its notifications changed behind
+     * its back (a new message came in, or one was cleared from Android's
+     * shade): rebuild it quietly, keeping your place, so it's never stale.
+     */
+    private fun panelStale(): Boolean {
+        if (mode != Mode.PANEL || clearing) return false
+        val shown = HashSet<String>()
+        for (g in panelGroups.values) for (it in g) shown += it.key
+        val now = host.panelItems().mapTo(HashSet()) { it.key }
+        // Ones you just cleared may take Android a moment to remove: they don't count.
+        goneKeys.retainAll(now)
+        now.removeAll(goneKeys)
+        return now != shown
+    }
+
+    /** Notifications cleared from the center that Android hasn't removed yet. */
+    private val goneKeys = HashSet<String>()
+
+    private fun forget(key: String) {
+        goneKeys += key
+        host.dismissNotification(key)
+    }
+
     private fun bindInPlace() {
         // Play or pause shows right everywhere it's drawn (the notification
         // center's player too, whatever the island itself is showing).
         if (mode == Mode.PANEL) IslandStore.music?.let { m -> playButton?.setImageResource(if (m.playing) R.drawable.ic_pause else R.drawable.ic_play) }
+        if (panelStale()) {
+            builtKey = ""
+            post { refresh() }
+            return
+        }
         when (val c = content) {
             is Content.Lock -> Unit
             is Content.Music -> {
@@ -752,7 +796,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * single card turns back into a plain card.
      */
     private fun dismissItem(pkg: String, item: PanelItem) {
-        host.dismissNotification(item.key)
+        forget(item.key)
         val g = panelGroups[pkg] ?: return
         g.removeAll { it.key == item.key }
         val list = panelList ?: return
@@ -770,7 +814,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun dismissGroup(pkg: String) {
         val g = panelGroups.remove(pkg) ?: return
         openGroups.remove(pkg)
-        for (item in g) host.dismissNotification(item.key)
+        for (item in g) forget(item.key)
         updateCount()
     }
 
@@ -780,7 +824,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun updateCount() {
         val n = panelGroups.values.sumOf { it.size }
         countText?.text = n.toString()
-        if (n == 0) countText?.visibility = View.GONE
+        if (n == 0) {
+            countText?.visibility = View.GONE
+            // The last one went: show "You're all caught up" once its card has slid away.
+            postDelayed({
+                if (mode == Mode.PANEL && panelGroups.isEmpty()) {
+                    builtKey = ""
+                    refresh()
+                }
+            }, 420L)
+        }
     }
 
     /** The list changed size: the island grows or shrinks to fit (up to its limit), smoothly. */
@@ -878,7 +931,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val scale = animScale()
         // Snappier and bouncier: a quick lively overshoot opening, and a
         // small settle-bounce closing too, so nothing ever feels stiff.
-        k = if (scale <= 0f) 540f else 540f / (scale * scale)
+        // Quick moments (system capsules) snap out a little faster still.
+        val base = if (content is Content.Popup && mode == Mode.COMPACT) 680f else 600f
+        k = if (scale <= 0f) base else base / (scale * scale)
         zeta = if (grow) 0.5f else 0.66f
         // First appearance grows out of the camera.
         if (springs[6].value == 0f) springs[6].snap(anchorY())
@@ -945,7 +1000,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         lastFrameNanos = nanos
         var moving = false
         for (s in springs) if (s.step(dt)) moving = true
-        if (!revealed && shapeProgress() >= 0.6f) reveal()
+        // Content shows as soon as the shape is half open, so it feels instant.
+        if (!revealed && shapeProgress() >= 0.45f) reveal()
         slot?.translationY = v(6) - t(6)
         fitOutgoing()
         updateClip()
@@ -1403,7 +1459,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun reveal() {
         revealed = true
-        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(320L)?.withLayer()?.start()
+        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(1.6f))?.setDuration(270L)?.withLayer()?.start()
         // Opened cards: their parts rise in one after another instead of all at once.
         if (mode == Mode.EXPANDED || mode == Mode.PANEL) cascade()
     }
@@ -1561,7 +1617,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
     private fun compactWidthFor(s: Sides): Float {
         val side = max(widthOf(s.left, s.leftSize) + dp(8) + dp(10), widthOf(s.right, s.rightW) + dp(12) + dp(10))
-        return min(max(baseCompactW(), wrapW() + 2f * side), expandedW())
+        return min(max(baseCompactW(), wrapW() + 2f * side * max(capW, 1f)), expandedW())
     }
 
     /**
@@ -1696,13 +1752,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      */
     private fun compactPop(pop: Pop): Sides {
         val accent = if (pop.accent == 0) Colors.INK else pop.accent
-        val left = hRow()
+        // Left: just the icon in a small glowing badge (the right side says what happened).
         val badgeBox = FrameLayout(context).apply { clipChildren = false }
-        // A soft ring of the event's colour ripples out from behind the badge.
         badgeBox.addView(PulseView(context).apply {
             color = accent
-            strength = 0.75f
-        }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+            strength = 0.6f
+        }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
         val badge = ImageView(context).apply {
             setImageResource(if (pop.icon != 0) pop.icon else R.drawable.ic_info)
             setColorFilter(accent)
@@ -1710,95 +1765,102 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             setPadding(pad, pad, pad, pad)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.argb(60, Color.red(accent), Color.green(accent), Color.blue(accent)))
-                setStroke(dp(1), Color.argb(90, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                setColor(Color.argb(52, Color.red(accent), Color.green(accent), Color.blue(accent)))
             }
         }
-        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(23), dp(23), Gravity.CENTER))
-        left.addView(badgeBox, LinearLayout.LayoutParams(dp(28), dp(28)))
-        val title = spaced(text(12.5f, Color.WHITE, true).apply { text = pop.title; maxWidth = dp(118) }, 7)
-        left.addView(title)
+        badgeBox.addView(badge, FrameLayout.LayoutParams(dp(21), dp(21), Gravity.CENTER))
         val pct = pop.value.removeSuffix("%").toIntOrNull()
-        val isWifi = pop.icon == R.drawable.ic_wifi
-        val right: View = when {
-            // Earbuds: a ring that fills to their battery.
-            pop.kind == "battery" && pop.icon == R.drawable.ic_headphones && pct != null -> hRow().apply {
-                addView(text(12.5f, accent, true).apply { text = pop.value; fontFeatureSettings = "tnum" })
-                val ring = ProgressRing(context).apply { color = accent; progress = 0f }
-                addView(ring, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(6) })
-                fill(pct / 100f) { ring.progress = it }
+        fun word(t: String, c: Int, maxW: Int = dp(84)) = text(12f, c, true).apply {
+            text = t
+            maxWidth = maxW
+            fontFeatureSettings = "tnum"
+        }
+        val right: View = when (pop.kind) {
+            // On/Off: a small switch that flips into place.
+            "toggle" -> MiniSwitch(context).apply {
+                color = accent
+                val on = pop.value.equals("On", true)
+                setOn(!on, animate = false)
+                postDelayed({ setOn(on, animate = true) }, 280L)
             }
-            (pop.kind == "battery" || pop.kind == "charge") && pct != null -> hRow().apply {
-                val num = text(12.5f, accent, true).apply { fontFeatureSettings = "tnum" }
+            // Silent, Vibrate, Ring: the word in the mode's colour.
+            "ringer" -> word(pop.value, accent)
+            // Earbuds: their battery as a ring that fills, with the level.
+            "buds" -> hRow().apply {
+                addView(word(pop.value, if (pct != null && pct <= 20) Colors.RED else Color.WHITE))
+                val ring = ProgressRing(context).apply { color = if (pct != null && pct <= 20) Colors.RED else Colors.GREEN; progress = 0f }
+                addView(ring, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(5) })
+                fill((pct ?: 0) / 100f) { ring.progress = it }
+            }
+            // Battery and charging: the level counts up while a battery fills.
+            "battery", "charge" -> hRow().apply {
+                val num = word("", accent)
                 addView(num)
                 val glyph = BatteryGlyph(context).apply {
                     level = 0f
                     color = accent
                 }
-                addView(glyph, LinearLayout.LayoutParams(dp(25), dp(12)).apply { marginStart = dp(6) })
-                // The battery fills to the level while the number counts up with it.
-                fill(pct / 100f) {
+                addView(glyph, LinearLayout.LayoutParams(dp(22), dp(11)).apply { marginStart = dp(5) })
+                fill((pct ?: 0) / 100f) {
                     glyph.level = it
                     num.text = "${(it * 100).toInt()}%"
                 }
             }
-            pop.kind == "saved" || pop.title == "Done" -> hRow().apply {
-                if (pop.value.isNotEmpty()) addView(text(12f, Colors.SILVER, true).apply { text = pop.value; maxWidth = dp(90) })
-                val tick = CheckGlyph(context).apply { color = accent }
-                addView(tick, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginStart = dp(6) })
-                fill(1f, delay = 300L, ms = 340L) { tick.progress = it }
-            }
-            pop.kind == "toggle" -> {
-                val on = pop.value.equals("On", true)
-                MiniSwitch(context).apply {
-                    color = accent
-                    // Starts the other way and flips into place.
-                    setOn(!on, animate = false)
-                    postDelayed({ setOn(on, animate = true) }, 330L)
-                }
-            }
-            // Wi-Fi: its arcs light up one after another.
-            isWifi -> hRow().apply {
-                addView(text(12f, Colors.SILVER, true).apply { text = pop.value })
+            // Wi-Fi: arcs light up (or dim out when it drops).
+            "wifi" -> hRow().apply {
+                val up = pop.value == "Connected"
+                // Connected says it with the arcs alone; a drop says "Lost".
+                if (!up) addView(word("Lost", Colors.GREY))
                 val arcs = SignalArcs(context).apply { color = accent }
-                addView(arcs, LinearLayout.LayoutParams(dp(18), dp(14)).apply { marginStart = dp(6) })
-                fill(1f, delay = 260L, ms = 700L) { arcs.level = it }
+                addView(arcs, LinearLayout.LayoutParams(dp(16), dp(13)).apply { marginStart = dp(5) })
+                if (up) fill(1f, delay = 220L, ms = 620L) { arcs.level = it } else fill(1f, delay = 120L, ms = 520L) { arcs.level = 1f - it }
             }
-            pop.kind == "device" -> hRow().apply {
-                addView(text(12f, Colors.SILVER, true).apply { text = pop.value; maxWidth = dp(110) })
-                // A green "linked" dot that pops in.
+            // Bluetooth gear: its name, and a dot that links (green) or drops (grey ring).
+            "device" -> hRow().apply {
+                val up = pop.title == "Connected"
+                addView(word(pop.value, if (up) Color.WHITE else Colors.GREY, dp(88)))
                 val dot = View(context).apply {
                     background = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Colors.GREEN)
+                        if (up) setColor(Colors.GREEN) else setStroke(dp(1), Colors.GREY)
                     }
                     scaleX = 0f
                     scaleY = 0f
-                    animate().scaleX(1f).scaleY(1f).setStartDelay(420L).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(4f)).start()
+                    animate().scaleX(1f).scaleY(1f).setStartDelay(380L).setDuration(360L).setInterpolator(android.view.animation.OvershootInterpolator(4f)).start()
                 }
-                addView(dot, LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginStart = dp(7) })
+                addView(dot, LinearLayout.LayoutParams(dp(6), dp(6)).apply { marginStart = dp(6) })
             }
-            else -> text(12.5f, accent, true).apply {
-                text = pop.value
-                maxWidth = dp(110)
+            // Saved and done: a tick drawing itself.
+            "saved" -> hRow().apply {
+                if (pop.value.isNotEmpty()) addView(word(pop.value, Colors.SILVER))
+                val tick = CheckGlyph(context).apply { color = accent }
+                addView(tick, LinearLayout.LayoutParams(dp(17), dp(17)).apply { marginStart = dp(5) })
+                fill(1f, delay = 260L, ms = 320L) { tick.progress = it }
+            }
+            else -> if (pop.title == "Done") hRow().apply {
+                addView(word(pop.value, Colors.SILVER))
+                val tick = CheckGlyph(context).apply { color = accent }
+                addView(tick, LinearLayout.LayoutParams(dp(17), dp(17)).apply { marginStart = dp(5) })
+                fill(1f, delay = 260L, ms = 320L) { tick.progress = it }
+            } else hRow().apply {
+                // Anything else: a short title and its value.
+                addView(word(pop.title, Color.WHITE, dp(80)))
+                if (pop.value.isNotEmpty()) addView(spaced(word(pop.value, accent, dp(60)), 5))
             }
         }
-        // In: the badge pops, the title slides in, then the right side.
+        // In: the badge pops (spinning in), then the right side springs out from the camera.
         badge.scaleX = 0.2f
         badge.scaleY = 0.2f
         badge.rotation = -40f
-        badge.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(100L).setDuration(460L)
-            .setInterpolator(android.view.animation.OvershootInterpolator(3.4f))
+        badge.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(70L).setDuration(420L)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3.2f))
             .withEndAction { actOut(badge, pop) }.start()
-        title.alpha = 0f
-        title.translationX = -dpf(10f)
-        title.animate().alpha(1f).translationX(0f).setStartDelay(150L).setDuration(360L).setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
         right.alpha = 0f
-        right.scaleX = 0.5f
-        right.scaleY = 0.5f
-        right.translationX = dpf(14f)
-        right.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).setStartDelay(210L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
-        return Sides(left, right)
+        right.scaleX = 0.4f
+        right.scaleY = 0.4f
+        right.translationX = -dpf(12f)
+        right.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).setStartDelay(140L).setDuration(400L).setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
+        return Sides(badgeBox, right, dp(24))
     }
 
     /** Runs a 0..1 value over [ms] after [delay] with an eased stop (for fills and ticks). */
@@ -2648,6 +2710,55 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * timer a bar that empties and when it ends, then the clock app's own
      * buttons: the main one (Pause, Resume, Lap…) solid white, the rest glass.
      */
+    /**
+     * An alarm ringing: the alarm clock rattles on the left, the time big,
+     * the label under it, and two big buttons, Snooze and Stop, like the
+     * iPhone. A finished timer gets just Stop and "Time's up".
+     */
+    private fun buildAlarm(a: AlarmInfo, w: Int, top: Float): View {
+        val col = card()
+        val bell = sized(icon(R.drawable.ic_alarm, Colors.ORANGE), dp(18))
+        val tag = hRow(bell, spaced(text(12f, white70, true).apply { text = if (a.timerDone) "Timer" else "Alarm" }, 6))
+        col.addView(cameraRow(tag, null, w, top))
+        // The clock keeps rattling while it rings.
+        alarmShake = android.animation.ObjectAnimator.ofFloat(bell, View.ROTATION, 0f, 18f, -16f, 14f, -12f, 8f, -4f, 0f).apply {
+            duration = 700L
+            repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.RESTART
+            startDelay = 200L
+            start()
+        }
+        val b = body()
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val texts = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(text(40f, Color.WHITE, false).apply {
+            text = if (a.timerDone) "0:00" else a.time
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            fontFeatureSettings = "tnum"
+            includeFontPadding = false
+        })
+        texts.addView(text(13f, Colors.ORANGE, true).apply {
+            text = a.label
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(0, dp(2), 0, 0)
+        })
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        b.addView(row)
+        val buttons = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        if (a.snooze != null) buttons.addView(pillButton("Snooze", Color.argb(48, 255, 255, 255), Color.WHITE) { host.send(a.snooze) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        buttons.addView(pillButton("Stop", Colors.ORANGE, Color.BLACK) { host.send(a.stop ?: a.contentIntent) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        b.addView(buttons)
+        col.addView(b)
+        return col
+    }
+
     private fun buildExpandedTimer(t: TimerInfo, w: Int, top: Float): View {
         val col = card()
         val running = t.anchor != 0L
@@ -3461,6 +3572,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Timer -> host.send(c.timer.contentIntent)
             is Content.Transfer -> host.send(c.transfer.contentIntent)
             is Content.Nav -> host.send(c.nav.contentIntent)
+            is Content.Alarm -> host.send(c.alarm.contentIntent)
             else -> return
         }
         haptic()
@@ -3554,6 +3666,42 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun haptic() {
         if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+
+    private var shaking: android.animation.Animator? = null
+
+    /**
+     * Wrong PIN, pattern, password or fingerprint: the island shakes "no"
+     * side to side like an iPhone, the padlock flashes red, and a firm
+     * buzz. Moves the drawn island only (one layer), so it's cheap.
+     */
+    fun shake() {
+        if (mode == Mode.HIDDEN) return
+        shaking?.cancel()
+        val d = dpf(11f)
+        shaking = android.animation.ObjectAnimator.ofFloat(this, View.TRANSLATION_X, 0f, -d, d, -d * 0.8f, d * 0.6f, -d * 0.4f, d * 0.2f, 0f).apply {
+            duration = 520L
+            interpolator = DecelerateInterpolator(0.6f)
+            start()
+        }
+        lockGlyph?.let { g ->
+            g.color = Colors.RED
+            g.animate().scaleX(1.18f).scaleY(1.18f).setDuration(90L).withEndAction {
+                g.animate().scaleX(1f).scaleY(1f).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+            }.start()
+            postDelayed({ lockGlyph?.color = Color.WHITE }, 900L)
+        }
+        // A little squash as it shakes, so it feels like it's saying no.
+        springs[1].kick(-v(1) * 2.2f)
+        if (hapticsEnabled) performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.REJECT else HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    /** The screen turned on while locked: the padlock gives a little nod hello. */
+    fun wakeNod() {
+        val g = lockGlyph ?: return
+        g.animate().cancel()
+        g.translationY = -dpf(4f)
+        g.animate().translationY(0f).setDuration(520L).setInterpolator(android.view.animation.OvershootInterpolator(3.5f)).start()
     }
 
     private fun onBubble(x: Float, y: Float): Boolean {
@@ -4108,7 +4256,7 @@ class MiniSwitch(context: Context) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension((30 * density).toInt(), (18 * density).toInt())
+        setMeasuredDimension((27 * density).toInt(), (16 * density).toInt())
     }
 
     override fun onDraw(c: Canvas) {

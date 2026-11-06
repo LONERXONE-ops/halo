@@ -215,6 +215,7 @@ class HaloNotificationListener : NotificationListenerService() {
         IslandStore.forgetNote(sbn.key)
         if (IslandStore.notif?.key == sbn.key) IslandStore.dismissNotif()
         if (IslandStore.timer?.key == sbn.key) IslandStore.setTimer(null)
+        if (IslandStore.alarm?.key == sbn.key) IslandStore.setAlarm(null)
         IslandStore.rec?.let { if (!it.own && it.key == sbn.key) IslandStore.setRec(null) }
         if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
         if (IslandStore.transfer?.key == sbn.key) IslandStore.setTransfer(null)
@@ -484,6 +485,38 @@ class HaloNotificationListener : NotificationListenerService() {
                 ),
             )
             Debug.lastNotification = "Maps: navigation: ${title.take(24)}"
+            return true
+        }
+
+        // An alarm going off (or a timer that just finished): big on the island with Snooze and Stop.
+        if (isClockApp(pkg) && n.category == Notification.CATEGORY_ALARM && (sbn.isOngoing || n.fullScreenIntent != null)) {
+            if (!prefs.getBoolean(Prefs.ALARMS, true)) return false
+            fun find(vararg words: String) = n.actions?.firstOrNull { a ->
+                val t = a.title?.toString()?.lowercase().orEmpty()
+                words.any { t.contains(it) }
+            }?.actionIntent
+            val all = (title + " " + text).lowercase()
+            val timerDone = all.contains("timer") || all.contains("time's up") || all.contains("time is up") || all.contains("times up")
+            val stop = find("dismiss", "stop", "turn off", "cancel", "close") ?: n.actions?.lastOrNull()?.actionIntent
+            val snooze = if (timerDone) null else find("snooze", "later")
+            val clock = Regex("\\b\\d{1,2}[:.]\\d{2}\\s*(am|pm|AM|PM)?").find("$title $text")?.value
+            IslandStore.setAlarm(
+                AlarmInfo(
+                    key = sbn.key,
+                    label = when {
+                        timerDone -> "Time's up"
+                        title.isNotEmpty() && title != clock -> title
+                        text.isNotEmpty() && text != clock -> text
+                        else -> "Alarm"
+                    },
+                    time = clock ?: java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date()),
+                    snooze = snooze,
+                    stop = stop,
+                    contentIntent = n.contentIntent ?: n.fullScreenIntent,
+                    timerDone = timerDone,
+                ),
+            )
+            Debug.lastNotification = "Clock: alarm"
             return true
         }
 
@@ -786,6 +819,13 @@ class HaloNotificationListener : NotificationListenerService() {
     /** Ranking's "no lock screen override" value (hidden constant in the SDK). */
     private val NO_OVERRIDE = -1000
 
+    /** Replies Android suggests for this message (its own smart replies), if any. */
+    fun smartReplies(sbn: StatusBarNotification): List<CharSequence> = try {
+        rankingOf(sbn)?.smartReplies.orEmpty()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
     private fun rankingOf(sbn: StatusBarNotification): Ranking? = try {
         val r = Ranking()
         if (currentRanking?.getRanking(sbn.key, r) == true) r else null
@@ -886,7 +926,7 @@ class HaloNotificationListener : NotificationListenerService() {
             appIcon = appIcon(sbn.packageName),
             picture = picture,
             count = count,
-            replyable = n.actions?.any { it.remoteInputs?.isNotEmpty() == true } == true,
+            replyable = replyActionOf(n) != null,
             markRead = markRead,
         )
     }
@@ -999,6 +1039,18 @@ class HaloNotificationListener : NotificationListenerService() {
 
         private val SUMMARY = Regex("""(^|\b)(\d+\s+)?new\s+messages?\s+from\s+\d+\s+chats?|\d+\s+messages?\s+from\s+\d+\s+chats?""", RegexOption.IGNORE_CASE)
         private val COUNT_SUFFIX = Regex("""\s*\((\d+)\s+(new\s+)?messages?\)\s*$""", RegexOption.IGNORE_CASE)
+
+        /**
+         * The app's reply button: the normal one, or the one some apps only
+         * give watches (Wear actions), so replying works in more apps.
+         */
+        fun replyActionOf(n: android.app.Notification): android.app.Notification.Action? =
+            n.actions?.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
+                ?: try {
+                    android.app.Notification.WearableExtender(n).actions.firstOrNull { it.remoteInputs?.isNotEmpty() == true }
+                } catch (_: Exception) {
+                    null
+                }
 
         fun drawableToBitmap(d: Drawable?): Bitmap? {
             d ?: return null

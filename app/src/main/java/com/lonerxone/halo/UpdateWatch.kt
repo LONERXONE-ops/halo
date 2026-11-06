@@ -43,6 +43,7 @@ object UpdateWatch {
     private fun check(c: Context, repo: String, pkg: String, name: String, id: Int) {
         val have = installedBuild(c, pkg)
         if (have < 0) return
+        var body = ""
         val tag = try {
             val con = URL("https://api.github.com/repos/$repo/releases/latest").openConnection() as HttpURLConnection
             con.setRequestProperty("Accept", "application/vnd.github+json")
@@ -50,7 +51,9 @@ object UpdateWatch {
             con.connectTimeout = 10_000
             con.readTimeout = 10_000
             if (con.responseCode != 200) return
-            JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optString("tag_name")
+            val json = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+            body = json.optString("body")
+            json.optString("tag_name")
         } catch (_: Exception) {
             return
         }
@@ -59,10 +62,10 @@ object UpdateWatch {
         val p = c.getSharedPreferences("update_watch", Context.MODE_PRIVATE)
         if (p.getString("told_$pkg", "") == tag) return
         p.edit().putString("told_$pkg", tag).apply()
-        notify(c, name, tag, pkg, id)
+        notify(c, name, tag, pkg, id, body)
     }
 
-    private fun notify(c: Context, name: String, tag: String, pkg: String, id: Int) {
+    private fun notify(c: Context, name: String, tag: String, pkg: String, id: Int, body: String) {
         val nm = c.getSystemService(NotificationManager::class.java) ?: return
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, "Updates", NotificationManager.IMPORTANCE_DEFAULT).apply {
@@ -75,10 +78,14 @@ object UpdateWatch {
             Intent().setClassName(pkg, "$pkg.SettingsShortcut").putExtra("page", "updates")
         }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pi = PendingIntent.getActivity(c, id, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val (headline, _) = ReleaseNotes.parse(body)
+        val teaser = ReleaseNotes.teaser(body)
         val n = Notification.Builder(c, CHANNEL)
             .setSmallIcon(R.drawable.ic_update)
             .setContentTitle("$name $tag is out")
-            .setContentText("Tap to see what's new and update")
+            .setContentText(headline.ifEmpty { "Tap to see what's new and update" })
+            // Pull it down: the first few things that are new.
+            .setStyle(Notification.BigTextStyle().bigText(listOf(headline, teaser).filter { it.isNotEmpty() }.joinToString("\n").ifEmpty { "Tap to see what's new and update" }))
             .setContentIntent(pi)
             .setAutoCancel(true)
             .build()

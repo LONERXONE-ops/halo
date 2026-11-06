@@ -34,10 +34,10 @@ object Updater {
     /** "v0.1.12" -> 12 (the build number is the last part). */
     fun buildOf(tag: String): Int = tag.substringAfterLast('.').filter { it.isDigit() }.toIntOrNull() ?: 0
 
-    fun check(done: (Check) -> Unit) {
+    fun check(repo: String = REPO, done: (Check) -> Unit) {
         Thread {
             val result = try {
-                val c = URL("https://api.github.com/repos/$REPO/releases/latest").openConnection() as HttpURLConnection
+                val c = URL("https://api.github.com/repos/$repo/releases/latest").openConnection() as HttpURLConnection
                 c.setRequestProperty("Accept", "application/vnd.github+json")
                 c.setRequestProperty("User-Agent", "Halo-Android")
                 c.connectTimeout = 10_000

@@ -159,6 +159,18 @@ data class TimerInfo(
     val actions: List<Pair<String, PendingIntent>>,
 )
 
+/** An alarm (or a finished timer) ringing in the clock app, with its Snooze and Stop buttons. */
+data class AlarmInfo(
+    val key: String,
+    val label: String,
+    val time: String,
+    val snooze: PendingIntent?,
+    val stop: PendingIntent?,
+    val contentIntent: PendingIntent?,
+    /** A finished timer rather than an alarm (no Snooze, "Time's up"). */
+    val timerDone: Boolean = false,
+)
+
 /** A download, upload or install with a progress bar. */
 data class TransferInfo(
     val key: String,
@@ -224,6 +236,8 @@ object IslandStore {
     var call: CallInfo? = null
         private set
     var timer: TimerInfo? = null
+        private set
+    var alarm: AlarmInfo? = null
         private set
     var transfer: TransferInfo? = null
         private set
@@ -350,6 +364,12 @@ object IslandStore {
 
     fun isDialer(pkg: String): Boolean =
         pkg.contains("incallui", true) || pkg.contains("dialer", true) || pkg == "com.android.phone" || pkg == "com.samsung.android.app.telephonyui"
+
+    fun setAlarm(a: AlarmInfo?) {
+        if (a == alarm) return
+        alarm = a
+        dispatch()
+    }
 
     fun setTimer(t: TimerInfo?) {
         timer = t
@@ -528,6 +548,27 @@ object Prefs {
      * keep obeying DND. Off by default.
      */
     const val DND_PEEK = "dnd_peek"
+    /** Off: the island steps out of the way when you take a screenshot with the buttons. */
+    const val IN_SHOTS = "in_shots"
+
+    // Fine sizing (percent of the standard size; 100 = how it always was).
+    const val CAP_H = "cap_h"
+    const val CAP_W = "cap_w"
+    const val CARD_W = "card_w"
+
+    // Each system moment on its own (all on by default; SYSTEM_POPS is the master switch).
+    const val EV_RINGER = "ev_ringer"
+    const val EV_DND = "ev_dnd"
+    const val EV_BT = "ev_bt"
+    const val EV_WIFI = "ev_wifi"
+    const val EV_HOTSPOT = "ev_hotspot"
+    const val EV_AIRPLANE = "ev_airplane"
+    const val EV_SAVER = "ev_saver"
+    const val EV_BATTERY = "ev_battery"
+    const val EV_BUDS = "ev_buds"
+    const val ALARMS = "alarms"
+    /** Wrong PIN, pattern or fingerprint: the island shakes no, like an iPhone. */
+    const val LOCK_SHAKE = "lock_shake"
 
     fun picFile(c: Context, key: String): java.io.File = java.io.File(c.filesDir, "$key.jpg")
 
