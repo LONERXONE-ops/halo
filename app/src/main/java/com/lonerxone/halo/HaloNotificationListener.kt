@@ -61,6 +61,9 @@ class HaloNotificationListener : NotificationListenerService() {
      * clock (a Chronometer): when it started or ends, and which way it counts.
      * Falls back to any text in it that looks like a time.
      */
+    /** The last time read from each clock notification (value, when), to tell which way it counts. */
+    private val lastClock = HashMap<String, Pair<Long, Long>>()
+
     private fun clockInViews(n: Notification): ShownClock? = try {
         val rv = n.bigContentView ?: n.contentView ?: Notification.Builder.recoverBuilder(this, n).createContentView()
         val root = android.widget.FrameLayout(this)
@@ -215,6 +218,7 @@ class HaloNotificationListener : NotificationListenerService() {
         IslandStore.forgetNote(sbn.key)
         if (IslandStore.notif?.key == sbn.key) IslandStore.dismissNotif()
         if (IslandStore.timer?.key == sbn.key) IslandStore.setTimer(null)
+        lastClock.remove(sbn.key)
         if (IslandStore.alarm?.key == sbn.key) IslandStore.setAlarm(null)
         IslandStore.rec?.let { if (!it.own && it.key == sbn.key) IslandStore.setRec(null) }
         if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
@@ -533,8 +537,32 @@ class HaloNotificationListener : NotificationListenerService() {
             // Samsung's Clock (and others) draw their own running clock in a
             // custom layout instead of the standard one: read it from there.
             val shown = clockInViews(n)
-            val down = ex.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false) || shown?.countDown == true ||
-                (shown == null && (title.contains("timer", true) || (words.contains("delete") || words.contains("cancel")) && !words.contains("lap")))
+            // Timer (counting down) or stopwatch (counting up)? Samsung's Clock draws
+            // its time as plain text, so it can't just be asked: take the surest sign.
+            val nowW = System.currentTimeMillis()
+            val hint = (title + " " + text + " " + (n.channelId ?: "")).lowercase()
+            val parsedNow = listOf(title, text, shown?.text.orEmpty()).firstNotNullOfOrNull { parseClock(it) }
+            val seen = lastClock[sbn.key]
+            // The time shown went down since last time (with the clock running): it's a countdown.
+            val trend = if (seen != null && parsedNow != null && nowW - seen.second in 900L..120_000L) {
+                when {
+                    parsedNow < seen.first - 400L -> true
+                    parsedNow > seen.first + 400L -> false
+                    else -> null
+                }
+            } else null
+            if (parsedNow != null) lastClock[sbn.key] = parsedNow to nowW
+            val down = when {
+                ex.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN, false) -> true
+                shown?.base != null && shown.countDown -> true
+                // A running clock whose time is in the future can only be an end time.
+                chrono && n.`when` > nowW + 1_500L -> true
+                hint.contains("stopwatch") || words.contains("lap") -> false
+                hint.contains("timer") || hint.contains("countdown") -> true
+                trend != null -> trend
+                words.contains("delete") || words.contains("cancel") -> true
+                else -> false
+            }
             // Paused when it offers to resume (and not to pause or lap).
             val paused = Regex("resume|continue|start").containsMatchIn(words) && !Regex("pause|lap").containsMatchIn(words)
             val nowWall = System.currentTimeMillis()

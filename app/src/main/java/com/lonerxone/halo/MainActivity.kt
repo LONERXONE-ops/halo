@@ -112,11 +112,12 @@ class MainActivity : Activity() {
         REC_QUALITY("Recording quality"),
         REC_SOUND("Recording sound"),
         MOMENTS("System moments"),
+        PLAYER("Music player"),
     }
 
     /** Where Back goes from a page. */
     private fun parentOf(p: Page): Page = when (p) {
-        Page.REC_QUALITY, Page.REC_SOUND, Page.MOMENTS -> Page.ISLAND
+        Page.REC_QUALITY, Page.REC_SOUND, Page.MOMENTS, Page.PLAYER -> Page.ISLAND
         else -> Page.HOME
     }
 
@@ -177,6 +178,7 @@ class MainActivity : Activity() {
             Page.REC_QUALITY -> recQualityPage(col)
             Page.REC_SOUND -> recSoundPage(col)
             Page.MOMENTS -> momentsPage(col)
+            Page.PLAYER -> playerPage(col)
         }
 
         // Same page re-rendered (a status change): keep the scroll position.
@@ -362,6 +364,7 @@ class MainActivity : Activity() {
         Page.CAMERA -> listOf(Prefs.CAM_X, Prefs.CAM_Y, Prefs.CAM_SIZE)
         Page.PICTURES -> listOf(Prefs.PIC_DIM)
         Page.REC_QUALITY -> listOf(Prefs.REC_QUALITY)
+        Page.PLAYER -> listOf(Prefs.MP_TINT, Prefs.MP_VINYL, Prefs.MP_AMBIENT, Prefs.MP_WAVY, Prefs.MP_EXTRAS, Prefs.MP_ALIGN, Prefs.MP_DEVICE, Prefs.BEAT)
         Page.REC_SOUND -> listOf(Prefs.REC_AUDIO)
         else -> emptyList()
     }
@@ -474,6 +477,7 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Live activities"))
         col.addView(group(
             switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC),
+            navRow("Music player", "Album colours, spinning record, wavy progress, button layout") { go(Page.PLAYER) },
             switchRowDefault("Bars follow the beat", "The music bars move with the real sound", Prefs.BEAT, false),
             switchRow("Calls", "Caller photo, Accept / Decline, Mute, Speaker and End", Prefs.CALLS),
             switchRow("Lock screen", "A padlock on the lock screen that springs open when you unlock", Prefs.LOCK_MODE),
@@ -1593,6 +1597,50 @@ class MainActivity : Activity() {
             moment(R.drawable.ic_bolt, Colors.GREEN, "Charging", "When you plug in (tap it for the charging card)", Prefs.CHARGING) { Moments.charging(64) },
         ))
         col.addView(footnote("Bluetooth only counts real listening gear (earbuds, headphones, speakers, car kits), so watches and trackers never pop up. Background news like Wi-Fi and earbuds waits while Do Not Disturb is on; things you switch yourself still show."))
+    }
+
+    /** How the open music player looks (ideas from DroidBubble and Android's own player). */
+    private fun playerPage(col: LinearLayout) {
+        pageHeader(col, "Music player", "How the island's player looks when you open it")
+        col.addView(sectionTitle("Buttons"))
+        val p = Prefs.get(this)
+        val seg = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = GradientDrawable().apply {
+                setColor(cardFill)
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), cardStroke)
+            }
+        }
+        val cur = p.getInt(Prefs.MP_ALIGN, 1)
+        listOf("Left", "Centre", "Right").forEachIndexed { i, name ->
+            seg.addView(label(name, 14f, if (i == cur) Color.BLACK else text1, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(11), 0, dp(11))
+                if (i == cur) background = GradientDrawable().apply {
+                    setColor(Color.WHITE)
+                    cornerRadius = dp(18).toFloat()
+                }
+                isClickable = true
+                setOnClickListener {
+                    p.edit().putInt(Prefs.MP_ALIGN, i).apply()
+                    HaloService.instance?.reloadPrefs()
+                    render()
+                }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        col.addView(seg)
+        col.addView(group(switchRow("App's own buttons", "Like, shuffle, repeat and the rest, when the app offers them", Prefs.MP_EXTRAS)))
+        col.addView(sectionTitle("Look and motion"))
+        col.addView(group(
+            switchRow("Album colour", "The card takes the colour of the cover", Prefs.MP_TINT),
+            switchRow("Spinning record", "The cover turns like vinyl while it plays", Prefs.MP_VINYL),
+            switchRow("Ambient waves", "Soft waves in the album's colour roll along the bottom, to the beat", Prefs.MP_AMBIENT),
+            switchRow("Wavy progress", "The played part of the line flows while the song plays", Prefs.MP_WAVY),
+            switchRow("Where it's playing", "Your earbuds' or speaker's name at the top", Prefs.MP_DEVICE),
+        ))
+        col.addView(footnote("Play a song and open the island to see it. Low-power mode keeps the waves and the wavy line still."))
     }
 
     private fun recQualityPage(col: LinearLayout) {
