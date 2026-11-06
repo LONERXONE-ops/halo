@@ -364,7 +364,7 @@ class MainActivity : Activity() {
         Page.CAMERA -> listOf(Prefs.CAM_X, Prefs.CAM_Y, Prefs.CAM_SIZE)
         Page.PICTURES -> listOf(Prefs.PIC_DIM)
         Page.REC_QUALITY -> listOf(Prefs.REC_QUALITY)
-        Page.PLAYER -> listOf(Prefs.MP_TINT, Prefs.MP_VINYL, Prefs.MP_AMBIENT, Prefs.MP_WAVY, Prefs.MP_EXTRAS, Prefs.MP_ALIGN, Prefs.MP_DEVICE, Prefs.BEAT)
+        Page.PLAYER -> listOf(Prefs.MP_TINT, Prefs.MP_AMBIENT, Prefs.MP_WAVY, Prefs.MP_EXTRAS, Prefs.MP_DEVICE)
         Page.REC_SOUND -> listOf(Prefs.REC_AUDIO)
         else -> emptyList()
     }
@@ -477,7 +477,7 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Live activities"))
         col.addView(group(
             switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC),
-            navRow("Music player", "Album colours, spinning record, wavy progress, button layout") { go(Page.PLAYER) },
+            navRow("Music player", "Album colours, ambient waves, wave scrubber, the app's buttons") { go(Page.PLAYER) },
             switchRowDefault("Bars follow the beat", "The music bars move with the real sound", Prefs.BEAT, false),
             switchRow("Calls", "Caller photo, Accept / Decline, Mute, Speaker and End", Prefs.CALLS),
             switchRow("Lock screen", "A padlock on the lock screen that springs open when you unlock", Prefs.LOCK_MODE),
@@ -1602,45 +1602,14 @@ class MainActivity : Activity() {
     /** How the open music player looks (ideas from DroidBubble and Android's own player). */
     private fun playerPage(col: LinearLayout) {
         pageHeader(col, "Music player", "How the island's player looks when you open it")
-        col.addView(sectionTitle("Buttons"))
-        val p = Prefs.get(this)
-        val seg = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            background = GradientDrawable().apply {
-                setColor(cardFill)
-                cornerRadius = dp(22).toFloat()
-                setStroke(dp(1), cardStroke)
-            }
-        }
-        val cur = p.getInt(Prefs.MP_ALIGN, 1)
-        listOf("Left", "Centre", "Right").forEachIndexed { i, name ->
-            seg.addView(label(name, 14f, if (i == cur) Color.BLACK else text1, true).apply {
-                gravity = Gravity.CENTER
-                setPadding(0, dp(11), 0, dp(11))
-                if (i == cur) background = GradientDrawable().apply {
-                    setColor(Color.WHITE)
-                    cornerRadius = dp(18).toFloat()
-                }
-                isClickable = true
-                setOnClickListener {
-                    p.edit().putInt(Prefs.MP_ALIGN, i).apply()
-                    HaloService.instance?.reloadPrefs()
-                    render()
-                }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        col.addView(seg)
-        col.addView(group(switchRow("App's own buttons", "Like, shuffle, repeat and the rest, when the app offers them", Prefs.MP_EXTRAS)))
-        col.addView(sectionTitle("Look and motion"))
         col.addView(group(
             switchRow("Album colour", "The card takes the colour of the cover", Prefs.MP_TINT),
-            switchRow("Spinning record", "The cover turns like vinyl while it plays", Prefs.MP_VINYL),
-            switchRow("Ambient waves", "Soft waves in the album's colour roll along the bottom, to the beat", Prefs.MP_AMBIENT),
-            switchRow("Wavy progress", "The played part of the line flows while the song plays", Prefs.MP_WAVY),
+            switchRow("Ambient waves", "Soft waves in the album's colour move with the song: bass, mids and highs each move one", Prefs.MP_AMBIENT),
+            switchRow("Wave scrubber", "Like Samsung's: soft hills rise above the played part, with a glowing thumb", Prefs.MP_WAVY),
+            switchRow("App's own buttons", "Like, shuffle, add and the rest, when the app offers them; they change the moment you tap", Prefs.MP_EXTRAS),
             switchRow("Where it's playing", "Your earbuds' or speaker's name at the top", Prefs.MP_DEVICE),
         ))
-        col.addView(footnote("Play a song and open the island to see it. Low-power mode keeps the waves and the wavy line still."))
+        col.addView(footnote("Play a song and open the island to see it. The waves follow the song when Halo is allowed to hear it (Bars follow the beat, on the island page); otherwise they sway gently. Low-power mode keeps them still."))
     }
 
     private fun recQualityPage(col: LinearLayout) {

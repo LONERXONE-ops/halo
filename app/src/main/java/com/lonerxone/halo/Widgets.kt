@@ -147,11 +147,11 @@ class ProgressLine(context: Context) : View(context) {
     }
 
     /**
-     * Wavy (like Android's own player): the played part is a gentle wave
-     * that flows while the song plays and lies flat when it's paused or
-     * while you drag. A small upright thumb marks where you are.
+     * Samsung's wave scrubber: a thick line where the played part has soft
+     * hills rising above it (two layers, gently breathing with the beat
+     * while the song plays), and a round thumb with a glow.
      */
-    var wavy = false
+    var hills = false
         set(v) {
             field = v
             invalidate()
@@ -161,19 +161,27 @@ class ProgressLine(context: Context) : View(context) {
             field = v
             invalidate()
         }
-    private var amp = 0f
-    private var phase = 0f
+    /** Each song gets its own shape of hills. */
+    var seed = 0
+        set(v) {
+            field = v
+            peaks = null
+        }
+    private var peaks: FloatArray? = null
+    private var breathe = 0f
     private var lastT = 0L
-    private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val hillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
+        color = Color.WHITE
     }
     private val path = android.graphics.Path()
 
     override fun onDraw(canvas: Canvas) {
         val shown = if (dragging) dragValue else fraction
-        if (wavy) {
-            drawWavy(canvas, shown)
+        if (hills) {
+            drawHills(canvas, shown)
             return
         }
         val th = if (dragging) 6f * density else 4f * density
@@ -185,37 +193,78 @@ class ProgressLine(context: Context) : View(context) {
         if (dragging) canvas.drawCircle(w.coerceIn(r, width - r), height / 2f, 7f * density, thumb)
     }
 
-    private fun drawWavy(canvas: Canvas, shown: Float) {
+    /** The heights of the hills along the song (smooth, made once per song from [seed]). */
+    private fun peaksFor(n: Int): FloatArray {
+        peaks?.let { if (it.size == n) return it }
+        val rnd = java.util.Random(seed.toLong())
+        val raw = FloatArray(n) { 0.25f + rnd.nextFloat() * 0.75f }
+        // Smoothed so they read as rolling hills, not spikes.
+        val out = FloatArray(n)
+        for (i in 0 until n) {
+            var sum = 0f
+            var c = 0
+            for (j in -3..3) {
+                val k = i + j
+                if (k in 0 until n) {
+                    sum += raw[k]
+                    c++
+                }
+            }
+            out[i] = sum / c
+        }
+        peaks = out
+        return out
+    }
+
+    private fun drawHills(canvas: Canvas, shown: Float) {
         val now = SystemClock.uptimeMillis()
         val dt = if (lastT == 0L) 0.016f else ((now - lastT) / 1000f).coerceIn(0f, 0.05f)
         lastT = now
-        // The wave grows in when playing and calms down when paused or dragged.
-        val target = if (playing && !dragging) 3f * density else 0f
-        amp += (target - amp) * (1f - kotlin.math.exp(-8f * dt))
-        if (playing) phase += dt * 6f
-        val cy = height / 2f
-        val th = if (dragging) 5f * density else 4f * density
+        val beat = if (playing && Beat.fresh()) (Beat.levels[0] * 0.6f + Beat.levels[1] * 0.4f) else if (playing) 0.55f else 0.35f
+        breathe += (beat - breathe) * (1f - kotlin.math.exp(-10f * dt))
+        val th = 5f * density
+        val cy = height * 0.62f
         val x = width * shown
-        // The rest of the song: a calm flat line.
-        track.strokeWidth = th
-        canvas.drawRoundRect(x + 4f * density, cy - th / 2f, width.toFloat(), cy + th / 2f, th / 2f, th / 2f, track)
-        // The played part: a flowing wave.
-        wavePaint.color = bar.color
-        wavePaint.strokeWidth = th
-        path.reset()
-        val wl = 22f * density
-        var px = th / 2f
-        path.moveTo(px, cy + amp * kotlin.math.sin(phase))
-        while (px < x) {
-            px = kotlin.math.min(px + 2f * density, x)
-            path.lineTo(px, cy + amp * kotlin.math.sin(px / wl * 6.2832f + phase))
+        val rr = 8f * density
+        // Unplayed: a grey line.
+        canvas.drawRoundRect(x, cy - th / 2f, width.toFloat(), cy + th / 2f, th / 2f, th / 2f, track)
+        // Played: soft hills above the line, two layers.
+        if (x > 2f) {
+            val n = 48
+            val pk = peaksFor(n)
+            val maxH = cy - 2f * density
+            for (layer in 0 until 2) {
+                path.reset()
+                path.moveTo(0f, cy)
+                val steps = (x / (3f * density)).toInt().coerceAtLeast(2)
+                for (i in 0..steps) {
+                    val px = x * i / steps
+                    val pos = (px / width) * (n - 1)
+                    val i0 = pos.toInt().coerceIn(0, n - 1)
+                    val i1 = (i0 + 1).coerceAtMost(n - 1)
+                    val f = pos - i0
+                    var hgt = pk[i0] + (pk[i1] - pk[i0]) * f
+                    if (layer == 1) hgt *= 0.62f
+                    // Taper in at the start and down to the thumb.
+                    val edge = kotlin.math.min(1f, kotlin.math.min(px / (14f * density), (x - px) / (18f * density) + 0.15f)).coerceIn(0f, 1f)
+                    path.lineTo(px, cy - maxH * hgt * edge * (0.55f + 0.45f * breathe))
+                }
+                path.lineTo(x, cy)
+                path.close()
+                hillPaint.color = Color.argb(if (layer == 0) 95 else 150, Color.red(bar.color), Color.green(bar.color), Color.blue(bar.color))
+                canvas.drawPath(path, hillPaint)
+            }
+            canvas.drawRoundRect(0f, cy - th / 2f, x, cy + th / 2f, th / 2f, th / 2f, bar)
         }
-        if (x > th) canvas.drawPath(path, wavePaint)
-        // The thumb: an upright rounded bar (bigger while you drag).
-        val tw = (if (dragging) 6f else 4.5f) * density
-        val tthumb = (if (dragging) 22f else 16f) * density
-        canvas.drawRoundRect(x - tw / 2f, cy - tthumb / 2f, x + tw / 2f, cy + tthumb / 2f, tw / 2f, tw / 2f, thumb)
-        if ((playing || amp > 0.05f) && isShown) postInvalidateOnAnimation() else lastT = 0L
+        // The thumb: a filled circle with a white ring and a soft glow.
+        val tr = if (dragging) rr * 1.2f else rr
+        val tx = x.coerceIn(tr, width - tr)
+        glowPaint.shader = android.graphics.RadialGradient(tx, cy, tr * 2.2f, Color.argb(120, Color.red(bar.color), Color.green(bar.color), Color.blue(bar.color)), Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawCircle(tx, cy, tr * 2.2f, glowPaint)
+        canvas.drawCircle(tx, cy, tr, bar)
+        ringPaint.strokeWidth = 2.5f * density
+        canvas.drawCircle(tx, cy, tr - 1.25f * density, ringPaint)
+        if ((playing || kotlin.math.abs(breathe - 0.35f) > 0.02f) && isShown) postInvalidateOnAnimation() else lastT = 0L
     }
 }
 
@@ -461,108 +510,10 @@ class CheckGlyph(context: Context) : View(context) {
 
 
 /**
- * The cover as a spinning vinyl record: the art in a circle with fine
- * grooves and a little spindle hole, turning slowly while the song plays
- * and easing to a stop when it's paused.
- */
-class VinylArt(context: Context) : View(context) {
-    var bitmap: android.graphics.Bitmap? = null
-        set(v) {
-            field = v
-            shader = null
-            invalidate()
-        }
-    var vinyl = true
-        set(v) {
-            field = v
-            invalidate()
-        }
-    var playing = false
-        set(v) {
-            field = v
-            invalidate()
-        }
-    var placeholder: Int = Color.rgb(40, 40, 46)
-    private var angle = 0f
-    private var speed = 0f
-    private var lastT = 0L
-    private var shader: android.graphics.BitmapShader? = null
-    private val art = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val groove = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        color = Color.argb(34, 0, 0, 0)
-    }
-    private val shine = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val hole = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val m = android.graphics.Matrix()
-    private val d = resources.displayMetrics.density
-
-    override fun onDraw(c: Canvas) {
-        val now = SystemClock.uptimeMillis()
-        val dt = if (lastT == 0L) 0.016f else ((now - lastT) / 1000f).coerceIn(0f, 0.05f)
-        lastT = now
-        // One turn every 6 seconds; spins up and winds down instead of snapping.
-        val target = if (playing && vinyl) 60f else 0f
-        speed += (target - speed) * (1f - kotlin.math.exp(-3f * dt))
-        angle = (angle + speed * dt) % 360f
-        val r = min(width, height) / 2f
-        val cx = width / 2f
-        val cy = height / 2f
-        val b = bitmap
-        if (!vinyl) {
-            // A plain rounded square cover.
-            val rad = r * 0.38f
-            if (b != null) {
-                fit(b, r)
-                c.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), rad, rad, art)
-            } else {
-                art.shader = null
-                art.color = placeholder
-                c.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), rad, rad, art)
-            }
-            lastT = 0L
-            return
-        }
-        c.save()
-        c.rotate(angle, cx, cy)
-        if (b != null) fit(b, r) else {
-            art.shader = null
-            art.color = placeholder
-        }
-        c.drawCircle(cx, cy, r, art)
-        // Grooves.
-        groove.strokeWidth = 0.8f * d
-        var gr = r * 0.95f
-        while (gr > r * 0.4f) {
-            c.drawCircle(cx, cy, gr, groove)
-            gr -= 3.2f * d
-        }
-        c.restore()
-        // A soft light across it that stays still while the record turns.
-        shine.shader = android.graphics.LinearGradient(cx - r, cy - r, cx + r, cy + r, intArrayOf(Color.argb(60, 255, 255, 255), Color.TRANSPARENT, Color.argb(30, 255, 255, 255)), floatArrayOf(0f, 0.5f, 1f), android.graphics.Shader.TileMode.CLAMP)
-        c.drawCircle(cx, cy, r, shine)
-        // The spindle hole.
-        hole.color = Color.argb(230, 12, 12, 14)
-        c.drawCircle(cx, cy, r * 0.13f, hole)
-        hole.color = Color.argb(90, 255, 255, 255)
-        c.drawCircle(cx, cy, r * 0.05f, hole)
-        if ((speed > 0.5f || (playing && vinyl)) && isShown) postInvalidateOnAnimation() else lastT = 0L
-    }
-
-    private fun fit(b: android.graphics.Bitmap, r: Float) {
-        if (shader == null) shader = android.graphics.BitmapShader(b, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP)
-        val s = max(width / b.width.toFloat(), height / b.height.toFloat())
-        m.setScale(s, s)
-        m.postTranslate((width - b.width * s) / 2f, (height - b.height * s) / 2f)
-        shader!!.setLocalMatrix(m)
-        art.shader = shader
-        art.color = Color.WHITE
-    }
-}
-
-/**
  * Soft waves in the album's colour rolling along the bottom of the music
- * card, rising with the beat when Halo can hear it, calm when paused.
+ * card, moving with the song: the back wave with the bass, the middle with
+ * the mids, the front with the highs (when Halo can hear the music).
+ * Calm and low when paused.
  */
 class AmbientWave(context: Context) : View(context) {
     var color: Int = Color.WHITE
@@ -575,39 +526,50 @@ class AmbientWave(context: Context) : View(context) {
             field = v
             invalidate()
         }
-    private var phase = 0f
-    private var lift = 0f
+    private val phase = FloatArray(3)
+    private val lift = floatArrayOf(0.3f, 0.3f, 0.3f)
     private var lastT = 0L
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = android.graphics.Path()
+    private var shaders: Array<android.graphics.Shader>? = null
+    private var shadersFor = 0
 
     override fun onDraw(c: Canvas) {
         val now = SystemClock.uptimeMillis()
         val dt = if (lastT == 0L) 0.016f else ((now - lastT) / 1000f).coerceIn(0f, 0.05f)
         lastT = now
-        val beat = if (Beat.fresh()) (Beat.levels[0] + Beat.levels[1]) / 2f else 0.5f
-        val target = if (playing) 0.55f + 0.45f * beat else 0.25f
-        lift += (target - lift) * (1f - kotlin.math.exp(-5f * dt))
-        if (playing) phase += dt * 1.6f
+        val hear = playing && Beat.fresh()
         val w = width.toFloat()
         val h = height.toFloat()
+        if (shaders == null || shadersFor != color + height) {
+            shadersFor = color + height
+            shaders = Array(3) { layer ->
+                android.graphics.LinearGradient(0f, h * 0.2f, 0f, h, Color.argb(75 - layer * 15, Color.red(color), Color.green(color), Color.blue(color)), Color.argb(8, Color.red(color), Color.green(color), Color.blue(color)), android.graphics.Shader.TileMode.CLAMP)
+            }
+        }
+        var moving = false
         for (layer in 0 until 3) {
-            val a = (h * 0.22f) * lift * (1f - layer * 0.22f)
-            val base = h * (0.45f + layer * 0.12f)
-            val wl = w * (0.9f + layer * 0.35f)
-            val ph = phase * (1f + layer * 0.4f) + layer * 1.7f
+            // Each wave follows its own part of the sound; quick up, slower down, like a meter.
+            val level = if (hear) Beat.levels[layer].coerceIn(0f, 1f) else if (playing) 0.45f + 0.1f * kotlin.math.sin(now / 900f + layer) else 0.2f
+            val rate = if (level > lift[layer]) 14f else 4f
+            lift[layer] += (level - lift[layer]) * (1f - kotlin.math.exp(-rate * dt))
+            if (playing) phase[layer] += dt * (1.2f + layer * 0.5f + lift[layer] * 1.5f)
+            if (kotlin.math.abs(level - lift[layer]) > 0.01f) moving = true
+            val a = h * 0.28f * lift[layer]
+            val base = h * (0.5f + layer * 0.12f)
+            val wl = w * (0.85f + layer * 0.3f)
             path.reset()
             path.moveTo(0f, h)
             var x = 0f
             while (x <= w) {
-                path.lineTo(x, base - a * kotlin.math.sin(x / wl * 6.2832f + ph))
+                path.lineTo(x, base - a * kotlin.math.sin(x / wl * 6.2832f + phase[layer]))
                 x += 6f
             }
             path.lineTo(w, h)
             path.close()
-            p.shader = android.graphics.LinearGradient(0f, base - a, 0f, h, Color.argb(70 - layer * 15, Color.red(color), Color.green(color), Color.blue(color)), Color.argb(10, Color.red(color), Color.green(color), Color.blue(color)), android.graphics.Shader.TileMode.CLAMP)
+            p.shader = shaders!![layer]
             c.drawPath(path, p)
         }
-        if ((playing || lift > 0.27f) && isShown) postInvalidateOnAnimation() else lastT = 0L
+        if ((playing || moving) && isShown) postInvalidateOnAnimation() else lastT = 0L
     }
 }

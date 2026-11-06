@@ -452,7 +452,6 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var alarmShake: android.animation.Animator? = null
 
     private fun clearRefs() {
-        vinylArt = null
         ambient = null
         extraButtons.clear()
         alarmShake?.cancel()
@@ -641,18 +640,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     img.setPadding(0, 0, 0, 0)
                     img.setImageBitmap(info.art)
                 }
-                playButton?.setImageResource(if (info.playing) R.drawable.ic_pause else R.drawable.ic_play)
-                vinylArt?.let { v ->
-                    v.playing = info.playing
-                    if (info.art != null && v.bitmap !== info.art) v.bitmap = info.art
-                }
+                // Right after a tap the player may still report the old state: keep what you pressed.
+                val shownPlaying = if (android.os.SystemClock.uptimeMillis() < optimisticUntil && info.playing != optimisticPlaying) optimisticPlaying else info.playing.also { optimisticUntil = 0L }
+                playButton?.setImageResource(if (shownPlaying) R.drawable.ic_pause else R.drawable.ic_play)
                 ambient?.playing = info.playing
                 progress?.playing = info.playing
                 // The app's extra buttons change their look (liked, shuffle on): follow them.
-                if (extraButtons.isNotEmpty()) {
-                    val now = customActions(info)
-                    for ((btn, act) in extraButtons) now.firstOrNull { it.action == act }?.let { btn.setImageDrawable(appDrawable(info.packageName, it.icon)) }
-                }
+                syncExtras()
                 updateProgress()
             }
             is Content.Transfer -> {
@@ -2316,17 +2310,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Media card: blurred cover behind, app beside the camera, big round play button, draggable seek bar. */
     /**
-     * The music player, redesigned (ideas from DroidBubble and Android's own player):
+     * The music player, at its old compact size:
      *
-     * - the card takes the album's colour, with soft waves of it rolling
-     *   along the bottom to the beat;
-     * - the cover spins like a record while it plays;
+     * - the card takes the album's colour, with soft waves of it moving
+     *   along the bottom to the song (bass, mids and highs each move a wave);
      * - top left says where it's playing (your earbuds' name, or this phone);
-     * - the progress line is a flowing wave you can drag;
-     * - big round buttons, with the app's own extras on the sides (like,
-     *   shuffle, repeat), placed left, centre or right as you choose.
-     *
-     * Every piece can be switched off in Settings, Music player.
+     * - cover, title and artist, and the play button, on one row;
+     * - Samsung's wave scrubber: the played part rises in soft hills
+     *   above a thick line, with a glowing round thumb;
+     * - previous and next beside it, and the app's own extras (like,
+     *   shuffle, add) on the ends, which change the moment you tap them.
      */
     private fun buildExpandedMusic(info: MusicInfo, w: Int, top: Float): View {
         Beat.ensure(context, info.playing && !lowPower)
@@ -2339,8 +2332,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (p.getBoolean(Prefs.MP_TINT, true)) {
             root.addView(View(context).apply {
                 background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(
-                    Color.argb(150, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    Color.argb(70, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Color.argb(140, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Color.argb(60, Color.red(accent), Color.green(accent), Color.blue(accent)),
                     Color.argb(20, 0, 0, 0),
                 ))
             }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -2351,7 +2344,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 playing = info.playing
             }
             ambient = amb
-            root.addView(amb, LayoutParams(LayoutParams.MATCH_PARENT, dp(78), Gravity.BOTTOM))
+            root.addView(amb, LayoutParams(LayoutParams.MATCH_PARENT, dp(64), Gravity.BOTTOM))
         } else ambient = null
         val col = card()
         val wv = WaveformView(context).apply {
@@ -2360,33 +2353,25 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             still = lowPower
         }
         wave = wv
-        // Top: where it's playing on the left, the app and the beat on the right.
         val left: View = if (p.getBoolean(Prefs.MP_DEVICE, true)) deviceChip() else appTag(info.appIcon, info.appName.ifEmpty { "Now playing" }, info.accent)
-        val right = hRow().apply {
-            addView(wv, LinearLayout.LayoutParams(dp(13), dp(14)).apply { marginEnd = dp(10) })
-            addView(roundImage(info.appIcon, dpf(5f), info.accent, R.drawable.ic_note).apply {
-                setOnClickListener { openCurrent() }
-            }, LinearLayout.LayoutParams(dp(20), dp(20)))
-        }
+        // Right: the app's icon (tap to open it) when the device is on the left; otherwise the bell.
+        val right: View? = if (p.getBoolean(Prefs.MP_DEVICE, true)) sized(roundImage(info.appIcon, dpf(5f), info.accent, R.drawable.ic_note).apply {
+            setOnClickListener { openCurrent() }
+        }, dp(19)) else bellChip()
         col.addView(cameraRow(left, right, w, top))
 
-        val b = body().apply { setPadding(dp(18), dp(8), dp(18), dp(14)) }
+        val b = body()
         val row = hRow()
-        val art = VinylArt(context).apply {
-            vinyl = p.getBoolean(Prefs.MP_VINYL, true)
-            bitmap = info.art
-            placeholder = accent
-            playing = info.playing
-            setOnClickListener { openCurrent() }
-        }
-        vinylArt = art
-        row.addView(art, LinearLayout.LayoutParams(dp(58), dp(58)))
+        val art = roundImage(info.art, dpf(14f), info.accent, R.drawable.ic_note)
+        art.setOnClickListener { openCurrent() }
+        artImage = art
+        row.addView(art, LinearLayout.LayoutParams(dp(54), dp(54)))
         val texts = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), 0, dp(4), 0)
+            setPadding(dp(14), 0, dp(12), 0)
             setOnClickListener { openCurrent() }
         }
-        texts.addView(text(17f, Color.WHITE, true).apply {
+        texts.addView(text(16.5f, Color.WHITE, true).apply {
             text = info.title
             ellipsize = android.text.TextUtils.TruncateAt.MARQUEE
             marqueeRepeatLimit = -1
@@ -2395,59 +2380,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         })
         texts.addView(text(13.5f, white70, false).apply {
             text = info.artist
-            setPadding(0, dp(3), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         })
         row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        b.addView(row)
-
-        // The progress: a flowing wave you can drag, with the times under it.
-        val bar = ProgressLine(context).apply {
-            color = Color.WHITE
-            wavy = p.getBoolean(Prefs.MP_WAVY, true) && !lowPower
-            playing = info.playing
-            onSeek = { f ->
-                haptic()
-                val m = currentMusic()
-                if (m != null && m.durationMs > 0) m.controller?.transportControls?.seekTo((f * m.durationMs).toLong())
-            }
-        }
-        b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(26)).apply { topMargin = dp(12) })
-        progress = bar
-        val times = FrameLayout(context)
-        val el = text(10.5f, white70, false).apply { fontFeatureSettings = "tnum" }
-        val rem = text(10.5f, white70, false).apply { fontFeatureSettings = "tnum" }
-        times.addView(el, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START))
-        times.addView(rem, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END))
-        b.addView(times)
-        elapsedText = el
-        remainText = rem
-
-        // The buttons.
-        val controls = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val extras = if (p.getBoolean(Prefs.MP_EXTRAS, true)) customActions(info).take(2) else emptyList()
-        extraButtons.clear()
-        fun round(icon: Int, size: Int, action: () -> Unit) = ImageView(context).apply {
-            setImageResource(icon)
-            setColorFilter(Color.WHITE)
-            val pad = (size * 0.3f).toInt()
-            setPadding(pad, pad, pad, pad)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.argb(40, 255, 255, 255))
-            }
-            setOnClickListener {
-                haptic()
-                bounce(it)
-                action()
-            }
-        }
+        row.addView(wv, LinearLayout.LayoutParams(dp(13), dp(14)).apply { marginEnd = dp(14) })
         val play = ImageView(context).apply {
             setImageResource(if (info.playing) R.drawable.ic_pause else R.drawable.ic_play)
             setColorFilter(Color.BLACK)
-            val pad = dp(15)
+            val pad = dp(13)
             setPadding(pad, pad, pad, pad)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -2458,50 +2398,63 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 bounce(it)
                 val m = currentMusic() ?: return@setOnClickListener
                 val tc = m.controller?.transportControls ?: return@setOnClickListener
+                // Shows the new state at once; the player confirms a moment later.
+                optimisticPlaying = !m.playing
+                optimisticUntil = android.os.SystemClock.uptimeMillis() + 1500L
+                (it as ImageView).setImageResource(if (!m.playing) R.drawable.ic_pause else R.drawable.ic_play)
                 if (m.playing) tc.pause() else tc.play()
+                Beat.ensure(context, !m.playing && !lowPower)
             }
         }
         playButton = play
-        val items = ArrayList<Pair<View, Int>>()
-        extras.getOrNull(0)?.let { items += extraButton(info, it) to dp(42) }
-        items += round(R.drawable.ic_prev, dp(46)) { currentMusic()?.controller?.transportControls?.skipToPrevious() } to dp(46)
-        items += play to dp(56)
-        items += round(R.drawable.ic_next, dp(46)) { currentMusic()?.controller?.transportControls?.skipToNext() } to dp(46)
-        extras.getOrNull(1)?.let { items += extraButton(info, it) to dp(42) }
-        when (p.getInt(Prefs.MP_ALIGN, 1)) {
-            // Centre: spread evenly across the card.
-            1 -> items.forEachIndexed { i, (v, sz) ->
-                controls.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-                controls.addView(v, LinearLayout.LayoutParams(sz, sz))
-                if (i == items.size - 1) controls.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-            }
-            // Left or right: packed together on that side.
-            else -> {
-                if (p.getInt(Prefs.MP_ALIGN, 1) == 2) controls.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-                items.forEachIndexed { i, (v, sz) -> controls.addView(v, LinearLayout.LayoutParams(sz, sz).apply { if (i > 0) marginStart = dp(10) }) }
+        row.addView(play, LinearLayout.LayoutParams(dp(50), dp(50)))
+        b.addView(row)
+
+        // Samsung's wave scrubber, with previous and next beside it.
+        val seekRow = hRow()
+        val extras = if (p.getBoolean(Prefs.MP_EXTRAS, true)) customActions(info).take(2) else emptyList()
+        extraButtons.clear()
+        extras.getOrNull(0)?.let { seekRow.addView(extraButton(info, it), LinearLayout.LayoutParams(dp(34), dp(34))) }
+        seekRow.addView(iconButton(R.drawable.ic_prev) { currentMusic()?.controller?.transportControls?.skipToPrevious() })
+        val mid = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val bar = ProgressLine(context).apply {
+            color = lighten(accent)
+            hills = p.getBoolean(Prefs.MP_WAVY, true)
+            seed = info.trackKey.hashCode()
+            playing = info.playing
+            onSeek = { f ->
+                haptic()
+                val m = currentMusic()
+                if (m != null && m.durationMs > 0) m.controller?.transportControls?.seekTo((f * m.durationMs).toLong())
             }
         }
-        b.addView(controls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        mid.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30)))
+        progress = bar
+        val times = FrameLayout(context)
+        val el = text(10.5f, white55, false).apply { fontFeatureSettings = "tnum" }
+        val rem = text(10.5f, white55, false).apply { fontFeatureSettings = "tnum" }
+        times.addView(el, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.START))
+        times.addView(rem, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.END))
+        mid.addView(times)
+        elapsedText = el
+        remainText = rem
+        seekRow.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginStart = dp(6)
+            marginEnd = dp(6)
+        })
+        seekRow.addView(iconButton(R.drawable.ic_next) { currentMusic()?.controller?.transportControls?.skipToNext() })
+        extras.getOrNull(1)?.let { seekRow.addView(extraButton(info, it), LinearLayout.LayoutParams(dp(34), dp(34))) }
+        b.addView(seekRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         col.addView(b)
 
         root.addView(col, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        // The cover drops in with a spin, the buttons rise one after another.
-        art.scaleX = 0.6f
-        art.scaleY = 0.6f
-        art.rotation = -50f
-        art.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(90L).setDuration(560L).setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).start()
-        for (i in 0 until controls.childCount) {
-            val v = controls.getChildAt(i)
-            if (v is ImageView) {
-                v.alpha = 0f
-                v.translationY = dpf(14f)
-                v.animate().alpha(1f).translationY(0f).setStartDelay(140L + i * 28L).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
-            }
-        }
         return root
     }
 
-    private var vinylArt: VinylArt? = null
+    /** Play/pause shown before the player confirms it (so the button answers at once). */
+    private var optimisticPlaying = false
+    private var optimisticUntil = 0L
+
     private var ambient: AmbientWave? = null
     private val extraButtons = ArrayList<Pair<ImageView, String>>()
 
@@ -2530,7 +2483,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun extraButton(info: MusicInfo, a: android.media.session.PlaybackState.CustomAction): ImageView = ImageView(context).apply {
-        val pad = dp(10)
+        val pad = dp(7)
         setPadding(pad, pad, pad, pad)
         setColorFilter(Color.WHITE)
         contentDescription = a.name
@@ -2538,9 +2491,30 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         setOnClickListener {
             haptic()
             bounce(it)
-            currentMusic()?.controller?.transportControls?.sendCustomAction(a.action, a.extras)
+            val c = currentMusic()?.controller ?: return@setOnClickListener
+            c.transportControls.sendCustomAction(a.action, a.extras)
+            // The app changes its button (liked, shuffle on) a moment later:
+            // look again a few times so it flips as soon as it does.
+            for (d in longArrayOf(120L, 350L, 800L, 1500L)) postDelayed({ syncExtras() }, d)
         }
         extraButtons += this to a.action
+    }
+
+    /** The app's extra buttons as the player has them right now. */
+    private fun syncExtras() {
+        val m = currentMusic() ?: return
+        if (extraButtons.isEmpty()) return
+        val now = customActions(m)
+        // Buttons are matched by position: apps often swap the action itself (shuffle on / off).
+        extraButtons.forEachIndexed { i, (btn, act) ->
+            val a = now.firstOrNull { it.action == act } ?: now.getOrNull(i) ?: return@forEachIndexed
+            val icon = appDrawable(m.packageName, a.icon) ?: return@forEachIndexed
+            if (btn.tag != a.action + ":" + a.icon) {
+                btn.tag = a.action + ":" + a.icon
+                btn.setImageDrawable(icon)
+                btn.contentDescription = a.name
+            }
+        }
     }
 
     /** A drawable from another app (its own button icons). */

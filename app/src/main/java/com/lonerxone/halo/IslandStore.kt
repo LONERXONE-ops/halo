@@ -570,16 +570,12 @@ object Prefs {
     // The music player (Settings, Music player).
     /** The card takes the album's colour. */
     const val MP_TINT = "mp_tint"
-    /** The cover spins like a record while playing. */
-    const val MP_VINYL = "mp_vinyl"
     /** Waves in the album's colour roll along the bottom. */
     const val MP_AMBIENT = "mp_ambient"
-    /** The progress line is a flowing wave. */
+    /** Samsung's wave scrubber (hills over the played part). */
     const val MP_WAVY = "mp_wavy"
     /** The app's own extra buttons (like, shuffle, repeat…). */
     const val MP_EXTRAS = "mp_extras"
-    /** Where the buttons sit: 0 left, 1 centre, 2 right. */
-    const val MP_ALIGN = "mp_align"
     /** Which headphones or speaker it's playing on. */
     const val MP_DEVICE = "mp_device"
 
