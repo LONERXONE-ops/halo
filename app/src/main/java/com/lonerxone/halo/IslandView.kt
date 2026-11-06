@@ -1675,8 +1675,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun compactWidthFor(s: Sides): Float {
         // Snug: each side's content, its edge margin, and a small gap from the camera.
         val grow = max(capW, 1f)
-        val leftNeed = (widthOf(s.left, s.leftSize) + dp(6) + dp(7)) * grow
-        val rightNeed = (widthOf(s.right, s.rightW) + dp(9) + dp(7)) * grow
+        var leftNeed = (widthOf(s.left, s.leftSize) + dp(6) + dp(7)) * grow
+        var rightNeed = (widthOf(s.right, s.rightW) + dp(9) + dp(7)) * grow
+        // It may lean a little toward the fuller side, never so far it looks off the camera:
+        // past that, the lighter side grows to keep it nearly centred.
+        val lean = dpf(10f)
+        if (rightNeed - leftNeed > 2f * lean) leftNeed = rightNeed - 2f * lean
+        if (leftNeed - rightNeed > 2f * lean) rightNeed = leftNeed - 2f * lean
         if (!wraps()) {
             // No camera in the middle: just the two sides and a small gap.
             compactShift = 0f
@@ -1919,9 +1924,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 addView(tick, LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginStart = dp(5) })
                 fill(1f, delay = 260L, ms = 320L) { tick.progress = it }
             } else hRow().apply {
-                // Anything else: a short title and its value.
-                addView(word(pop.title, Color.WHITE, dp(80)))
-                if (pop.value.isNotEmpty()) addView(spaced(word(pop.value, accent, dp(60)), 5))
+                // Anything else: one short word (the value, or the title when there's no value).
+                addView(word(pop.value.ifEmpty { pop.title }, if (pop.value.isEmpty()) Color.WHITE else accent, dp(70)))
             }
         }
         // In: the badge pops (spinning in), then the right side springs out from the camera.
