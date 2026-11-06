@@ -33,7 +33,7 @@
 ### Notifications
 | | |
 |---|---|
-| **Alert pills** | A new notification arrives as a small pill: the photo (with the app's badge) on one side of the camera, who it's from on the other. Tap it (or pull it down) and it opens into the whole notification; swipe it up to dismiss, hold it to open the app. |
+| **Alert pills** | A new notification arrives as a small pill with just the sender's photo (with the app's badge). Tap it (or pull it down) and it opens into the whole notification; swipe it up to dismiss, hold it to open the app. |
 | **Full alerts** | Contact and group photos, who said what in groups, unread count, image previews, and Reply / Mark as read (or Open / Dismiss). Swipe sideways to go through your other notifications. |
 | **Reply center** | The whole chat with a reply box, quick reply chips (the app's own suggestions, Android's smart replies, everyday ones) and Open, Mark as read, Dismiss. Works in more apps than usual (it also uses replies apps only give watches). |
 | **Notification center** | Tap the camera: date and time, chips (battery, flashlight, Do Not Disturb, silent…), your quick buttons, a mini player, then every notification. It stays up to date while open; clearing the last one shows "You're all caught up". |

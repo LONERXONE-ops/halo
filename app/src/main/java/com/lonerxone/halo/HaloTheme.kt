@@ -11,11 +11,11 @@ package com.lonerxone.halo
 object HaloTheme {
     // ----- Shape -----
     /** The pill's height (before the user's size and fine sizing). */
-    const val COMPACT_H = 30f
-    /** The smallest pill: the camera, plus room for one small icon each side. Pills grow from here only as their content needs. */
-    const val COMPACT_MIN_W = 72f
+    const val COMPACT_H = 34f
+    /** The smallest pill: the camera, plus room for one small thing each side. */
+    const val COMPACT_MIN_W = 100f
     /** Extra width beside the camera cut-out when the island wraps around it. */
-    const val COMPACT_CAMERA_ROOM = 44f
+    const val COMPACT_CAMERA_ROOM = 70f
     /** The open card's widest, and its margin from the screen edges. */
     const val CARD_MAX_W = 372f
     const val CARD_EDGE = 8f
