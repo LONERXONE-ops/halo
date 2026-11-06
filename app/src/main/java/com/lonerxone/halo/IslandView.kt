@@ -941,7 +941,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Snappier and bouncier: a quick lively overshoot opening, and a
         // small settle-bounce closing too, so nothing ever feels stiff.
         // Quick moments (system capsules) snap out a little faster still.
-        val base = if (content is Content.Popup && mode == Mode.COMPACT) 680f else 600f
+        val base = if (content is Content.Popup && mode == Mode.COMPACT) 720f else 640f
         k = if (scale <= 0f) base else base / (scale * scale)
         zeta = if (grow) 0.5f else 0.66f
         // First appearance grows out of the camera.
@@ -1396,7 +1396,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 outH = old.height.coerceAtLeast(1)
                 outCy = old.top + old.height / 2f + old.translationY
                 old.clipToOutline = false
-                old.animate().alpha(0f).setDuration(130L).setInterpolator(DecelerateInterpolator(1.5f)).withLayer().withEndAction {
+                old.animate().alpha(0f).setDuration(100L).setInterpolator(DecelerateInterpolator(1.5f)).withLayer().withEndAction {
                     removeView(old)
                     if (outgoing === old) outgoing = null
                 }.start()
@@ -1886,11 +1886,44 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     /** The badge's icon acts out its event once it has popped in. */
+    private var jiggling: android.animation.Animator? = null
+
+    /** The whole island shakes side to side [times] times, fading out (for ring and vibrate). */
+    private fun jiggle(amount: Float, times: Int, ms: Long) {
+        if (animScale() <= 0f) return
+        jiggling?.cancel()
+        val vals = FloatArray(times + 2)
+        for (i in 1..times) vals[i] = (if (i % 2 == 0) amount else -amount) * (1f - (i - 1f) / times)
+        jiggling = android.animation.ObjectAnimator.ofFloat(this, View.TRANSLATION_X, *vals).apply {
+            duration = ms
+            interpolator = android.view.animation.LinearInterpolator()
+            start()
+        }
+    }
+
     private fun actOut(v: View, pop: Pop) {
         when (pop.icon) {
-            // A bell rings (it swings side to side).
-            R.drawable.ic_bell, R.drawable.ic_bell_off, R.drawable.ic_vibrate -> android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, 22f, -18f, 14f, -9f, 5f, 0f).apply {
-                duration = 620L
+            // Ring: the bell swings hard side to side and the whole island sways with it.
+            R.drawable.ic_bell -> {
+                android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, 32f, -28f, 24f, -18f, 12f, -7f, 3f, 0f).apply {
+                    duration = 760L
+                    start()
+                }
+                jiggle(dpf(4f), 6, 640L)
+            }
+            // Vibrate: the phone icon buzzes, and the whole island buzzes with it (a fast tight shake).
+            R.drawable.ic_vibrate -> {
+                val b = dpf(2.5f)
+                android.animation.ObjectAnimator.ofFloat(v, View.TRANSLATION_X, 0f, -b, b, -b, b, -b, b, -b * 0.6f, b * 0.6f, -b * 0.3f, 0f).apply {
+                    duration = 520L
+                    start()
+                }
+                jiggle(dpf(3f), 10, 560L)
+                if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            }
+            // Silent: the bell tips over once and settles (no sway: it's quiet).
+            R.drawable.ic_bell_off -> android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, -28f, 10f, -4f, 0f).apply {
+                duration = 560L
                 start()
             }
             // A bolt flashes.
@@ -2355,9 +2388,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         wave = wv
         val left: View = if (p.getBoolean(Prefs.MP_DEVICE, true)) deviceChip() else appTag(info.appIcon, info.appName.ifEmpty { "Now playing" }, info.accent)
         // Right: the app's icon (tap to open it) when the device is on the left; otherwise the bell.
-        val right: View? = if (p.getBoolean(Prefs.MP_DEVICE, true)) sized(roundImage(info.appIcon, dpf(5f), info.accent, R.drawable.ic_note).apply {
+        val right: View? = if (p.getBoolean(Prefs.MP_DEVICE, true)) hRow().apply {
+            addView(sized(roundImage(info.appIcon, dpf(5f), info.accent, R.drawable.ic_note), dp(17)))
             setOnClickListener { openCurrent() }
-        }, dp(19)) else bellChip()
+        } else bellChip()
         col.addView(cameraRow(left, right, w, top))
 
         val b = body()
@@ -2551,16 +2585,18 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             wired != null -> R.drawable.ic_headphones to "Headphones"
             else -> R.drawable.ic_phone to "This phone"
         }
+        // A small chip, the height of the app tag so the top row stays level.
         return hRow().apply {
-            addView(sized(icon(icon, Color.WHITE), dp(14)))
-            addView(spaced(text(12f, Color.WHITE, true).apply {
+            addView(sized(icon(icon, white70), dp(11)))
+            addView(spaced(text(10.5f, white70, true).apply {
                 text = name
-                maxWidth = dp(150)
-            }, 6))
-            setPadding(dp(9), dp(4), dp(10), dp(4))
+                maxWidth = dp(120)
+                includeFontPadding = false
+            }, 4))
+            setPadding(dp(7), dp(3), dp(8), dp(3))
             background = GradientDrawable().apply {
-                setColor(Color.argb(46, 255, 255, 255))
-                cornerRadius = dpf(12f)
+                setColor(Color.argb(38, 255, 255, 255))
+                cornerRadius = dpf(9f)
             }
         }
     }
