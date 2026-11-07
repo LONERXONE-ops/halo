@@ -8,7 +8,8 @@ H=com.lonerxone.halo
 L=com.lonerxone.halo.launcher
 N=0
 log() { echo "== $*" | tee -a $OUT/steps.txt; }
-shot() { N=$((N+1)); f=$(printf "%s/%02d_%s.png" $OUT $N "$1"); adb exec-out screencap -p > "$f"; log "shot $f"; }
+# Raw captures saved on the phone (fast, no encoding), turned into PNGs at the end.
+shot() { N=$((N+1)); f=$(printf "%02d_%s" $N "$1"); adb shell screencap /sdcard/shots/$f.raw; log "shot $f"; }
 probe() { adb shell am broadcast -n com.lonerxone.probe/.Probe --es cmd "$@" > /dev/null; }
 tap() { adb shell input tap "$1" "$2"; }
 
@@ -25,6 +26,7 @@ adb shell cmd overlay enable-exclusive --category com.android.internal.display.c
 adb shell cmd overlay list | grep -i cutout | tee -a $OUT/steps.txt
 sleep 3
 
+adb shell mkdir -p /sdcard/shots
 log "permissions"
 adb shell appops set $H SYSTEM_ALERT_WINDOW allow
 adb shell pm grant $H android.permission.POST_NOTIFICATIONS || true
@@ -143,8 +145,27 @@ sleep 6
 probe clear
 sleep 2; shot end
 
-kill -INT $REC 2>/dev/null; sleep 3
+# Stop the recording on the phone so it writes a playable file.
+adb shell pkill -INT screenrecord || true
+sleep 4
+wait $REC 2>/dev/null
 adb pull /sdcard/scenes.mp4 $OUT/scenes.mp4 || true
+adb pull /sdcard/shots /tmp/shots > /dev/null || true
+python3 - "$OUT" <<'PY'
+import os, struct, sys, zlib
+out = sys.argv[1]
+d = "/tmp/shots"
+def png(path, w, h, rgba):
+    raw = b"".join(b"\x00" + rgba[y*w*4:(y+1)*w*4] for y in range(h))
+    def chunk(t, b): return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xffffffff)
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw, 3)) + chunk(b"IEND", b""))
+for n in sorted(os.listdir(d)):
+    b = open(os.path.join(d, n), "rb").read()
+    w, h = struct.unpack("<II", b[:8])
+    px = b[len(b) - w*h*4:]
+    png(os.path.join(out, n[:-4] + ".png"), w, h, px)
+PY
 adb logcat -d -b crash > $OUT/crash.txt || true
 adb logcat -d | grep -iE 'halo|AndroidRuntime' | tail -400 > $OUT/logcat.txt || true
 adb shell dumpsys notification --noredact | grep -A2 -i 'probe' | head -60 > $OUT/notifs.txt || true
