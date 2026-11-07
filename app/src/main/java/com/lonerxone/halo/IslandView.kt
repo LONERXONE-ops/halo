@@ -3321,7 +3321,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     r.animate().scaleX(1f).scaleY(1f).setDuration(420L)
                         .setInterpolator(android.view.animation.OvershootInterpolator(3.5f)).start()
                 }.start()
-            if (scale > 0f && springs[0].atRest && springs[1].atRest) {
+            if (springs[0].atRest && springs[1].atRest) {
                 springs[0].kick(v(0) * 1.2f)
                 springs[1].kick(-v(1) * 1.0f)
                 postInvalidateOnAnimation()
