@@ -527,11 +527,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val m = desiredMode()
         val key = m.name + "/" + contentKey(m)
         if (key == builtKey) {
+            flingVy = 0f
             bindInPlace()
             bubbleOnly()
             return
         }
         val previous = mode
+        prevMode = previous
         mode = m
         builtKey = key
         removeCallbacks(ticker)
@@ -966,12 +968,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private var k = 400f
     private var zeta = 0.8f
+    /** A flick upward to carry into the next morph (px/s, negative = up). */
+    private var flingVy = 0f
+    /** The mode before the current morph (for arrival and leaving kicks). */
+    private var prevMode = Mode.IDLE
 
     private fun bubbleOnly() {
         val show = bubble != null && mode == Mode.COMPACT
         val before = t(7)
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
-        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.45f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.36f)
         if (before != t(7)) {
             updateTouchArea()
             startFrames()
@@ -1025,13 +1031,30 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         springs[5].to(shadow, k * 0.8f, 1f)
         springs[6].to(cy, k, zeta)
         springs[10].to(anchorXFor(mode), k, zeta)
+        if (scale > 0f) {
+            // Swiped away: it carries the flick up into the camera.
+            if (flingVy != 0f) {
+                springs[6].kick(flingVy)
+                springs[1].kick(-v(1) * 1.6f)
+                flingVy = 0f
+            } else if (grow && idleLike(prevMode) && mode == Mode.COMPACT) {
+                // Arriving: it drops out of the camera and stretches, then settles.
+                springs[6].kick(dpf(150f))
+                springs[1].kick(h * 2.2f)
+            } else if (!grow && idleLike(mode) && prevMode == Mode.COMPACT) {
+                // Leaving: a quick bulge, then it tucks back into the lens.
+                springs[0].kick(v(0) * 1.6f)
+            }
+            // One kick per change (later resizes don't repeat it).
+            prevMode = mode
+        }
         // The cover fades in slowly and calmly (no bounce), so your picture and the
         // cover blend through each other instead of swapping.
         springs[11].to(coverTarget(), k * 0.22f, 1f)
         springs[9].to(edge, k, 1f)
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
-        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.45f)
+        springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.36f)
         updateTouchArea()
 
         if (scale <= 0f || !isAttachedToWindow) {
@@ -1486,9 +1509,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         addView(s, lp)
         slot = s
         revealed = false
-        // Settles in from a touch smaller, so content blooms with the shape instead of just appearing.
-        s.scaleX = 0.92f
-        s.scaleY = 0.92f
+        // Blooms in from smaller, so content grows with the shape instead of just appearing.
+        // Cards unfold from the top (out of the camera); pills from their centre.
+        val card = mode == Mode.EXPANDED || mode == Mode.PANEL
+        s.pivotX = w / 2f
+        s.pivotY = if (card) 0f else h / 2f
+        s.scaleX = if (card) 0.9f else 0.8f
+        s.scaleY = if (card) 0.84f else 0.8f
         updateClip()
         if (slide != 0) {
             // Swiped in: the new alert is already exactly where the swipe left it.
@@ -1517,7 +1544,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     private fun reveal() {
         revealed = true
-        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(2.4f))?.setDuration(HaloTheme.REVEAL_MS)?.withLayer()?.start()
+        slot?.animate()?.alpha(1f)?.scaleX(1f)?.scaleY(1f)?.setInterpolator(android.view.animation.OvershootInterpolator(2.8f))?.setDuration(HaloTheme.REVEAL_MS)?.withLayer()?.start()
         // Opened cards: their parts rise in one after another instead of all at once.
         if (mode == Mode.EXPANDED || mode == Mode.PANEL) cascade()
     }
@@ -1532,12 +1559,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             val c = parts.getChildAt(i)
             if (c.visibility != View.VISIBLE) continue
             c.alpha = 0f
-            c.translationY = dpf(10f)
-            c.scaleX = 0.96f
-            c.scaleY = 0.96f
+            c.translationY = dpf(16f)
+            c.scaleX = 0.92f
+            c.scaleY = 0.92f
             c.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
-                .setStartDelay(30L + i * HaloTheme.CASCADE_STEP_MS).setDuration(380L)
-                .setInterpolator(android.view.animation.OvershootInterpolator(1.8f)).start()
+                .setStartDelay(20L + i * HaloTheme.CASCADE_STEP_MS).setDuration(420L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
         }
     }
 
@@ -1651,7 +1678,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     /** Content for a compact pill: one group left of the camera, one right. */
     private inner class Sides(val left: View?, val right: View?, val leftSize: Int = -1, val rightW: Int = -1, val rightH: Int = -1) {
         fun build(): View {
-            val root = FrameLayout(context)
+            // Not clipped here (the island's own shape clips), so pops and pings can spill a touch.
+            val root = FrameLayout(context).apply { clipChildren = false }
             if (left != null) {
                 val s = if (leftSize > 0) leftSize else ViewGroup.LayoutParams.WRAP_CONTENT
                 root.addView(left, LayoutParams(s, s, Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(8) })
@@ -2387,14 +2415,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 bottomMargin = -dp(2)
             })
         }
-        // In: the photo pops in with a spin.
+        // In: the photo pops in with a spin, and a ring ripples out from it like a ping.
+        val holder = FrameLayout(context).apply { clipChildren = false }
+        val ping = PingRing(context).apply { color = if (n.accent == 0) Color.WHITE else lighten(n.accent) }
+        holder.addView(ping, LayoutParams(dp(32), dp(32), Gravity.CENTER))
+        holder.addView(avatar, LayoutParams(dp(24), dp(24), Gravity.CENTER))
         if (animScale() > 0f) {
-            avatar.scaleX = 0.2f
-            avatar.scaleY = 0.2f
-            avatar.rotation = -35f
-            avatar.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(60L).setDuration(460L).setInterpolator(android.view.animation.OvershootInterpolator(3.4f)).start()
+            avatar.scaleX = 0.1f
+            avatar.scaleY = 0.1f
+            avatar.rotation = -45f
+            avatar.animate().scaleX(1f).scaleY(1f).rotation(0f).setStartDelay(40L).setDuration(480L).setInterpolator(android.view.animation.OvershootInterpolator(4f)).start()
+            ping.play(160L)
         }
-        return Sides(avatar, null, dp(24))
+        return Sides(holder, null, dp(24))
     }
 
     private fun compactTransfer(t: TransferInfo): Sides {
@@ -4362,6 +4395,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 return true
             }
             if (velocityY < 0) {
+                if (mode != Mode.PANEL && (content is Content.Note || content is Content.Popup)) {
+                    flingVy = (velocityY * 0.22f).coerceIn(-dpf(600f), -dpf(220f))
+                }
                 when {
                     mode == Mode.PANEL -> closePanel()
                     content is Content.Note -> IslandStore.dismissNotif()
@@ -4404,7 +4440,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 downY = ev.y
                 stretchTicked = false
                 // A squeeze, then a springy release (bigger cards give a little less).
-                val sq = if (mode == Mode.COMPACT || mode == Mode.IDLE) 0.95f else 0.985f
+                val sq = if (mode == Mode.COMPACT || mode == Mode.IDLE) 0.93f else 0.98f
                 animate().scaleX(sq).scaleY(sq).setDuration(90L).setInterpolator(DecelerateInterpolator(2f)).start()
                 if (lit) glowTo(1f)
             }

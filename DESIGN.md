@@ -39,14 +39,17 @@ and how is it going (right).
 
 Spatial springs, after Material 3 Expressive's tokens:
 
-- Stiffness 640 for opening, closing and resizing; 720 for quick moments.
-- Damping 0.4 while growing (about 25% overshoot, the "alive" bounce) and
-  0.55 while shrinking (still springy as it settles). Halo leans bouncy on purpose.
+- Stiffness 780 for opening, closing and resizing; 900 for quick moments.
+- Damping 0.36 while growing (about 30% overshoot, the "alive" bounce) and
+  0.5 while shrinking (still springy as it settles). Halo leans bouncy on purpose.
 - The user's Motion speed scales stiffness (Relaxed 0.6x, Quick 1.45x) and
   Bounce shifts damping (Subtle +0.14, Bouncy -0.1).
-- Content appears once the shape is 45% open (300 ms springy scale-in),
-  so it feels instant. Old content fades out in 100 ms.
-- Opened cards: rows rise in one after another, 42 ms apart.
+- Content appears once the shape is 35% open (320 ms springy scale-in from
+  80%), so it feels instant. Old content fades out in 90 ms.
+- Arriving: the pill drops out of the camera with a stretch, then settles.
+- Leaving: a quick bulge, then it tucks back into the lens.
+- Swiped away: it carries the flick up into the camera.
+- Opened cards unfold from the top; rows rise in one after another, 34 ms apart.
 - New content at the same size: a single jelly squish (a spring kicked from
   its own resting place), never two chained animations.
 - Taps: a quick press-in, and a springy release that carries the finger's
@@ -57,7 +60,8 @@ Spatial springs, after Material 3 Expressive's tokens:
 ## Notifications
 
 - A new alert always arrives as the smallest pill: just the photo (with
-  the app's badge) beside the camera. It pops in with a spin.
+  the app's badge) beside the camera. It pops in with a spin and a ring
+  ripples out from it like a ping.
 - Tap or pull down: it opens into the full card. Swipe up: dismiss. Hold:
   open the app.
 

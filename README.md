@@ -66,7 +66,7 @@ A padlock that springs open when you unlock. A wrong PIN, pattern or fingerprint
 
 ### Look and feel
 - Pure black, white and grey, with colour only where it means something (green, red, orange) and in music.
-- **Motion**: Speed (Relaxed, Normal, Quick) and Bounce (Subtle, Normal, Bouncy). Everything springs.
+- **Motion**: Speed (Relaxed, Normal, Quick) and Bounce (Subtle, Normal, Bouncy). Everything springs: pills drop out of the camera, cards unfold from the top, swiped alerts fly back into the lens.
 - **Fine sizing**: pill height, pill width and open card width, with − and + for exact steps; move it left, right, up and down.
 - Glass strength, your own pictures inside the island and behind the notification center, low-power mode.
 - **Show in screenshots**: switch off and the island steps out of button screenshots.

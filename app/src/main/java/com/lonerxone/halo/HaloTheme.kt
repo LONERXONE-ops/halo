@@ -27,12 +27,12 @@ object HaloTheme {
 
     // ----- Motion (spatial springs, after Material Expressive's tokens) -----
     /** Stiffness for opening, closing and resizing. */
-    const val STIFF = 640f
+    const val STIFF = 780f
     /** A little stiffer for quick moments, so they flick out and tuck back in. */
-    const val STIFF_MOMENT = 720f
-    /** Damping while growing (very bouncy, about 25% overshoot) and shrinking (still springy). */
-    const val DAMP_GROW = 0.4f
-    const val DAMP_SHRINK = 0.55f
+    const val STIFF_MOMENT = 900f
+    /** Damping while growing (very bouncy, about 30% overshoot) and shrinking (still springy). */
+    const val DAMP_GROW = 0.36f
+    const val DAMP_SHRINK = 0.5f
 
     /** The user's Motion speed: Relaxed, Normal, Quick (stiffness multiplier). */
     fun speed(choice: Int) = when (choice) {
@@ -50,10 +50,10 @@ object HaloTheme {
 
     // ----- Content timing -----
     /** Content appears once the shape is this far open (0..1), so it feels instant. */
-    const val REVEAL_AT = 0.45f
-    const val REVEAL_MS = 300L
+    const val REVEAL_AT = 0.35f
+    const val REVEAL_MS = 320L
     /** Old content fades out this fast when something new arrives. */
-    const val SWAP_OUT_MS = 100L
+    const val SWAP_OUT_MS = 90L
     /** Rows of an opened card rise in one after another, this far apart. */
-    const val CASCADE_STEP_MS = 42L
+    const val CASCADE_STEP_MS = 34L
 }

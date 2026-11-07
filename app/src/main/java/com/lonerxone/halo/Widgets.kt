@@ -837,3 +837,44 @@ class DoneRing(context: Context) : View(context) {
         }
     }
 }
+
+/**
+ * A ring that ripples out once and fades, like a ping, around something that
+ * just arrived (a new notification's photo). Plays by itself when shown.
+ */
+class PingRing(context: Context) : View(context) {
+    var color: Int = Color.WHITE
+    private val d = resources.displayMetrics.density
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private var t = 1f
+    private var anim: android.animation.ValueAnimator? = null
+
+    fun play(delay: Long = 0L) {
+        anim?.cancel()
+        anim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            startDelay = delay
+            duration = 720L
+            interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+            addUpdateListener {
+                t = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        anim?.cancel()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(c: Canvas) {
+        if (t >= 1f) return
+        val base = min(width, height) / 2f * 0.62f
+        val r = base + (min(width, height) / 2f - base) * t
+        p.strokeWidth = max(1f, 2.2f * d * (1f - t))
+        p.color = color
+        p.alpha = (200 * (1f - t)).toInt()
+        c.drawCircle(width / 2f, height / 2f, r - p.strokeWidth / 2f, p)
+    }
+}
