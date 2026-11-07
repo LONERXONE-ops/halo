@@ -40,6 +40,13 @@ HH=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f2)
 CUT=$(adb shell dumpsys display | grep -o 'boundingRect[^]]*\]' | head -3)
 log "screen ${W}x${HH} cutout: $CUT"
 CX=$((W/2)); CY=$((HH/34))
+# Tap the island where the camera actually is.
+R=$(echo "$CUT" | grep -o 'Rect([0-9]*, [0-9]* - [0-9]*, [0-9]*)' | tr -d 'Rect(),-' | awk '$3>0 {print; exit}')
+if [ -n "$R" ]; then
+  set -- $R
+  CX=$((($1+$3)/2)); CY=$((($2+$4)/2))
+fi
+log "island at $CX,$CY"
 
 # Launcher first (home).
 adb shell input keyevent KEYCODE_HOME

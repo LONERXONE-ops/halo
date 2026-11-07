@@ -5,6 +5,9 @@ on:
     branches: [ emu ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -54,9 +57,17 @@ jobs:
           emulator-options: -no-snapshot -no-window -noaudio -no-boot-anim -gpu swiftshader_indirect -camera-back none
           script: ./run.sh
 
-      - name: Save results
+      - name: Save results to the emu-results branch
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: emulator-results
-          path: out/
+        run: |
+          mkdir -p out && cp -r out /tmp/out
+          git config user.name "halo-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout -q --orphan emu-results
+          git rm -rf -q . || true
+          rm -rf probe apk dl run.sh
+          cp -r /tmp/out/. .
+          echo "${{ github.run_id }}" > run.txt
+          git add -A
+          git commit -q -m "Emulator results for run ${{ github.run_id }}"
+          git push -q -f origin emu-results
