@@ -19,7 +19,9 @@ adb install -r -g apk/launcher.apk | tee -a $OUT/steps.txt
 adb install -r -g apk/probe.apk | tee -a $OUT/steps.txt
 
 # A punch-hole camera like most phones (emulator overlay).
-adb shell cmd overlay enable com.android.internal.display.cutout.emulation.hole || true
+# A camera in the middle of the top edge, like the Galaxy A06 (the emulator's own cutout).
+adb shell cmd overlay enable-exclusive --category com.android.internal.display.cutout.emulation.emu01 || \
+  adb shell cmd overlay enable com.android.internal.display.cutout.emulation.emu01 || true
 adb shell cmd overlay list | grep -i cutout | tee -a $OUT/steps.txt
 sleep 3
 
@@ -46,7 +48,10 @@ if [ -n "$R" ]; then
   set -- $R
   CX=$((($1+$3)/2)); CY=$((($2+$4)/2))
 fi
-log "island at $CX,$CY"
+# The pill sits on the camera when it's in the middle, else in the middle of the top.
+PX=$((W/2)); PY=$CY
+[ $PY -lt 30 ] && PY=60
+log "camera at $CX,$CY, pill at $PX,$PY"
 
 # Launcher first (home).
 adb shell input keyevent KEYCODE_HOME
@@ -81,11 +86,11 @@ probe msg
 sleep 0.4; shot msg_0.4s
 sleep 1.2; shot msg_pill
 mark "tap pill"
-tap $CX $CY
+tap $PX $PY
 sleep 0.9; shot msg_open
 sleep 2
 mark "swipe up dismiss"
-adb shell input swipe $CX $((CY+120)) $CX 0 120
+adb shell input swipe $PX $((PY+120)) $PX 0 120
 sleep 1.2; shot msg_dismissed
 
 mark "download 30"
@@ -94,7 +99,7 @@ sleep 1.5; shot dl_30
 probe dl --ei pct 70
 sleep 1; shot dl_70
 mark "tap download"
-tap $CX $CY
+tap $PX $PY
 sleep 1; shot dl_open
 probe dl --ei pct 99
 sleep 0.8
@@ -106,20 +111,27 @@ sleep 0.4; shot done_0.95s
 sleep 1; shot done_2s
 sleep 2; shot done_gone
 
+mark "notification center"
+tap $CX $CY
+sleep 0.5; shot panel_0.5s
+sleep 1; shot panel
+adb shell input swipe $PX $((HH/2)) $PX 0 150
+sleep 1.5; shot panel_closed
+
 mark "music"
 probe music
 sleep 2; shot music_pill
 mark "tap music"
-tap $CX $CY
+tap $PX $PY
 sleep 1.2; shot music_open
 sleep 1
-adb shell input swipe $CX $((CY+300)) $CX 0 150
+adb shell input swipe $PX $((PY+300)) $PX 0 150
 sleep 1.5; shot music_closed
 
 mark "otp"
 probe otp
 sleep 1.5; shot otp_pill
-tap $CX $CY
+tap $PX $PY
 sleep 1.2; shot otp_open
 sleep 2
 
@@ -128,15 +140,6 @@ probe msg --es who Ada --es text "Sent you the slides, check them"
 sleep 1.5; shot msg2_pill
 sleep 6
 
-mark "notification center"
-tap $CX $CY
-sleep 0.3
-adb shell input keyevent KEYCODE_HOME
-sleep 1.5
-tap $CX $CY
-sleep 1.5; shot panel
-adb shell input keyevent KEYCODE_BACK
-sleep 2
 probe clear
 sleep 2; shot end
 
