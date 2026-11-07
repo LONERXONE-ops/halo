@@ -27,6 +27,9 @@ adb shell cmd overlay list | grep -i cutout | tee -a $OUT/steps.txt
 sleep 3
 
 adb shell mkdir -p /sdcard/shots
+# The Galaxy A06's screen: 720 x 1600 at 300 dpi (also lighter for the emulator to draw).
+adb shell wm size 720x1600
+adb shell wm density 300
 log "permissions"
 adb shell appops set $H SYSTEM_ALERT_WINDOW allow
 adb shell pm grant $H android.permission.POST_NOTIFICATIONS || true
@@ -77,7 +80,7 @@ sleep 2
 shot idle_island
 
 # One recording through all the scenes.
-adb shell screenrecord --bit-rate 6000000 --time-limit 170 /sdcard/scenes.mp4 &
+adb shell screenrecord --bit-rate 4000000 --time-limit 170 /sdcard/scenes.mp4 &
 REC=$!
 sleep 2
 T0=$(date +%s.%N)
