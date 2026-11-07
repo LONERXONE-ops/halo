@@ -448,10 +448,10 @@ object IslandStore {
     }
 
     /** A download (upload, install…) finished: show the tick for a moment, then go. */
-    fun finishTransfer() {
+    fun finishTransfer(open: PendingIntent? = null) {
         val t = transfer ?: return
         if (t.done) return
-        transfer = t.copy(done = true, progress = 1f, paused = false)
+        transfer = t.copy(done = true, progress = 1f, paused = false, contentIntent = open ?: t.contentIntent)
         handler.removeCallbacks(clearDone)
         handler.postDelayed(clearDone, 2_400L)
         dispatch()

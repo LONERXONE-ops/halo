@@ -663,7 +663,7 @@ class HaloNotificationListener : NotificationListenerService() {
         // A transfer that just finished turns into a normal notification.
         if (IslandStore.transfer?.key == sbn.key) {
             // The ring turns into a tick on the island (no separate "Done" pop).
-            IslandStore.finishTransfer()
+            IslandStore.finishTransfer(sbn.notification.contentIntent)
             return true
         }
         return false

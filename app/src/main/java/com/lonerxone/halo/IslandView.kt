@@ -504,6 +504,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         ring = null
         transferRing = null
         transferActions = null
+        transferBar = null
+        transferCardRing = null
+        transferGlyph = null
+        transferStatus = null
+        transferOpen = null
         percentText = null
         elapsedText = null
         remainText = null
@@ -697,8 +702,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     finishTransferMorph()
                 } else {
                     transferRing?.progress = p
-                    progress?.fraction = max(0f, p)
-                    percentText?.text = if (c.transfer.paused) "Paused" else if (p >= 0f) "${(p * 100).toInt()}%" else ""
+                    transferCardRing?.progress = p
+                    transferBar?.fraction = p
+                    percentText?.text = pctText(c.transfer)
                     transferDetail?.text = c.transfer.detail
                 }
             }
@@ -1023,7 +1029,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             springs[1].kick(-h * 1.25f)
         }
         // Opening: width leads height. Closing: height leads width. Both read as one organic motion.
-        springs[0].to(w, if (grow) k * 1.15f else k, zeta)
+        // Tucking back into the camera, the width mustn't dip below the height
+        // (a thin upright sliver): it settles with less swing; the height keeps its bounce.
+        springs[0].to(w, if (grow) k * 1.15f else k, if (idleLike(mode)) max(zeta, 0.78f) else zeta)
         springs[1].to(h, if (grow) k else k * 1.2f, zeta)
         springs[2].to(r, k, zeta)
         springs[3].to(a, k * 1.8f, 0.9f)
@@ -3334,17 +3342,37 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private var transferDetail: TextView? = null
+    private var transferBar: TransferBar? = null
+    private var transferCardRing: DoneRing? = null
+    private var transferGlyph: View? = null
+    private var transferStatus: TextView? = null
+    private var transferOpen: View? = null
+
+    private fun pctText(t: TransferInfo) = if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else ""
+
+    /** What kind of file it is, from its name: a little picture for the middle of the ring. */
+    private fun kindIcon(t: TransferInfo): Int {
+        val n = t.title.lowercase()
+        return when {
+            Regex("\\.(mp4|mkv|mov|avi|webm|3gp)\\b").containsMatchIn(n) -> R.drawable.ic_play
+            Regex("\\.(jpe?g|png|gif|webp|heic)\\b").containsMatchIn(n) -> R.drawable.ic_image
+            Regex("\\.(mp3|m4a|aac|wav|flac|ogg|opus)\\b").containsMatchIn(n) -> R.drawable.ic_note
+            Regex("\\.(apk|xapk|apks)\\b").containsMatchIn(n) || n.contains("install") -> R.drawable.ic_apps
+            n.contains("upload") || n.contains("sending") || n.contains("backing up") -> R.drawable.ic_update
+            else -> R.drawable.ic_download
+        }
+    }
 
     /**
      * The download finished: the ring sweeps to full and turns green, a green
      * disc pops inside it and a tick draws itself, with a springy pop of the
-     * ring, a jelly squish of the island and a confirm tap. The open card
-     * says Done in green, its bar fills green and the buttons bow out.
+     * ring, a jelly squish of the island and a confirm tap. In the open card
+     * the big ring does the same, the bar fills green with a bright sweep,
+     * the number turns into Done and the app's buttons give way to Open.
      */
     private fun finishTransferMorph() {
-        val r = transferRing
-        if (r != null && !r.done) {
-            r.complete(true)
+        var fresh = false
+        fun pop(r: View) {
             r.animate().cancel()
             r.scaleX = 0.82f
             r.scaleY = 0.82f
@@ -3354,6 +3382,67 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     r.animate().scaleX(1f).scaleY(1f).setDuration(420L)
                         .setInterpolator(android.view.animation.OvershootInterpolator(3.5f)).start()
                 }.start()
+        }
+        transferRing?.let { r ->
+            if (!r.done) {
+                r.complete(true)
+                pop(r)
+                fresh = true
+            }
+        }
+        transferCardRing?.let { r ->
+            if (!r.done) {
+                r.complete(true)
+                (r.parent as? View)?.let { pop(it) }
+                transferGlyph?.animate()?.alpha(0f)?.scaleX(0.3f)?.scaleY(0.3f)?.setDuration(220L)?.start()
+                fresh = true
+            }
+        }
+        transferBar?.complete()
+        transferStatus?.let { st ->
+            if (st.text != "Done") {
+                st.text = "Done"
+                st.setTextColor(Colors.GREEN)
+            }
+        }
+        percentText?.let { pt ->
+            if (pt.text != "Done") {
+                pt.animate().cancel()
+                pt.animate().alpha(0f).translationY(-dpf(8f)).setDuration(140L).withEndAction {
+                    pt.text = "Done"
+                    pt.setTextColor(Colors.GREEN)
+                    pt.translationY = dpf(10f)
+                    pt.scaleX = 0.6f
+                    pt.scaleY = 0.6f
+                    pt.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(460L)
+                        .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+                }.start()
+            }
+        }
+        val cur = IslandStore.transfer
+        val doneWord = when (cur?.let { kindIcon(it) }) {
+            R.drawable.ic_update -> "Uploaded"
+            R.drawable.ic_apps -> "Installed"
+            else -> "Saved"
+        }
+        transferDetail?.let { if (it.text != doneWord) it.text = doneWord }
+        // The app's buttons give way to one Open button, in the same place (no gap left behind).
+        val a = transferActions
+        val o = transferOpen
+        if (a != null && a.alpha > 0.5f && a.isEnabled) {
+            a.isEnabled = false
+            (a as? ViewGroup)?.let { g -> for (i in 0 until g.childCount) g.getChildAt(i).isEnabled = false }
+            a.animate().alpha(0f).scaleX(0.92f).scaleY(0.92f).translationY(-dpf(6f)).setDuration(180L).start()
+            o?.takeIf { cur?.contentIntent != null }?.let {
+                it.visibility = View.VISIBLE
+                it.alpha = 0f
+                it.scaleX = 0.7f
+                it.scaleY = 0.7f
+                it.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(160L).setDuration(460L)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+            }
+        }
+        if (fresh) {
             if (springs[0].atRest && springs[1].atRest) {
                 springs[0].kick(v(0) * 1.2f)
                 springs[1].kick(-v(1) * 1.0f)
@@ -3361,67 +3450,116 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
             if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.CONFIRM)
         }
-        percentText?.let { pt ->
-            if (pt.text != "Done") {
-                pt.text = "Done"
-                pt.setTextColor(Colors.GREEN)
-                pt.scaleX = 0.6f
-                pt.scaleY = 0.6f
-                pt.animate().scaleX(1f).scaleY(1f).setDuration(420L)
-                    .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
-            }
-        }
-        progress?.let {
-            it.color = Colors.GREEN
-            it.fraction = 1f
-        }
-        transferDetail?.text = "Finished"
-        transferActions?.let { a ->
-            a.isEnabled = false
-            a.animate().alpha(0f).translationY(-dpf(6f)).setDuration(200L).start()
-            (a as? ViewGroup)?.let { g -> for (i in 0 until g.childCount) g.getChildAt(i).isEnabled = false }
-        }
     }
 
     /**
-     * Downloads and uploads: the app, the percentage (or Paused), the file,
-     * a progress line, the app's own line (size, speed, time left), and its
-     * own buttons, Pause, Resume and Cancel, working exactly as in the app.
+     * Downloads, uploads and installs, open: the app and what's happening at
+     * the top; a big ring with the kind of file in it, the file's name and
+     * the app's line (size, speed, time left), and the percentage in big
+     * numbers; a thick bar that glides along with a light running over it;
+     * and the app's own buttons (Pause, Resume, Cancel) working exactly as in
+     * the app. When it's done the ring becomes a tick and the buttons give
+     * way to Open.
      */
     private fun buildExpandedTransfer(t: TransferInfo, w: Int, top: Float): View {
         val col = card()
-        val pct = text(12.5f, if (t.paused) Colors.ORANGE else Colors.SILVER, true).apply {
-            text = if (t.done) "Done" else if (t.paused) "Paused" else if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else ""
-            if (t.done) setTextColor(Colors.GREEN)
-            fontFeatureSettings = "tnum"
+        val status = text(12f, when {
+            t.done -> Colors.GREEN
+            t.paused -> Colors.ORANGE
+            else -> white70
+        }, true).apply {
+            text = when {
+                t.done -> "Done"
+                t.paused -> "Paused"
+                kindIcon(t) == R.drawable.ic_apps -> "Installing"
+                kindIcon(t) == R.drawable.ic_update -> "Uploading"
+                else -> "Downloading"
+            }
         }
-        percentText = pct
-        col.addView(cameraRow(appTag(t.icon, t.appName, Colors.GRAPHITE), pct, w, top))
+        transferStatus = status
+        col.addView(cameraRow(appTag(t.icon, t.appName, Colors.GRAPHITE), status, w, top))
         val b = body()
-        b.addView(text(15.5f, Color.WHITE, true).apply {
+
+        // The ring, with the kind of file in its middle.
+        val ringBox = FrameLayout(context)
+        val ring = DoneRing(context).apply {
+            color = if (t.paused && !t.done) Colors.SILVER else Colors.INK
+            doneColor = Colors.GREEN
+            thickness = 0.085f
+            progress = t.progress
+        }
+        transferCardRing = ring
+        ringBox.addView(ring, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        val glyph = icon(if (t.paused && !t.done) R.drawable.ic_pause else kindIcon(t), if (t.paused) Colors.SILVER else Color.WHITE)
+        transferGlyph = glyph
+        ringBox.addView(glyph, LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        if (t.done) {
+            ring.complete(false)
+            glyph.alpha = 0f
+        }
+
+        val texts = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, dp(8), 0)
+        }
+        texts.addView(text(15.5f, Color.WHITE, true).apply {
             text = t.title
             maxLines = 2
         })
-        val bar = ProgressLine(context).apply {
-            color = if (t.done) Colors.GREEN else if (t.paused) Colors.SILVER else Colors.INK
-            fraction = if (t.done) 1f else max(0f, t.progress)
-        }
-        progress = bar
-        b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)).apply { topMargin = dp(10) })
-        val detail = text(11.5f, white55, false).apply {
-            text = t.detail
+        val detail = text(12f, white55, false).apply {
+            text = if (t.done) "Saved" else t.detail
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             fontFeatureSettings = "tnum"
+            setPadding(0, dp(3), 0, 0)
         }
         transferDetail = detail
-        if (t.detail.isNotEmpty()) b.addView(detail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
+        texts.addView(detail)
+
+        val pct = text(24f, when {
+            t.done -> Colors.GREEN
+            t.paused -> Colors.SILVER
+            else -> Color.WHITE
+        }, true).apply {
+            text = if (t.done) "Done" else pctText(t)
+            fontFeatureSettings = "tnum"
+            gravity = Gravity.END
+        }
+        percentText = pct
+
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            // The ring pops bigger for a moment when it's done: let it, don't slice it flat.
+            clipChildren = false
+            clipToPadding = false
+        }
+        row.addView(ringBox, LinearLayout.LayoutParams(dp(48), dp(48)))
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(pct, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        b.addView(row)
+
+        val bar = TransferBar(context).apply {
+            color = if (t.paused && !t.done) Colors.SILVER else Colors.INK
+            doneColor = Colors.GREEN
+            active = !t.paused && !t.done
+            fraction = if (t.done) 1f else t.progress
+        }
+        transferBar = bar
+        b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(14) })
+
+        // The app's buttons, and an Open button waiting in the same spot for when it's done.
+        val slot = FrameLayout(context).apply {
+            setPadding(0, dp(14), 0, 0)
+            clipChildren = false
+        }
+        // Opens what the app says (once done, usually the file itself).
+        val open = pillButton("Open", Color.WHITE, Color.BLACK) {
+            host.send(IslandStore.transfer?.contentIntent ?: t.contentIntent)
+        }
+        transferOpen = open
         if (t.actions.isNotEmpty() && !t.done) {
-            val row = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, dp(12), 0, 0)
-            }
-            transferActions = row
+            val actions = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
             t.actions.forEachIndexed { i, (label, pi) ->
                 val l = label.lowercase()
                 val danger = l.contains("cancel") || l.contains("delete") || l.contains("stop")
@@ -3430,12 +3568,19 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     main -> Color.WHITE
                     danger -> Color.argb(60, 255, 69, 58)
                     else -> Color.argb(48, 255, 255, 255)
-                }, if (main) Color.BLACK else Color.WHITE) {
+                }, if (main) Color.BLACK else if (danger) Color.rgb(255, 120, 110) else Color.WHITE) {
                     host.send(pi)
                 }
-                row.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
+                actions.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
             }
-            b.addView(row)
+            transferActions = actions
+            slot.addView(actions, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            open.visibility = View.INVISIBLE
+            slot.addView(open, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            b.addView(slot)
+        } else if (t.done && t.contentIntent != null) {
+            slot.addView(open, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            b.addView(slot)
         }
         col.addView(b)
         return col

@@ -734,6 +734,8 @@ class DoneRing(context: Context) : View(context) {
             field = v
             invalidate()
         }
+    /** Ring thickness as a share of its size (thinner for big rings). */
+    var thickness = 0.13f
     /** 0 = a ring, 1 = the finished tick. */
     private var t = 0f
     private var anim: android.animation.ValueAnimator? = null
@@ -753,7 +755,8 @@ class DoneRing(context: Context) : View(context) {
     private val full = android.graphics.Path()
     private val part = android.graphics.Path()
     private val pm = android.graphics.PathMeasure()
-    private val pop = android.view.animation.OvershootInterpolator(3.2f)
+    // A lively pop that still never grows past the ring (or it would be clipped into a square).
+    private val pop = android.view.animation.OvershootInterpolator(2f)
 
     val done get() = t >= 1f
 
@@ -793,7 +796,7 @@ class DoneRing(context: Context) : View(context) {
         val size = min(width, height).toFloat()
         val cx = width / 2f
         val cy = height / 2f
-        val sw = max(2f * d, size * 0.13f)
+        val sw = max(2f * d, size * thickness)
         val r = size / 2f - sw / 2f
         oval.set(cx - r, cy - r, cx + r, cy + r)
         // 1) The ring sweeps to full and turns green (first third).
@@ -822,7 +825,7 @@ class DoneRing(context: Context) : View(context) {
         if (p2 > 0f) {
             val s = pop.getInterpolation(p2)
             disc.color = doneColor
-            c.drawCircle(cx, cy, (size / 2f) * s, disc)
+            c.drawCircle(cx, cy, min(size / 2f, (size / 2f) * 0.86f * s), disc)
         }
         if (p3 > 0f) {
             full.reset()
@@ -876,5 +879,151 @@ class PingRing(context: Context) : View(context) {
         p.color = color
         p.alpha = (200 * (1f - t)).toInt()
         c.drawCircle(width / 2f, height / 2f, r - p.strokeWidth / 2f, p)
+    }
+}
+
+/**
+ * The download (upload, install) bar: a thick rounded bar that glides to each
+ * new amount instead of jumping, with a soft light running along the filled
+ * part while it's moving. Paused: grey and still. Unknown amount: a short
+ * piece sliding back and forth. Done: it fills, turns green and a bright
+ * sweep runs across it once.
+ */
+class TransferBar(context: Context) : View(context) {
+    var color: Int = Color.WHITE
+        set(v) {
+            field = v
+            invalidate()
+        }
+    var doneColor: Int = Color.rgb(52, 199, 89)
+    /** Moving (shows the running light); false while paused. */
+    var active = true
+        set(v) {
+            field = v
+            invalidate()
+        }
+    private var shown = 0f
+    private var target = 0f
+    private var glide: android.animation.ValueAnimator? = null
+    private var doneT = 0f
+    private var doneAnim: android.animation.ValueAnimator? = null
+    private val d = resources.displayMetrics.density
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(36, 255, 255, 255) }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shine = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val r = RectF()
+    private val clip = android.graphics.Path()
+
+    /** 0..1, or -1 when the app doesn't say how far along it is. */
+    var fraction: Float
+        get() = target
+        set(v) {
+            if (doneT > 0f) return
+            if (v < 0f) {
+                target = -1f
+                invalidate()
+                return
+            }
+            val to = v.coerceIn(0f, 1f)
+            if (target < 0f || !isAttachedToWindow) {
+                target = to
+                shown = to
+                invalidate()
+                return
+            }
+            if (to == target) return
+            target = to
+            glide?.cancel()
+            glide = android.animation.ValueAnimator.ofFloat(shown, to).apply {
+                duration = 520L
+                interpolator = android.view.animation.DecelerateInterpolator(1.8f)
+                addUpdateListener {
+                    shown = it.animatedValue as Float
+                    invalidate()
+                }
+                start()
+            }
+        }
+
+    /** Fill up, turn green, one bright sweep. */
+    fun complete() {
+        if (doneT > 0f || doneAnim?.isRunning == true) return
+        glide?.cancel()
+        val from = max(0f, shown)
+        doneAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 900L
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener {
+                doneT = max(0.0001f, it.animatedValue as Float)
+                shown = from + (1f - from) * android.view.animation.DecelerateInterpolator(2f).getInterpolation((doneT / 0.4f).coerceAtMost(1f))
+                invalidate()
+            }
+            start()
+        }
+        target = 1f
+    }
+
+    private fun mix(a: Int, b: Int, f: Float) = Color.argb(
+        255,
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+    )
+
+    override fun onDetachedFromWindow() {
+        glide?.cancel()
+        doneAnim?.cancel()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val rad = h / 2f
+        r.set(0f, 0f, w, h)
+        c.drawRoundRect(r, rad, rad, track)
+        val now = SystemClock.uptimeMillis()
+        val green = (doneT / 0.4f).coerceIn(0f, 1f)
+        fill.color = mix(color, doneColor, green)
+        if (target < 0f && doneT <= 0f) {
+            // Unknown amount: a piece sliding back and forth.
+            val p = (now % 1600L) / 1600f
+            val tri = if (p < 0.5f) p * 2f else 2f - p * 2f
+            val seg = w * 0.32f
+            val x = (w - seg) * android.view.animation.AccelerateDecelerateInterpolator().getInterpolation(tri)
+            r.set(x, 0f, x + seg, h)
+            c.drawRoundRect(r, rad, rad, fill)
+            if (isShown) postInvalidateOnAnimation()
+            return
+        }
+        val fw = max(h, w * shown)
+        if (shown <= 0f) return
+        r.set(0f, 0f, fw, h)
+        c.drawRoundRect(r, rad, rad, fill)
+        // The running light (moving) or the one bright sweep (done).
+        val sweep = when {
+            doneT > 0f -> ((doneT - 0.35f) / 0.65f).takeIf { it in 0f..1f }
+            active -> (now % 1500L) / 1500f
+            else -> null
+        }
+        if (sweep != null) {
+            val band = max(w * 0.22f, 40f * d)
+            val cx = -band + (fw + band * 2f) * sweep
+            val a = if (doneT > 0f) 200 else 90
+            shine.shader = android.graphics.LinearGradient(
+                cx - band, 0f, cx + band, 0f,
+                intArrayOf(Color.TRANSPARENT, Color.argb(a, 255, 255, 255), Color.TRANSPARENT),
+                null, android.graphics.Shader.TileMode.CLAMP,
+            )
+            clip.reset()
+            clip.addRoundRect(r, rad, rad, android.graphics.Path.Direction.CW)
+            c.save()
+            c.clipPath(clip)
+            c.drawRect(r, shine)
+            c.restore()
+        }
+        if ((active && doneT <= 0f) || doneAnim?.isRunning == true) {
+            if (isShown) postInvalidateOnAnimation()
+        }
     }
 }

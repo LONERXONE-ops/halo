@@ -86,12 +86,24 @@ battery, 4.2 s for a critical battery. Icon left, switch or value right.
 
 The first takes the pill; the second sits in the round bubble beside it.
 
+## Downloads
+
+Open, a download shows the app and what's happening (Downloading, Uploading,
+Installing, Paused, Done) at the top; a 48 dp ring with the kind of file in
+it (video, picture, music, app, file), the name and the app's line (size,
+speed, time left), and the percentage in big tabular numbers; an 8 dp bar
+that glides to each new amount with a light running along it; and the
+app's own buttons.
+
 ## Finishing
 
 Anything with a progress ring (downloads, uploads, installs, from any app)
 finishes the same way: the ring sweeps to full and turns green, a green disc
 pops inside it with an overshoot, a white tick draws itself on top, the
 island gives one jelly squish and a confirm tap. It stays 2.4 s, then goes.
+Open, the big ring does the same, the bar fills green with one bright
+sweep, the number becomes Done, and the app's buttons give way to Open in
+the same place (no gap).
 No separate "Done" pop.
 
 ## Keeping the app's own buttons
