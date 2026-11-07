@@ -27,6 +27,16 @@ jobs:
       - name: Build the probe
         run: gradle -p probe :app:assembleDebug --no-daemon -q
 
+      - name: Build Halo from a branch (when halo-ref.txt names one)
+        if: hashFiles('halo-ref.txt') != ''
+        run: |
+          REF=$(cat halo-ref.txt)
+          git clone -q --depth 1 -b "$REF" https://github.com/${{ github.repository }}.git halo-src
+          cd halo-src
+          base64 -d app/halo.keystore.b64 > app/halo.keystore
+          gradle :app:assembleRelease --no-daemon -q
+          mkdir -p ../built && cp app/build/outputs/apk/release/app-release.apk ../built/halo.apk
+
       - name: Get the latest Halo and Halo Launcher
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -35,6 +45,7 @@ jobs:
           gh release download -R LONERXONE-ops/halo --pattern '*.apk' -D dl/h
           gh release download -R LONERXONE-ops/halo-launcher --pattern '*.apk' -D dl/l
           cp dl/h/*.apk apk/halo.apk
+          if [ -f built/halo.apk ]; then cp built/halo.apk apk/halo.apk; echo "Halo built from $(cat halo-ref.txt)"; fi
           cp dl/l/*.apk apk/launcher.apk
           cp probe/app/build/outputs/apk/debug/app-debug.apk apk/probe.apk
           ls -la apk dl/h dl/l

@@ -119,6 +119,17 @@ sleep 0.4; shot done_0.95s
 sleep 1; shot done_2s
 sleep 2; shot done_gone
 
+mark "download on the pill"
+probe dl --ei pct 40
+sleep 1.5; shot pill_dl_40
+probe dl --ei pct 99
+sleep 0.5
+probe dldone
+sleep 0.2; shot pill_done_a
+sleep 0.2; shot pill_done_b
+sleep 0.3; shot pill_done_c
+sleep 3
+
 mark "notification center"
 tap $CX $CY
 sleep 0.5; shot panel_0.5s
