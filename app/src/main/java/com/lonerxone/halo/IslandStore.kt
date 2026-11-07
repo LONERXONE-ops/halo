@@ -586,7 +586,7 @@ object Prefs {
 
     /** Show screen recordings (Halo's and other apps') on the island. */
     const val RECORDING = "recording"
-    /** Sound in Halo's screen recordings: "device" (what the phone plays), "mic", or "none". */
+    /** Sound in Halo's screen recordings: "device" (what the phone plays), "mic", "both" (the two mixed), or "none". */
     const val REC_AUDIO = "rec_audio"
     /** Recording quality: "720", "1080" or "2160" (4K). */
     const val REC_QUALITY = "rec_quality"

@@ -49,7 +49,7 @@
 | **Alarms** | An alarm going off (or a timer ending) opens big with Snooze and Stop. |
 | **Timers** | Countdown or stopwatch from the Clock app, ticking in step with it, with its own buttons. |
 | **Downloads** | A progress ring; open it for the size and speed line and the app's own Pause, Resume and Cancel. When it finishes, the ring fills, turns green and becomes a tick that draws itself with a bounce, for every app's downloads, uploads and installs. |
-| **Screen recording** | Halo's own recorder (with quality and sound choices) or another app's: a red dot and timer, pause and stop. |
+| **Screen recording** | Halo's own recorder (with quality and sound: phone sound, microphone, both mixed, or none) or another app's: a red dot and timer, pause and stop. |
 | **Navigation** | Next turn and distance from Google Maps. |
 | **Split bubble** | Two at once: the second sits in a circle beside the pill. Tap it to swap. |
 

@@ -1481,6 +1481,7 @@ class MainActivity : Activity() {
     private enum class RecSound(val id: String, val title: String, val about: String, val icon: Int) {
         DEVICE("device", "Phone sound", "What your phone plays: games, videos and music. Some apps, like Netflix, don't allow their sound to be recorded.", R.drawable.ic_speaker),
         MIC("mic", "Microphone", "Your voice and whatever is around you, for tutorials and commentary.", R.drawable.ic_mic),
+        BOTH("both", "Phone sound and microphone", "What your phone plays with your voice over it, for gameplay and reactions.", R.drawable.ic_speaker),
         NONE("none", "No sound", "Picture only. The smallest files.", R.drawable.ic_mic_off);
 
         companion object {

@@ -42,6 +42,9 @@ import java.nio.ByteBuffer
  * Android's "Start recording?" dialog and hands the answer to [ScreenRecorder].
  */
 class RecordActivity : Activity() {
+    /** Ask for the capture once this screen is properly in front (onResume). */
+    private var needCapture = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) return
@@ -49,12 +52,26 @@ class RecordActivity : Activity() {
         if (audio != "none" && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
         } else {
-            askCapture()
+            needCapture = true
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        // Without the microphone permission the recording simply has no sound.
+        // Without the microphone permission the recording has no sound (the island says so).
+        needCapture = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!needCapture) return
+        needCapture = false
+        // Android only hands sound (microphone or phone sound) to a recorder
+        // that started while Halo was on screen. So the recorder takes its
+        // place in the foreground now, before Android's dialog, not later.
+        val audio = Prefs.get(this).getString(Prefs.REC_AUDIO, "device")
+        if (audio != "none" && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            ScreenRecorder.prime(this)
+        }
         askCapture()
     }
 
@@ -74,7 +91,16 @@ class RecordActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQ_CAPTURE && resultCode == RESULT_OK && data != null) {
             ScreenRecorder.start(this, resultCode, data)
+            // Stay (invisibly) a moment so the recorder takes over while Halo is still in front.
+            window.decorView.postDelayed({ close() }, 600L)
+        } else {
+            ScreenRecorder.cancel(this)
+            close()
         }
+    }
+
+    private fun close() {
+        if (isFinishing) return
         finish()
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
@@ -120,6 +146,12 @@ class ScreenRecorder : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_PRIME -> prime()
+            ACTION_CANCEL -> if (projection == null && !recording) {
+                main.removeCallbacksAndMessages(null)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
             ACTION_START -> begin(intent)
             ACTION_PAUSE -> togglePause()
             ACTION_STOP -> finishRecording()
@@ -127,25 +159,71 @@ class ScreenRecorder : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Before Android's "Start recording?" dialog: take the foreground with the
+     * microphone while Halo is on screen, so Android lets the recording hear
+     * (the microphone, and phone sound, which counts as recording audio too).
+     */
+    private fun prime() {
+        if (projection != null) return
+        try {
+            startForeground(NOTE_ID, notification(paused = false), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            primed = true
+        } catch (e: Exception) {
+            Debug.note("Recorder: couldn't get the microphone (${e.javaClass.simpleName})")
+            primed = false
+            // Started as a foreground service but couldn't be one: bow out now (Android would crash it otherwise).
+            stopSelf()
+            return
+        }
+        // Dialog left hanging: let go after a minute.
+        main.postDelayed({
+            if (projection == null && !recording) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }, 60_000L)
+    }
+
+    private var primed = false
+
     private fun begin(intent: Intent) {
         if (projection != null) return
+        main.removeCallbacksAndMessages(null)
         val code = intent.getIntExtra(EXTRA_CODE, 0)
         @Suppress("DEPRECATION")
         val data = intent.getParcelableExtra<Intent>(EXTRA_DATA) ?: return stopSelf()
         val mode = Prefs.get(this).getString(Prefs.REC_AUDIO, "device") ?: "device"
         val micOk = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        val useMic = mode == "mic" && micOk
+        var wantsSound = mode != "none" && micOk
         // Android needs the service in the foreground (as a screen-capture
-        // service) before it hands over the capture.
+        // service) before it hands over the capture. Any sound, phone sound
+        // included, also needs the microphone type, or Android records silence.
         try {
             val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                if (useMic) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+                if (wantsSound) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
             startForeground(NOTE_ID, notification(paused = false), type)
         } catch (e: Exception) {
-            Debug.note("Recorder: couldn't start (${e.javaClass.simpleName})")
-            stopSelf()
-            return
+            // The microphone was refused: record the picture anyway, without sound.
+            Debug.note("Recorder: sound refused (${e.javaClass.simpleName})")
+            wantsSound = false
+            try {
+                startForeground(NOTE_ID, notification(paused = false), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } catch (e2: Exception) {
+                Debug.note("Recorder: couldn't start (${e2.javaClass.simpleName})")
+                stopSelf()
+                return
+            }
         }
+        soundNote = when {
+            mode == "none" -> null
+            !micOk -> "Allow the microphone for sound"
+            !wantsSound -> "Sound blocked by Android"
+            else -> null
+        }
+        val useMic = mode == "mic" && wantsSound
+        val deviceSound = (mode == "device" || mode == "both") && wantsSound
+        val mixMic = mode == "both" && wantsSound
         val mpm = getSystemService(MediaProjectionManager::class.java)
         val p = try {
             mpm.getMediaProjection(code, data)
@@ -167,10 +245,13 @@ class ScreenRecorder : Service() {
         // 3-2-1 on the island, then go.
         val until = SystemClock.elapsedRealtime() + COUNTDOWN_MS
         IslandStore.setRec(RecInfo(KEY, own = true, runningSince = 0L, bankedMs = 0L, paused = false, countdownUntil = until))
-        main.postDelayed({ startCapture(useMic, mode == "device" && micOk) }, COUNTDOWN_MS)
+        main.postDelayed({ startCapture(useMic, deviceSound, mixMic) }, COUNTDOWN_MS)
     }
 
-    private fun startCapture(useMic: Boolean, deviceSound: Boolean) {
+    /** Why this recording has no sound, said on the island once it starts. */
+    private var soundNote: String? = null
+
+    private fun startCapture(useMic: Boolean, deviceSound: Boolean, mixMic: Boolean) {
         val p = projection ?: return
         if (stopping) return
         // Size from the quality you picked, in your screen's shape.
@@ -239,10 +320,12 @@ class ScreenRecorder : Service() {
         if (deviceSound) {
             val atmp = File(cacheDir, "rec_audio.m4a").also { it.delete() }
             audioTmp = atmp
-            audio = DeviceAudio(p, atmp).also { if (!it.start()) audio = null }
+            audio = DeviceAudio(p, atmp, mixMic).also { if (!it.start()) audio = null }
+            if (audio == null && soundNote == null) soundNote = "Sound unavailable"
         }
         recording = true
         IslandStore.setRec(RecInfo(KEY, own = true, runningSince = SystemClock.elapsedRealtime(), bankedMs = 0L, paused = false))
+        soundNote?.let { IslandStore.showPop("No sound", it, Colors.ORANGE, R.drawable.ic_mic_off, 2_600L) }
     }
 
     private fun togglePause() {
@@ -455,6 +538,8 @@ class ScreenRecorder : Service() {
     companion object {
         const val KEY = "halo:rec"
         private const val ACTION_START = "com.lonerxone.halo.rec.START"
+        private const val ACTION_PRIME = "com.lonerxone.halo.rec.PRIME"
+        private const val ACTION_CANCEL = "com.lonerxone.halo.rec.CANCEL"
         private const val ACTION_PAUSE = "com.lonerxone.halo.rec.PAUSE"
         private const val ACTION_STOP = "com.lonerxone.halo.rec.STOP"
         private const val EXTRA_CODE = "code"
@@ -467,6 +552,20 @@ class ScreenRecorder : Service() {
 
         fun start(c: Context, code: Int, data: Intent) {
             c.startForegroundService(Intent(c, ScreenRecorder::class.java).setAction(ACTION_START).putExtra(EXTRA_CODE, code).putExtra(EXTRA_DATA, data))
+        }
+
+        fun prime(c: Context) {
+            try {
+                c.startForegroundService(Intent(c, ScreenRecorder::class.java).setAction(ACTION_PRIME))
+            } catch (_: Exception) {
+            }
+        }
+
+        fun cancel(c: Context) {
+            try {
+                c.startService(Intent(c, ScreenRecorder::class.java).setAction(ACTION_CANCEL))
+            } catch (_: Exception) {
+            }
         }
 
         fun pauseOrResume(c: Context) {
@@ -533,13 +632,14 @@ enum class Quality(val id: String, val label: String, val bitrate: Int, val mbPe
  * is read and thrown away, and timestamps come from the amount of sound kept,
  * so it lines up with the picture's seamless pause.
  */
-private class DeviceAudio(private val projection: MediaProjection, private val out: File) {
+private class DeviceAudio(private val projection: MediaProjection, private val out: File, private val withMic: Boolean = false) {
     @Volatile var paused = false
     @Volatile private var running = false
     @Volatile var wroteAnything = false
         private set
     private var thread: Thread? = null
     private var record: AudioRecord? = null
+    private var mic: AudioRecord? = null
     private var codec: MediaCodec? = null
     private var muxer: MediaMuxer? = null
     private var track = -1
@@ -558,11 +658,27 @@ private class DeviceAudio(private val projection: MediaProjection, private val o
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
             .build()
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-        val rec = AudioRecord.Builder()
-            .setAudioFormat(fmt)
-            .setBufferSizeInBytes(maxOf(min, CHUNK) * 4)
-            .setAudioPlaybackCaptureConfig(cfg)
-            .build()
+        val rec = try {
+            AudioRecord.Builder()
+                .setAudioFormat(fmt)
+                .setBufferSizeInBytes(maxOf(min, CHUNK) * 4)
+                .setAudioPlaybackCaptureConfig(cfg)
+                .build()
+                .takeIf { it.state == AudioRecord.STATE_INITIALIZED }
+        } catch (e: Exception) {
+            Debug.note("Recorder: phone sound unavailable (${e.javaClass.simpleName})")
+            null
+        }
+        // Phone sound and microphone: your voice is mixed in over what the phone plays.
+        val m = if (withMic) try {
+            val mmin = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            AudioRecord(MediaRecorder.AudioSource.MIC, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(mmin, CHUNK) * 4)
+                .takeIf { it.state == AudioRecord.STATE_INITIALIZED }
+        } catch (e: Exception) {
+            Debug.note("Recorder: microphone unavailable (${e.javaClass.simpleName})")
+            null
+        } else null
+        if (rec == null && m == null) throw IllegalStateException("no sound source")
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, RATE, 2).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_BIT_RATE, 160_000)
@@ -572,9 +688,11 @@ private class DeviceAudio(private val projection: MediaProjection, private val o
         enc.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         enc.start()
         record = rec
+        mic = m
         codec = enc
         muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        rec.startRecording()
+        rec?.startRecording()
+        m?.startRecording()
         running = true
         thread = Thread({ loop() }, "halo-rec-audio").apply { start() }
         true
@@ -585,22 +703,48 @@ private class DeviceAudio(private val projection: MediaProjection, private val o
     }
 
     private fun loop() {
-        val rec = record ?: return
+        val rec = record
+        val m = mic
         val enc = codec ?: return
-        val pcm = ByteArray(CHUNK)
+        // Stereo 16-bit samples (left, right, left, right…).
+        val pcm = ShortArray(CHUNK / 2)
+        val mono = ShortArray(CHUNK / 4)
         val info = MediaCodec.BufferInfo()
         var keptBytes = 0L
         try {
             while (running) {
-                val n = rec.read(pcm, 0, pcm.size)
-                if (n <= 0) continue
+                var samples: Int
+                if (rec != null) {
+                    samples = rec.read(pcm, 0, pcm.size)
+                    if (samples <= 0) continue
+                    if (m != null) {
+                        // Same amount of time from the microphone, added on top.
+                        val got = m.read(mono, 0, samples / 2)
+                        for (i in 0 until maxOf(0, got)) {
+                            val v = mono[i].toInt()
+                            pcm[2 * i] = (pcm[2 * i] + v).coerceIn(-32768, 32767).toShort()
+                            pcm[2 * i + 1] = (pcm[2 * i + 1] + v).coerceIn(-32768, 32767).toShort()
+                        }
+                    }
+                } else {
+                    // Microphone only: the same voice in both ears.
+                    val got = m?.read(mono, 0, mono.size) ?: 0
+                    if (got <= 0) continue
+                    for (i in 0 until got) {
+                        pcm[2 * i] = mono[i]
+                        pcm[2 * i + 1] = mono[i]
+                    }
+                    samples = got * 2
+                }
+                val n = samples * 2
                 if (paused) continue
                 val idx = enc.dequeueInputBuffer(10_000L)
                 if (idx >= 0) {
                     val buf = enc.getInputBuffer(idx) ?: continue
                     buf.clear()
-                    val len = minOf(n, buf.remaining())
-                    buf.put(pcm, 0, len)
+                    buf.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    val len = minOf(n, buf.remaining()) / 4 * 4
+                    buf.asShortBuffer().put(pcm, 0, len / 2)
                     val pts = keptBytes * 1_000_000L / (RATE * 4L)
                     enc.queueInputBuffer(idx, 0, len, pts, 0)
                     keptBytes += len
@@ -658,6 +802,12 @@ private class DeviceAudio(private val projection: MediaProjection, private val o
         }
         record?.release()
         record = null
+        try {
+            mic?.stop()
+        } catch (_: Exception) {
+        }
+        mic?.release()
+        mic = null
         try {
             codec?.stop()
         } catch (_: Exception) {
