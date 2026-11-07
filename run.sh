@@ -53,6 +53,9 @@ if [ -n "$R" ]; then
   set -- $R
   CX=$((($1+$3)/2)); CY=$((($2+$4)/2))
 fi
+# The cutout is reported in real pixels; taps use the (smaller) screen size.
+PW=$(adb shell wm size | grep -o 'Physical size: [0-9]*' | grep -o '[0-9]*$')
+if [ -n "$PW" ] && [ "$PW" -gt 0 ]; then CX=$((CX*W/PW)); CY=$((CY*W/PW)); fi
 # The pill sits on the camera when it's in the middle, else in the middle of the top.
 PX=$((W/2)); PY=$CY
 [ $PY -lt 30 ] && PY=60
