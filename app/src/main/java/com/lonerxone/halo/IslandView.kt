@@ -3693,8 +3693,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             empty.addView(bell, LinearLayout.LayoutParams(dp(26), dp(26)))
             empty.addView(text(14f, white55, false).apply {
                 text = "You're all caught up"
+                gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(0, dp(8), 0, 0)
-            })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             list.addView(empty, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             wobble(bell, 14f)
         }
