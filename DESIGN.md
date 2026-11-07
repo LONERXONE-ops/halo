@@ -82,6 +82,14 @@ battery, 4.2 s for a critical battery. Icon left, switch or value right.
 
 The first takes the pill; the second sits in the round bubble beside it.
 
+## Finishing
+
+Anything with a progress ring (downloads, uploads, installs, from any app)
+finishes the same way: the ring sweeps to full and turns green, a green disc
+pops inside it with an overshoot, a white tick draws itself on top, the
+island gives one jelly squish and a confirm tap. It stays 2.4 s, then goes.
+No separate "Done" pop.
+
 ## Keeping the app's own buttons
 
 Wherever an app gives buttons (Pause, Resume and Cancel on a download;

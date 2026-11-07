@@ -225,7 +225,12 @@ class HaloNotificationListener : NotificationListenerService() {
         IslandStore.live?.let { l -> if (l.key == sbn.key && l.stage < 4) IslandStore.setLive(null) }
         IslandStore.rec?.let { if (!it.own && it.key == sbn.key) IslandStore.setRec(null) }
         if (IslandStore.nav?.key == sbn.key) IslandStore.setNav(null)
-        if (IslandStore.transfer?.key == sbn.key) IslandStore.setTransfer(null)
+        // Removed right at the end (most apps swap in a "Complete" notice): that's a finish, not a cancel.
+        IslandStore.transfer?.let { t ->
+            if (t.key == sbn.key && !t.done) {
+                if (t.progress >= 0.97f) IslandStore.finishTransfer() else IslandStore.setTransfer(null)
+            }
+        }
     }
 
     private fun component() = ComponentName(this, HaloNotificationListener::class.java)
@@ -657,8 +662,8 @@ class HaloNotificationListener : NotificationListenerService() {
         }
         // A transfer that just finished turns into a normal notification.
         if (IslandStore.transfer?.key == sbn.key) {
-            IslandStore.setTransfer(null)
-            IslandStore.showPop("Done", title.ifEmpty { "Finished" }.take(18), Colors.GREEN, R.drawable.ic_check, 2_500L)
+            // The ring turns into a tick on the island (no separate "Done" pop).
+            IslandStore.finishTransfer()
             return true
         }
         return false
