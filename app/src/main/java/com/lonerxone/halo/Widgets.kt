@@ -714,3 +714,126 @@ class StageTrack(context: Context) : View(context) {
         if (moving && isShown) postInvalidateOnAnimation() else lastT = 0L
     }
 }
+
+/**
+ * Progress that finishes with a flourish, used everywhere something
+ * completes (downloads, uploads, installs, saved recordings): a ring that
+ * fills as it goes; on [complete] it sweeps to full and turns green, a green
+ * disc pops up inside it with a bounce, and a white tick draws itself on it.
+ * Spins while the amount is unknown (progress -1).
+ */
+class DoneRing(context: Context) : View(context) {
+    var color: Int = Color.WHITE
+        set(v) {
+            field = v
+            invalidate()
+        }
+    var doneColor: Int = Color.rgb(52, 199, 89)
+    var progress = 0f
+        set(v) {
+            field = v
+            invalidate()
+        }
+    /** 0 = a ring, 1 = the finished tick. */
+    private var t = 0f
+    private var anim: android.animation.ValueAnimator? = null
+    private val d = resources.displayMetrics.density
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val disc = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = Color.WHITE
+    }
+    private val oval = RectF()
+    private val full = android.graphics.Path()
+    private val part = android.graphics.Path()
+    private val pm = android.graphics.PathMeasure()
+    private val pop = android.view.animation.OvershootInterpolator(3.2f)
+
+    val done get() = t >= 1f
+
+    /** Finish: animated (the flourish) or straight to the tick. */
+    fun complete(animate: Boolean = true) {
+        if (t >= 1f || anim?.isRunning == true) return
+        if (!animate) {
+            t = 1f
+            invalidate()
+            return
+        }
+        val from = t
+        anim = android.animation.ValueAnimator.ofFloat(from, 1f).apply {
+            duration = 760L
+            interpolator = android.view.animation.LinearInterpolator()
+            addUpdateListener {
+                t = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    private fun mix(a: Int, b: Int, f: Float) = Color.argb(
+        255,
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+    )
+
+    override fun onDetachedFromWindow() {
+        anim?.cancel()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(c: Canvas) {
+        val size = min(width, height).toFloat()
+        val cx = width / 2f
+        val cy = height / 2f
+        val sw = max(2f * d, size * 0.13f)
+        val r = size / 2f - sw / 2f
+        oval.set(cx - r, cy - r, cx + r, cy + r)
+        // 1) The ring sweeps to full and turns green (first third).
+        val p1 = (t / 0.3f).coerceIn(0f, 1f)
+        // 2) The green disc pops up inside it (overlapping).
+        val p2 = ((t - 0.22f) / 0.42f).coerceIn(0f, 1f)
+        // 3) The tick draws itself on the disc.
+        val p3 = ((t - 0.42f) / 0.5f).coerceIn(0f, 1f)
+        val ringAlpha = 1f - p2
+        if (ringAlpha > 0.01f) {
+            ring.strokeWidth = sw
+            ring.color = mix(color, doneColor, p1)
+            ring.alpha = (60 * ringAlpha).toInt()
+            c.drawOval(oval, ring)
+            ring.alpha = (255 * ringAlpha).toInt()
+            if (progress < 0f && t <= 0f) {
+                // Unknown amount: a short arc going round.
+                val a = (SystemClock.uptimeMillis() % 1100L) / 1100f * 360f
+                c.drawArc(oval, a - 90f, 90f, false, ring)
+                if (isShown) postInvalidateOnAnimation()
+            } else {
+                val shown = max(0f, progress) + (1f - max(0f, progress)) * p1
+                c.drawArc(oval, -90f, 360f * shown, false, ring)
+            }
+        }
+        if (p2 > 0f) {
+            val s = pop.getInterpolation(p2)
+            disc.color = doneColor
+            c.drawCircle(cx, cy, (size / 2f) * s, disc)
+        }
+        if (p3 > 0f) {
+            full.reset()
+            full.moveTo(cx - size * 0.22f, cy + size * 0.01f)
+            full.lineTo(cx - size * 0.06f, cy + size * 0.17f)
+            full.lineTo(cx + size * 0.24f, cy - size * 0.15f)
+            pm.setPath(full, false)
+            part.reset()
+            pm.getSegment(0f, pm.length * p3, part, true)
+            tick.strokeWidth = max(2f * d, size * 0.12f)
+            c.drawPath(part, tick)
+        }
+    }
+}

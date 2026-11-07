@@ -247,6 +247,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var playButton: ImageView? = null
     private var progress: ProgressLine? = null
     private var ring: ProgressRing? = null
+    private var transferRing: DoneRing? = null
+    private var transferActions: View? = null
     private var percentText: TextView? = null
     private var elapsedText: TextView? = null
     private var remainText: TextView? = null
@@ -465,7 +467,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.Call -> "c:" + c.call.key + ":" + c.call.ringing + ":" + c.call.name + ":" + c.call.connecting
             is Content.Timer -> "t:" + c.timer.key + ":" + (c.timer.anchor == 0L) + ":" + c.timer.actions.size
             // Paused and running look different (and have different buttons): rebuild on a change.
-            is Content.Transfer -> "d:" + c.transfer.key + ":" + c.transfer.paused + ":" + c.transfer.actions.joinToString { it.first }
+            is Content.Transfer -> "d:" + c.transfer.key + ":" + (c.transfer.paused && !c.transfer.done) + ":" + c.transfer.actions.joinToString { it.first }
             is Content.Nav -> "g:" + c.nav.key
             is Content.Otp -> "o:" + c.otp.key + ":" + c.otp.code
             // A new stage rebuilds (so it springs); a new ETA updates in place.
@@ -500,6 +502,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         playButton = null
         progress = null
         ring = null
+        transferRing = null
+        transferActions = null
         percentText = null
         elapsedText = null
         remainText = null
@@ -687,10 +691,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             }
             is Content.Transfer -> {
                 val p = c.transfer.progress
-                ring?.progress = p
-                progress?.fraction = max(0f, p)
-                percentText?.text = if (c.transfer.paused) "Paused" else if (p >= 0f) "${(p * 100).toInt()}%" else ""
-                transferDetail?.text = c.transfer.detail
+                if (c.transfer.done) {
+                    finishTransferMorph()
+                } else {
+                    transferRing?.progress = p
+                    progress?.fraction = max(0f, p)
+                    percentText?.text = if (c.transfer.paused) "Paused" else if (p >= 0f) "${(p * 100).toInt()}%" else ""
+                    transferDetail?.text = c.transfer.detail
+                }
             }
             is Content.Live -> {
                 liveEta?.text = etaText(c.live)
@@ -2390,13 +2398,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun compactTransfer(t: TransferInfo): Sides {
-        val r = ProgressRing(context).apply {
-            color = if (t.paused) Colors.SILVER else Colors.INK
+        val r = DoneRing(context).apply {
+            color = if (t.paused && !t.done) Colors.SILVER else Colors.INK
+            doneColor = Colors.GREEN
             progress = t.progress
         }
-        ring = r
+        transferRing = r
+        // Built already finished (it opened right at the end): play the flourish once it's on screen.
+        if (t.done) r.post { finishTransferMorph() }
         // Paused: a small pause sign inside the ring.
-        val right: View = if (t.paused) FrameLayout(context).apply {
+        val right: View = if (t.paused && !t.done) FrameLayout(context).apply {
             addView(r, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
             addView(icon(R.drawable.ic_pause, Colors.SILVER), LayoutParams(dp(9), dp(9), Gravity.CENTER))
         } else r
@@ -3292,6 +3303,54 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var transferDetail: TextView? = null
 
     /**
+     * The download finished: the ring sweeps to full and turns green, a green
+     * disc pops inside it and a tick draws itself, with a springy pop of the
+     * ring, a jelly squish of the island and a confirm tap. The open card
+     * says Done in green, its bar fills green and the buttons bow out.
+     */
+    private fun finishTransferMorph() {
+        val r = transferRing
+        if (r != null && !r.done) {
+            r.complete(true)
+            r.animate().cancel()
+            r.scaleX = 0.82f
+            r.scaleY = 0.82f
+            r.animate().scaleX(1.18f).scaleY(1.18f).setStartDelay(160L).setDuration(220L)
+                .setInterpolator(android.view.animation.DecelerateInterpolator())
+                .withEndAction {
+                    r.animate().scaleX(1f).scaleY(1f).setDuration(420L)
+                        .setInterpolator(android.view.animation.OvershootInterpolator(3.5f)).start()
+                }.start()
+            if (scale > 0f && springs[0].atRest && springs[1].atRest) {
+                springs[0].kick(v(0) * 1.2f)
+                springs[1].kick(-v(1) * 1.0f)
+                postInvalidateOnAnimation()
+            }
+            if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        }
+        percentText?.let { pt ->
+            if (pt.text != "Done") {
+                pt.text = "Done"
+                pt.setTextColor(Colors.GREEN)
+                pt.scaleX = 0.6f
+                pt.scaleY = 0.6f
+                pt.animate().scaleX(1f).scaleY(1f).setDuration(420L)
+                    .setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
+            }
+        }
+        progress?.let {
+            it.color = Colors.GREEN
+            it.fraction = 1f
+        }
+        transferDetail?.text = "Finished"
+        transferActions?.let { a ->
+            a.isEnabled = false
+            a.animate().alpha(0f).translationY(-dpf(6f)).setDuration(200L).start()
+            (a as? ViewGroup)?.let { g -> for (i in 0 until g.childCount) g.getChildAt(i).isEnabled = false }
+        }
+    }
+
+    /**
      * Downloads and uploads: the app, the percentage (or Paused), the file,
      * a progress line, the app's own line (size, speed, time left), and its
      * own buttons, Pause, Resume and Cancel, working exactly as in the app.
@@ -3299,7 +3358,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private fun buildExpandedTransfer(t: TransferInfo, w: Int, top: Float): View {
         val col = card()
         val pct = text(12.5f, if (t.paused) Colors.ORANGE else Colors.SILVER, true).apply {
-            text = if (t.paused) "Paused" else if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else ""
+            text = if (t.done) "Done" else if (t.paused) "Paused" else if (t.progress >= 0f) "${(t.progress * 100).toInt()}%" else ""
+            if (t.done) setTextColor(Colors.GREEN)
             fontFeatureSettings = "tnum"
         }
         percentText = pct
@@ -3310,8 +3370,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             maxLines = 2
         })
         val bar = ProgressLine(context).apply {
-            color = if (t.paused) Colors.SILVER else Colors.INK
-            fraction = max(0f, t.progress)
+            color = if (t.done) Colors.GREEN else if (t.paused) Colors.SILVER else Colors.INK
+            fraction = if (t.done) 1f else max(0f, t.progress)
         }
         progress = bar
         b.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)).apply { topMargin = dp(10) })
@@ -3323,11 +3383,12 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         transferDetail = detail
         if (t.detail.isNotEmpty()) b.addView(detail, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
-        if (t.actions.isNotEmpty()) {
+        if (t.actions.isNotEmpty() && !t.done) {
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, dp(12), 0, 0)
             }
+            transferActions = row
             t.actions.forEachIndexed { i, (label, pi) ->
                 val l = label.lowercase()
                 val danger = l.contains("cancel") || l.contains("delete") || l.contains("stop")

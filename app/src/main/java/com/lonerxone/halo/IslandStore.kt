@@ -185,6 +185,8 @@ data class TransferInfo(
     val paused: Boolean = false,
     /** The app's own buttons (Pause, Resume, Cancel…), kept as they are. */
     val actions: List<Pair<String, PendingIntent>> = emptyList(),
+    /** Finished: the ring turns into a tick, then it goes. */
+    val done: Boolean = false,
 )
 
 /** A one-time code (OTP) found in a message, ready to copy from the island. */
@@ -437,8 +439,21 @@ object IslandStore {
         dispatch()
     }
 
+    private val clearDone = Runnable { if (transfer?.done == true) setTransfer(null) }
+
     fun setTransfer(t: TransferInfo?) {
+        if (t != null && !t.done) handler.removeCallbacks(clearDone)
         transfer = t
+        dispatch()
+    }
+
+    /** A download (upload, install…) finished: show the tick for a moment, then go. */
+    fun finishTransfer() {
+        val t = transfer ?: return
+        if (t.done) return
+        transfer = t.copy(done = true, progress = 1f, paused = false)
+        handler.removeCallbacks(clearDone)
+        handler.postDelayed(clearDone, 2_400L)
         dispatch()
     }
 
