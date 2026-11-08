@@ -1759,17 +1759,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         setPadding(dp(18), dp(10), dp(18), dp(18))
     }
 
-    private fun pillButton(label: String, bg: Int, fg: Int, action: () -> Unit): TextView = text(13f, fg, true).apply {
+    /** A button in Halo's one look (see [BtnStyle]), lively to the touch. */
+    private fun pillButton(label: String, style: BtnStyle, action: () -> Unit): TextView = text(13f, style.fg, true).apply {
         text = label
         gravity = Gravity.CENTER
         setPadding(dp(18), dp(10), dp(18), dp(10))
-        background = GradientDrawable().apply {
-            setColor(bg)
-            cornerRadius = dpf(20f)
-        }
+        background = HaloButtons.background(style, dpf(20f))
+        HaloButtons.react(this, style, { hapticsEnabled })
         setOnClickListener {
-            haptic()
-            bounce(it)
             action()
         }
     }
@@ -2528,7 +2525,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             setPadding(0, dp(14), 0, 0)
         }
         lateinit var copy: TextView
-        copy = pillButton("Copy", Color.WHITE, Color.BLACK) {
+        copy = pillButton("Copy", BtnStyle.MAIN) {
             copyCode(o)
             copy.text = "Copied ✓"
             copy.animate().scaleX(1.06f).scaleY(1.06f).setDuration(90).withEndAction {
@@ -2538,7 +2535,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             postDelayed({ if ((content as? Content.Otp)?.otp?.key == o.key) IslandStore.setOtp(null) }, 900L)
         }
         buttons.addView(copy, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        buttons.addView(pillButton("Copy and open", Color.argb(48, 255, 255, 255), Color.WHITE) {
+        buttons.addView(pillButton("Copy and open", BtnStyle.CLEAR) {
             copyCode(o)
             host.send(o.contentIntent)
             IslandStore.setOtp(null)
@@ -2617,7 +2614,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 setPadding(0, dp(12), 0, 0)
             }
             l.actions.forEachIndexed { i, (label, pi) ->
-                row.addView(pillButton(label, if (i == 0) Color.WHITE else Color.argb(48, 255, 255, 255), if (i == 0) Color.BLACK else Color.WHITE) { host.send(pi) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
+                row.addView(pillButton(label, HaloButtons.styleFor(label, i == 0)) { host.send(pi) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
             }
             b.addView(row)
         }
@@ -2725,9 +2722,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 shape = GradientDrawable.OVAL
                 setColor(Color.WHITE)
             }
+            HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.86f)
             setOnClickListener {
-                haptic()
-                bounce(it)
                 val m = currentMusic() ?: return@setOnClickListener
                 val tc = m.controller?.transportControls ?: return@setOnClickListener
                 // Shows the new state at once; the player confirms a moment later.
@@ -2820,9 +2816,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         setColorFilter(Color.WHITE)
         contentDescription = a.name
         setImageDrawable(appDrawable(info.packageName, a.icon))
+        HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.8f)
         setOnClickListener {
-            haptic()
-            bounce(it)
             val c = currentMusic()?.controller ?: return@setOnClickListener
             c.transportControls.sendCustomAction(a.action, a.extras)
             // The app changes its button (liked, shuffle on) a moment later:
@@ -2905,9 +2900,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val pad = dp(8)
         setPadding(pad, pad, pad, pad)
         layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+        HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.8f)
         setOnClickListener {
-            haptic()
-            bounce(it)
             action()
         }
     }
@@ -2928,21 +2922,21 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Actions: what the app offers first, then the basics.
         val buttons = mutableListOf<View>()
         if (r.replyable) {
-            buttons += pillButton("Reply", Colors.INK, Color.BLACK) {
+            buttons += pillButton("Reply", BtnStyle.MAIN) {
                 IslandStore.dismissNotif()
                 host.openDetail(nf.key)
             }
         }
         val mr = r.markRead
         if (mr != null) {
-            buttons += pillButton("Mark as read", Colors.GRAPHITE, Color.WHITE) {
+            buttons += pillButton("Mark as read", BtnStyle.CLEAR) {
                 host.send(mr)
                 IslandStore.dismissNotif()
             }
         }
         if (buttons.isEmpty()) {
-            buttons += pillButton("Open", Colors.INK, Color.BLACK) { openCurrent() }
-            buttons += pillButton("Dismiss", Colors.GRAPHITE, Color.WHITE) {
+            buttons += pillButton("Open", BtnStyle.MAIN) { openCurrent() }
+            buttons += pillButton("Dismiss", BtnStyle.CLEAR) {
                 host.dismissNotification(nf.key)
                 IslandStore.dismissNotif()
             }
@@ -3115,9 +3109,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 }
                 addView(sized(icon(iconRes, Color.WHITE), dp(18)))
                 addView(spaced(text(14.5f, Color.WHITE, true).apply { text = label }, 8))
+                HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.86f)
                 setOnClickListener {
-                    haptic()
-                    bounce(it)
                     action()
                 }
             }
@@ -3163,9 +3156,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 }
                 box.addView(ic, LinearLayout.LayoutParams(dp(50), dp(50)))
                 box.addView(tx)
+                HaloButtons.react(box, null, { hapticsEnabled }, depth = 0.86f)
                 box.setOnClickListener {
-                    haptic()
-                    bounce(ic)
                     action(ic, tx)
                 }
                 controls.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -3210,9 +3202,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             setColor(color)
         }
         layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+        HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.86f)
         setOnClickListener {
-            haptic()
-            bounce(it)
             action()
         }
     }
@@ -3265,8 +3256,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(14), 0, 0)
         }
-        if (a.snooze != null) buttons.addView(pillButton("Snooze", Color.argb(48, 255, 255, 255), Color.WHITE) { host.send(a.snooze) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
-        buttons.addView(pillButton("Stop", Colors.ORANGE, Color.BLACK) { host.send(a.stop ?: a.contentIntent) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (a.snooze != null) buttons.addView(pillButton("Snooze", BtnStyle.CLEAR) { host.send(a.snooze) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8) })
+        buttons.addView(pillButton("Stop", BtnStyle.WARN) { host.send(a.stop ?: a.contentIntent) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         b.addView(buttons)
         col.addView(b)
         return col
@@ -3328,7 +3319,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val main = i == mainIdx
                 val danger = Regex("stop|cancel|delete|reset", RegexOption.IGNORE_CASE).containsMatchIn(label)
                 row.addView(
-                    pillButton(label, if (main && !danger) Colors.INK else Color.argb(48, 255, 255, 255), if (main && !danger) Color.BLACK else Color.WHITE) { host.send(pi) },
+                    pillButton(label, if (danger) BtnStyle.DANGER else if (main) BtnStyle.MAIN else BtnStyle.CLEAR) { host.send(pi) },
                     LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) },
                 )
             }
@@ -3554,7 +3545,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             clipChildren = false
         }
         // Opens what the app says (once done, usually the file itself).
-        val open = pillButton("Open", Color.WHITE, Color.BLACK) {
+        val open = pillButton("Open", BtnStyle.MAIN) {
             host.send(IslandStore.transfer?.contentIntent ?: t.contentIntent)
         }
         transferOpen = open
@@ -3565,10 +3556,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val danger = l.contains("cancel") || l.contains("delete") || l.contains("stop")
                 val main = l.contains("resume") || l.contains("retry") || l.contains("open") || l.contains("install")
                 val btn = pillButton(label, when {
-                    main -> Color.WHITE
-                    danger -> Color.argb(60, 255, 69, 58)
-                    else -> Color.argb(48, 255, 255, 255)
-                }, if (main) Color.BLACK else if (danger) Color.rgb(255, 120, 110) else Color.WHITE) {
+                    danger -> BtnStyle.DANGER
+                    main -> BtnStyle.MAIN
+                    else -> BtnStyle.CLEAR
+                }) {
                     host.send(pi)
                 }
                 actions.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = dp(8) })
@@ -3771,9 +3762,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                     shape = GradientDrawable.OVAL
                     setColor(if (on) Colors.INK else Colors.GRAPHITE)
                 }
+                HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.86f)
                 setOnClickListener {
-                    haptic()
-                    bounce(it)
                     // Screenshots and Quick Settings taps need the panel out of the way.
                     if (st.def.id == "screenshot" || st.def.id == "record" || st.def.tile.isNotEmpty()) closePanel()
                     host.controlTap(st.def.id)
@@ -3858,7 +3848,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val later = entries.drop(FIRST_GROUPS)
         for ((pkg, group) in now) for (v in groupViews(pkg, group, pkg in openGroups)) list.addView(v)
         if (items.size > 1) {
-            list.addView(pillButton("Clear all", Colors.GRAPHITE, Color.WHITE) {
+            list.addView(pillButton("Clear all", BtnStyle.CLEAR) {
                 if (clearing) return@pillButton
                 clearing = true
                 haptic()
@@ -3924,24 +3914,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * white with black ink and a tiny ×; the battery chip is graphite.
      */
     private fun chip(iconRes: Int, label: String, active: Boolean, onTap: (() -> Unit)? = null): LinearLayout {
-        val fg = if (active) Color.BLACK else Color.WHITE
+        val style = if (active) BtnStyle.MAIN else BtnStyle.CLEAR
+        val fg = style.fg
         val c = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), dp(6), dp(12), dp(6))
-            background = GradientDrawable().apply {
-                setColor(if (active) Colors.INK else Colors.GRAPHITE)
-                cornerRadius = dpf(15f)
-            }
+            background = HaloButtons.background(style, dpf(15f))
         }
         c.addView(sized(icon(iconRes, fg), dp(14)))
         c.addView(spaced(text(12.5f, fg, true).apply { text = label }, 5))
         if (active) c.addView(sized(icon(R.drawable.ic_close, Color.argb(150, 0, 0, 0)), dp(12)).apply {
             (layoutParams as LinearLayout.LayoutParams).marginStart = dp(5)
         })
-        if (onTap != null) c.setOnClickListener {
-            bounce(it)
-            onTap()
+        if (onTap != null) {
+            HaloButtons.react(c, style, { hapticsEnabled })
+            c.setOnClickListener { onTap() }
         }
         return c
     }
@@ -3987,9 +3975,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             setColorFilter(Color.WHITE)
             val pad = dp(7)
             setPadding(pad, pad, pad, pad)
+            HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.86f)
             setOnClickListener {
-                haptic()
-                bounce(it)
                 action()
             }
         }
@@ -4018,8 +4005,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 setColor(Color.argb(60, 255, 255, 255))
                 cornerRadius = dpf(13f)
             }
+            HaloButtons.react(this, null, { hapticsEnabled })
             setOnClickListener {
-                bounce(it)
                 toggleGroup(pkg, open = false)
             }
         }

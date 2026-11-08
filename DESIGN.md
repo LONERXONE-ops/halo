@@ -111,4 +111,15 @@ No separate "Done" pop.
 Wherever an app gives buttons (Pause, Resume and Cancel on a download;
 Call driver on a ride; Snooze and Stop on an alarm; like and shuffle in a
 player), the island shows those same buttons and sends exactly what the app
-would. The main action is a white pill; danger (Cancel, Stop) is red-tinted.
+would.
+
+## Buttons
+
+Every button has the download card's look (`BtnStyle` in `Buttons.kt`):
+the main action is a solid white pill; everything else is clear, a soft
+see-through white; danger (Cancel, Stop, Delete, Decline) is a red tint; a
+ringing alarm's Stop is an orange tint. Calls keep solid red and green.
+
+They react the moment a finger lands: the button sinks to 90%, lights up
+and gives a light tick; on release it springs back past its size and
+settles (420 ms overshoot) with a quick flash. Dragging lets it go.

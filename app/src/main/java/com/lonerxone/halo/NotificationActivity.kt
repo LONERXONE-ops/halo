@@ -78,6 +78,8 @@ class NotificationActivity : Activity() {
             if (t >= 1f) 1f else (1.0 - Math.exp((-k * t).toDouble()) * Math.cos((w * t).toDouble())).toFloat()
     }
 
+    private val haptics by lazy { Prefs.get(this).getBoolean(Prefs.HAPTICS, true) }
+
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
     private fun dpf(v: Float): Float = v * resources.displayMetrics.density
 
@@ -199,10 +201,13 @@ class NotificationActivity : Activity() {
         val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
         var dx = 0f
         var dy = 0f
-        val press = Runnable { animate().scaleX(0.92f).scaleY(0.92f).setDuration(90L).setInterpolator(DecelerateInterpolator()).start() }
+        val press = Runnable {
+            animate().scaleX(0.88f).scaleY(0.88f).setDuration(90L).setInterpolator(DecelerateInterpolator(1.6f)).start()
+            if (haptics) performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        }
         fun release(v: View) {
             v.removeCallbacks(press)
-            v.animate().scaleX(1f).scaleY(1f).setDuration(220L).setInterpolator(DecelerateInterpolator(2f)).start()
+            v.animate().scaleX(1f).scaleY(1f).setDuration(420L).setInterpolator(android.view.animation.OvershootInterpolator(3.4f)).start()
         }
         setOnTouchListener { v, e ->
             when (e.actionMasked) {
@@ -557,8 +562,8 @@ class NotificationActivity : Activity() {
                 val c = label(r, 13.5f, text1, true).apply {
                     gravity = Gravity.CENTER
                     setPadding(dp(14), dp(8), dp(14), dp(8))
-                    background = pill(Color.argb(120, 40, 40, 46), dpf(18f))
-                    pressy()
+                    background = pill(BtnStyle.CLEAR.bg, dpf(18f), stroke = false)
+                    HaloButtons.react(this, BtnStyle.CLEAR, { haptics })
                     setOnClickListener { v ->
                         // The chip jumps up into the chat as it's sent.
                         v.animate().translationY(-dpf(10f)).scaleX(1.08f).scaleY(1.08f).setDuration(120L).withEndAction {
@@ -609,7 +614,7 @@ class NotificationActivity : Activity() {
                 setColorFilter(Color.BLACK)
             }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginEnd = dp(8) })
             addView(label("Open", 15f, Color.BLACK, true))
-            pressy()
+            HaloButtons.react(this, BtnStyle.MAIN, { haptics })
             setOnClickListener {
                 // Opens the exact chat or post; falls back to the app itself.
                 if (!Launch.send(this@NotificationActivity, n.contentIntent)) Launch.openApp(this@NotificationActivity, sbn.packageName)
@@ -635,7 +640,7 @@ class NotificationActivity : Activity() {
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 setPadding(dp(2), dp(4), dp(2), 0)
             })
-            t.pressy()
+            HaloButtons.react(t, null, { haptics }, depth = 0.86f)
             bar.addView(t, LinearLayout.LayoutParams(0, dp(52), 1f))
             tiles += t
         }
