@@ -382,6 +382,7 @@ class MainActivity : Activity() {
                 if (p == Page.CAMERA) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
                 // The island shows the defaults straight away.
                 if (p == Page.LOOK) IslandStore.previewPop(card = false, replay = true)
+                if (p == Page.PICTURES && Prefs.get(this).getLong(Prefs.ISLAND_PIC, 0L) != 0L) IslandStore.previewPop(card = false, replay = false)
                 Toast.makeText(this, "${p.title} is back to default", Toast.LENGTH_SHORT).show()
                 render()
             }
@@ -682,7 +683,7 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Fine sizing"))
         col.addView(group(
             sliderRow("Pill height", Prefs.CAP_H, 100, 80, 125, "%"),
-            sliderRow("Pill width", Prefs.CAP_W, 100, 85, 125, "%"),
+            sliderRow("Pill width", Prefs.CAP_W, 100, 55, 125, "%"),
             sliderRow("Open card width", Prefs.CARD_W, 100, 80, 100, "%"),
         ))
         col.addView(footnote("Optional. 100% is the standard size. The island shows a preview while you adjust, so you see each step as you make it. Use − and + for one step at a time."))
@@ -710,6 +711,7 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------------
 
     private fun picturesPage(col: LinearLayout) {
+        dimPreviews.clear()
         pageHeader(col, "Pictures", "Make the island yours")
         col.addView(sectionTitle("Island"))
         col.addView(pictureCard(Prefs.ISLAND_PIC, "Fills the island. Pick from wallpapers made for its wide shape, or use your own photo.", landscape = true))
@@ -719,6 +721,9 @@ class MainActivity : Activity() {
         col.addView(group(sliderRow("Dim pictures", Prefs.PIC_DIM, 45, 0, 90, "%")))
         col.addView(footnote("The camera circle always stays pure black, so it keeps hiding the lens."))
     }
+
+    /** The picture previews on the Pictures page, so Dim pictures darkens them live. */
+    private val dimPreviews = ArrayList<android.widget.ImageView>()
 
     private fun pictureCard(key: String, hint: String, landscape: Boolean): View {
         val c = card().apply { setPadding(dp(18), dp(18), dp(18), dp(16)) }
@@ -743,6 +748,7 @@ class MainActivity : Activity() {
             if (has) {
                 try {
                     setImageBitmap(android.graphics.BitmapFactory.decodeFile(file.absolutePath))
+                    dimPreviews += this
                     setColorFilter(Color.argb((255 * Prefs.get(this@MainActivity).getInt(Prefs.PIC_DIM, 45) / 100f).toInt(), 0, 0, 0), android.graphics.PorterDuff.Mode.SRC_ATOP)
                 } catch (_: Throwable) {
                 }
@@ -1679,6 +1685,12 @@ class MainActivity : Activity() {
                 IslandStore.previewPop(card = false, replay = false)
             Prefs.MOTION_SPEED, Prefs.MOTION_BOUNCE -> IslandStore.previewPop(card = false, replay = true)
             Prefs.CARD_W -> IslandStore.previewPop(card = true, replay = false)
+            Prefs.PIC_DIM -> {
+                // The pictures on this page darken as you slide, and the island shows its own.
+                val a = (255 * Prefs.get(this).getInt(Prefs.PIC_DIM, 45) / 100f).toInt()
+                dimPreviews.forEach { it.setColorFilter(Color.argb(a, 0, 0, 0), android.graphics.PorterDuff.Mode.SRC_ATOP) }
+                if (Prefs.get(this).getLong(Prefs.ISLAND_PIC, 0L) != 0L) IslandStore.previewPop(card = false, replay = false)
+            }
         }
     }
 

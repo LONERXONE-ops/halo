@@ -78,6 +78,9 @@ Spatial springs, after Material 3 Expressive's tokens:
   ripples out from it like a ping.
 - Tap or pull down: it opens into the full card. Swipe up: dismiss. Hold:
   open the app.
+- Closing an opened alert (time's up, tap outside, Mark as read): the card
+  shrinks back into its pill, holds a beat, then tucks into the camera.
+  A swipe up still flicks it straight off; a call or alarm cuts in at once.
 
 ## Quick moments
 

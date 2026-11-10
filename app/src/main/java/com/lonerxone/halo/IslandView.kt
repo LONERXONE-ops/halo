@@ -295,7 +295,39 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private var noteOpen = false
     private var seenArrival = -1
 
+    /** An open notification closing: it shrinks back into its pill first; this is what comes after. */
+    private var afterPill: Triple<Content, Bubble?, Boolean>? = null
+    private val leavePill = Runnable {
+        afterPill?.let { (c, b, h) ->
+            afterPill = null
+            setState(c, b, h)
+        }
+    }
+
     fun setState(newContent: Content, newBubble: Bubble?, hide: Boolean) {
+        val urgent = hide || newContent is Content.Call || newContent is Content.Alarm
+        // Already on the way out through the pill: just remember what comes next
+        // (a call or alarm cuts in at once).
+        if (afterPill != null) {
+            if (!urgent && !(newContent is Content.Note && newContent.note.key != (content as? Content.Note)?.note?.key)) {
+                afterPill = Triple(newContent, newBubble, hide)
+                return
+            }
+            removeCallbacks(leavePill)
+            afterPill = null
+        }
+        // An opened notification leaving: card → back to its pill → then away,
+        // instead of collapsing straight into the camera. A swipe away still flicks it off.
+        val cur = content
+        if (cur is Content.Note && mode == Mode.EXPANDED && noteOpen && !urgent && flingVy == 0f && animScale() > 0f &&
+            !(newContent is Content.Note && newContent.note.key == cur.note.key)
+        ) {
+            noteOpen = false
+            afterPill = Triple(newContent, newBubble, hide)
+            refresh()
+            postDelayed(leavePill, 700L)
+            return
+        }
         if (newContent is Content.Note) {
             if (IslandStore.notifArrival != seenArrival) {
                 seenArrival = IslandStore.notifArrival
@@ -1875,7 +1907,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
     private fun compactWidthFor(s: Sides): Float {
-        val side = max(widthOf(s.left, s.leftSize) + dp(8) + dp(10), widthOf(s.right, s.rightW) + dp(12) + dp(10))
+        // Below 100% the pill width also tightens the room around the content (the
+        // content itself never gets cut), so the slider keeps working all the way down.
+        val room = capW.coerceIn(0.35f, 1f)
+        val side = max(widthOf(s.left, s.leftSize) + (dp(8) + dp(10)) * room, widthOf(s.right, s.rightW) + (dp(12) + dp(10)) * room)
         return min(max(baseCompactW(), wrapW() + 2f * side * max(capW, 1f)), expandedW())
     }
 

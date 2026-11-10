@@ -678,14 +678,14 @@ class HaloService : AccessibilityService(), IslandView.Host {
             val old = p.getInt(Prefs.SCALE, 100)
             val e = p.edit().remove(Prefs.SCALE)
             if (old != 100 && !p.contains(Prefs.CAP_H)) e.putInt(Prefs.CAP_H, old.coerceIn(80, 125))
-            if (old != 100 && !p.contains(Prefs.CAP_W)) e.putInt(Prefs.CAP_W, old.coerceIn(85, 125))
+            if (old != 100 && !p.contains(Prefs.CAP_W)) e.putInt(Prefs.CAP_W, old.coerceIn(55, 125))
             e.apply()
         }
         v.sizeScale = 1f
         v.capH = p.getInt(Prefs.CAP_H, 100).coerceIn(80, 125) / 100f
         v.motionSpeed = HaloTheme.speed(p.getInt(Prefs.MOTION_SPEED, 1))
         v.motionBounce = HaloTheme.bounce(p.getInt(Prefs.MOTION_BOUNCE, 1))
-        v.capW = p.getInt(Prefs.CAP_W, 100).coerceIn(85, 125) / 100f
+        v.capW = p.getInt(Prefs.CAP_W, 100).coerceIn(55, 125) / 100f
         v.cardW = p.getInt(Prefs.CARD_W, 100).coerceIn(80, 100) / 100f
         val d = resources.displayMetrics.density
         v.offsetX = p.getInt(Prefs.OFFSET_X, 0) * d
