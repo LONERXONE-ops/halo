@@ -6,49 +6,84 @@ package com.lonerxone.halo
  * from LiveBridge and HyperBridge's feature lists, no code from them).
  */
 object Otp {
-    /** Words that say "this message carries a code". */
-    private val KEYWORDS = Regex(
-        "\\b(code|otp|one[- ]?time|verification|verify|passcode|pass code|pin|token|security|login|log in|sign[- ]?in|authenticat\\w*|2fa|confirm\\w*|kode|c[oó]digo)\\b",
-        RegexOption.IGNORE_CASE,
+    private val I = RegexOption.IGNORE_CASE
+
+    /** Words that clearly name a code. */
+    private val KEY = Regex(
+        "\\b(otp|one[- ]?time (?:password|passcode|pin|code)|verification (?:code|pin|number)|security code|login code|log[- ]?in code|sign[- ]?in code|confirmation code|auth(?:entication|orization)? code|access code|passcode|2fa code|2-step code|token|activation code|reset code|transaction pin|c[oó]digo|kode|to verify|to confirm|to log ?in|to sign ?in)\\b",
+        I,
     )
 
-    /** Words that leave no doubt (a year like 2026 only counts as a code next to one of these). */
-    private val STRONG = Regex("\\b(code|otp|one[- ]?time|verification|passcode|token|2fa)\\b", RegexOption.IGNORE_CASE)
+    /** "code" or "pin" on their own: only right next to the number, in a message that reads like a service. */
+    private val WEAK = Regex("\\b(code|pin)\\b", I)
+    private val SERVICE = Regex("\\b(your|use|enter|expires?|valid|do not share|don'?t share|never share|verify|verification|log ?in|sign[- ]?in|requested)\\b", I)
 
-    /** A code: 4 to 8 digits, also written as 123-456 or 123 456, or Google's G-123456. */
-    private val CANDIDATE = Regex("(?<![\\d*xX#.,])(?:G-)?(\\d{3}[- ]\\d{3}|\\d{4,8})(?![\\d.,]\\d)")
+    /** Codes that aren't one-time codes. */
+    private val NOT_CODE = Regex(
+        "\\b(promo|discount|referral|coupon|voucher|invite|gift|postal|zip|post|area|country|dress|source|qr|bar|morse|colou?r|error|status|dial|ussd|shortcode|short code|reference|ref|order|tracking|booking)\\s*(code|number|no\\.?)?\\b",
+        I,
+    )
 
-    /** Money and account words right before a number mean it isn't a code. */
-    private val NOT_BEFORE = Regex("(₦|ngn|naira|\\$|usd|€|eur|£|gbp|rs\\.?|amount|bal(ance)?|acct|account|a/c|ending( in)?|card|no\\.?|number|tel|call|ref(erence)?)\\s*[:#]?\\s*$", RegexOption.IGNORE_CASE)
+    /** A code: 4 to 8 digits (also 123-456, 123 456, G-123456), not part of an amount, time, unit or longer number. */
+    private val CANDIDATE = Regex(
+        "(?<![\\w*#.,/:+-])(?:G-)?(\\d{3}[- ]\\d{3}|\\d{4,8})(?![\\w,/:%-]|[.]\\d|\\s?(?:%|min|mins|minutes|hrs?|hours?|secs?|seconds?|days?|weeks?|km|kg|m\\b|steps|naira|ngn|usd|dollars?|k\\b|gb|mb|followers|likes|views|people|times|am\\b|pm\\b|units|pcs|items))",
+        I,
+    )
+
+    /** Money, account, phone, address and time words right before a number mean it isn't a code. */
+    private val NOT_BEFORE = Regex(
+        "(₦|ngn|naira|\\$|usd|€|eur|£|gbp|rs\\.?|amount|bal(ance)?|acct|account|a/c|ending( in)?|card|no\\.?|number|tel|phone|call|whatsapp|ref(erence)?|order|room|flat|house|plot|block|bus|route|year|in|since|by|at)\\s*[:#]?\\s*$",
+        I,
+    )
 
     /**
-     * The code in this message, or null. The number nearest the code word
-     * wins (so "Your code is 4821. Don't share. Ref 99231" gives 4821).
+     * The one-time code in this message, or null. Only the message itself
+     * is read (never the chat's name). The number has to sit right after a
+     * code word (within 40 characters) or right before it (within 30); a
+     * plain "code" or "pin" counts only within 15 characters and in a
+     * message that reads like a service ("your", "don't share", "expires").
      */
-    fun find(title: String, text: String): String? {
-        val all = "$title\n$text"
-        val kw = KEYWORDS.findAll(all).map { it.range.first }.toList()
-        if (kw.isEmpty()) return null
+    fun find(@Suppress("UNUSED_PARAMETER") title: String, text: String): String? {
+        val msg = text.trim()
+        if (msg.isEmpty()) return null
+        val hits = KEY.findAll(msg).map { it.range.first to it.range.last + 1 }.toList()
+        val weak = if (SERVICE.containsMatchIn(msg)) {
+            WEAK.findAll(msg).filter { m ->
+                val before = msg.substring(maxOf(0, m.range.first - 25), m.range.first)
+                !NOT_CODE.containsMatchIn(before + m.value)
+            }.map { it.range.first to it.range.last + 1 }.toList()
+        } else emptyList()
+        if (hits.isEmpty() && weak.isEmpty()) return null
+        val all = hits + weak
         var best: String? = null
         var bestDist = Int.MAX_VALUE
-        for (m in CANDIDATE.findAll(all)) {
+        for (m in CANDIDATE.findAll(msg)) {
             val raw = m.groupValues[1]
             val digits = raw.filter { it.isDigit() }
             if (digits.length !in 4..8) continue
-            val before = all.substring(0, m.range.first).takeLast(14)
-            if (NOT_BEFORE.containsMatchIn(before)) continue
-            // A year on its own (2026) or a clock time (12:30) isn't a code.
-            if (digits.length == 4 && Regex("^(19|20)\\d\\d$").matches(digits) && !STRONG.containsMatchIn(all)) continue
-            if (m.range.last + 1 < all.length && all[m.range.last + 1] == ':') continue
-            if (m.range.first > 0 && all[m.range.first - 1] == ':') continue
-            val dist = kw.minOf { k -> kotlin.math.abs(k - m.range.first) }
+            val start = m.range.first
+            val end = m.range.last + 1
+            if (NOT_BEFORE.containsMatchIn(msg.substring(0, start).takeLast(16))) continue
+            if (Regex("(19|20)\\d\\d").matches(digits) && !KEY.containsMatchIn(msg)) continue
+            var ok = false
+            for ((s, e) in weak) {
+                if (start >= e && start - e <= 15) ok = true
+                if (end <= s && s - end <= 15) ok = true
+            }
+            for ((s, e) in hits) {
+                if (start >= e && start - e <= 40) ok = true
+                if (end <= s && s - end <= 30) ok = true
+            }
+            if (!ok) continue
+            // 482 913 style (could be part of a phone number): only right beside the word.
+            if ((' ' in raw || '-' in raw) && all.none { (s, e) -> (start >= e && start - e <= 20) || (end <= s && s - end <= 4) }) continue
+            val dist = all.minOf { (s, e) -> if (start >= e) start - e else s - end + 10 }
             if (dist < bestDist) {
                 bestDist = dist
                 best = digits
             }
         }
-        // The code has to sit near the word (not a number three sentences away).
-        return best?.takeIf { bestDist <= 80 }
+        return best
     }
 }
 

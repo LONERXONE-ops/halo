@@ -747,7 +747,7 @@ class HaloNotificationListener : NotificationListenerService() {
 
         // A one-time code: shown big on the island with a Copy button (instead of a plain pop).
         if (prefs.getBoolean(Prefs.OTP, true) && !hideText) {
-            val code = Otp.find(title, text + " " + rich.text)
+            val code = Otp.find(title, text)
             if (code != null) {
                 IslandStore.setOtp(OtpInfo(sbn.key, pkg, app, rich.appIcon, code, n.contentIntent))
                 Debug.lastNotification = "$app: code"

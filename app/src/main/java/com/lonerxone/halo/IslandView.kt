@@ -203,7 +203,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     // 0 w, 1 h, 2 radius, 3 alpha, 4 glass, 5 shadow, 6 centre y, 7 bubble alpha, 8 bubble size, 9 edge
     // 10 = the x the pill is centred on (before it is kept on screen).
     // 11 = how much of the music cover shows (0 = your island picture, 1 = the cover).
-    private val springs = Array(12) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8, 10)) 0.4f else 0.002f) }
+    // 12 = how far the side bubble has split off the pill (0 inside it, 1 apart), for the droplet neck.
+    private val springs = Array(13) { i -> Spring(0f, if (i in setOf(0, 1, 2, 6, 8, 10)) 0.4f else 0.002f) }
     private fun v(i: Int) = springs[i].value
     private fun t(i: Int) = springs[i].target
     private val startW = FloatArray(2)
@@ -984,6 +985,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val before = t(7)
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
         springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.36f)
+        springs[12].to(if (show) 1f else 0f, k * 0.62f, if (show) 0.42f else 0.62f)
         if (before != t(7)) {
             updateTouchArea()
             startFrames()
@@ -1063,6 +1065,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
         springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.36f)
+        springs[12].to(if (show) 1f else 0f, k * 0.62f, if (show) 0.42f else 0.62f)
         updateTouchArea()
 
         if (scale <= 0f || !isAttachedToWindow) {
@@ -1157,7 +1160,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val a = v(3).coerceIn(0f, 1f)
         if (a <= 0.01f || v(0) < 1f || v(1) < 1f) return
         val w = v(0)
-        val h = v(1)
+        val h = v(1) * liquidSquash(w, v(1))
         pillRect(w, h, v(6), rect)
         val r = min(max(v(2), 0f), h / 2f)
         val glass = v(4).coerceIn(0f, 1f)
@@ -1395,14 +1398,93 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         strokeWidth = 2.5f * resources.displayMetrics.density
     }
 
+    private val dropRect = RectF()
+    private val neckPath = android.graphics.Path()
+
+    /**
+     * Liquid squash and stretch: while the pill is quickly getting wider it
+     * gets a little thinner (and the other way round), like a drop of water
+     * keeping its volume, then springs back. Only the small shapes; cards
+     * stay steady so their content isn't squeezed.
+     */
+    private fun liquidSquash(w: Float, h: Float): Float {
+        if (h > dpf(90f) || w < 1f) return 1f
+        val st = (springs[0].velocity / max(w, dpf(40f)) * 0.034f).coerceIn(-0.13f, 0.13f)
+        return 1f - st
+    }
+
+    /**
+     * The gooey neck between two circles (a metaball bridge): [spread] 0
+     * leaves no neck, around 0.6 a thick one. Null when they're too far apart.
+     */
+    private fun metaball(x1: Float, y1: Float, r1: Float, x2: Float, y2: Float, r2: Float, spread: Float): android.graphics.Path? {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+        if (spread <= 0.01f || dist <= kotlin.math.abs(r1 - r2) || dist > (r1 + r2) * 2.6f || r1 <= 0f || r2 <= 0f) return null
+        val pi = Math.PI.toFloat()
+        val u1: Float
+        val u2: Float
+        if (dist < r1 + r2) {
+            u1 = kotlin.math.acos(((r1 * r1 + dist * dist - r2 * r2) / (2 * r1 * dist)).coerceIn(-1f, 1f))
+            u2 = kotlin.math.acos(((r2 * r2 + dist * dist - r1 * r1) / (2 * r2 * dist)).coerceIn(-1f, 1f))
+        } else {
+            u1 = 0f
+            u2 = 0f
+        }
+        val between = kotlin.math.atan2(dy, dx)
+        val maxSpread = kotlin.math.acos(((r1 - r2) / dist).coerceIn(-1f, 1f))
+        val a1 = between + u1 + (maxSpread - u1) * spread
+        val a2 = between - u1 - (maxSpread - u1) * spread
+        val a3 = between + pi - u2 - (pi - u2 - maxSpread) * spread
+        val a4 = between - pi + u2 + (pi - u2 - maxSpread) * spread
+        fun px(cx: Float, r: Float, a: Float) = cx + r * kotlin.math.cos(a)
+        fun py(cy: Float, r: Float, a: Float) = cy + r * kotlin.math.sin(a)
+        val p1x = px(x1, r1, a1); val p1y = py(y1, r1, a1)
+        val p2x = px(x1, r1, a2); val p2y = py(y1, r1, a2)
+        val p3x = px(x2, r2, a3); val p3y = py(y2, r2, a3)
+        val p4x = px(x2, r2, a4); val p4y = py(y2, r2, a4)
+        val total = r1 + r2
+        val d13 = kotlin.math.sqrt((p3x - p1x) * (p3x - p1x) + (p3y - p1y) * (p3y - p1y))
+        val hs = min(spread * 2.4f, d13 / total) * min(1f, dist * 2f / total)
+        val h1 = r1 * hs
+        val h2 = r2 * hs
+        neckPath.reset()
+        neckPath.moveTo(p1x, p1y)
+        neckPath.cubicTo(
+            px(p1x, h1, a1 - pi / 2), py(p1y, h1, a1 - pi / 2),
+            px(p3x, h2, a3 + pi / 2), py(p3y, h2, a3 + pi / 2),
+            p3x, p3y,
+        )
+        neckPath.lineTo(p4x, p4y)
+        neckPath.cubicTo(
+            px(p4x, h2, a4 - pi / 2), py(p4y, h2, a4 - pi / 2),
+            px(p2x, h1, a2 + pi / 2), py(p2y, h1, a2 + pi / 2),
+            p2x, p2y,
+        )
+        neckPath.close()
+        return neckPath
+    }
+
     private fun drawBubble(canvas: Canvas, pillW: Float, a: Float) {
         val b = bubble ?: return
         val ba = (v(7) * a).coerceIn(0f, 1f)
         if (ba <= 0.01f) return
         val d = v(8)
-        val bx = bubbleCenterX(pillW, d)
         val by = v(6)
+        // Liquid: the bubble squeezes out of the pill's end like a droplet,
+        // joined by a neck that thins and snaps, and is drawn back in the same way.
+        val ph = v(1) * liquidSquash(pillW, v(1))
+        pillRect(pillW, ph, by, dropRect)
+        val sp = v(12).coerceIn(-0.25f, 1.35f)
+        val from = dropRect.right - d / 2f - dpf(1f)
+        val bx = from + (bubbleCenterX(pillW, d) - from) * sp
         bubblePaint.alpha = (255 * ba).toInt()
+        if (sp < 0.985f && sp > 0.02f) {
+            val r1 = min(ph / 2f, dropRect.width() / 2f)
+            val neck = metaball(dropRect.right - r1, by, r1, bx, by, d / 2f, 0.62f * (1f - sp.coerceIn(0f, 1f)))
+            if (neck != null) canvas.drawPath(neck, bubblePaint)
+        }
         canvas.drawCircle(bx, by, d / 2f, bubblePaint)
         // Your island picture continues into the bubble (the same sheet as the pill).
         val ish = islandShader
