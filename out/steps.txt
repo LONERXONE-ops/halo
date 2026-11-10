@@ -1,0 +1,63 @@
+== installing
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+[ ] com.android.internal.display.cutout.emulation.corner
+[ ] com.android.internal.display.cutout.emulation.double
+[ ] com.android.internal.display.cutout.emulation.hole
+[ ] com.android.internal.display.cutout.emulation.tall
+[x] com.android.internal.display.cutout.emulation.emu01
+[ ] com.android.internal.display.cutout.emulation.waterfall
+== permissions
+     Bound services:{Service[label=Halo, feedbackType[FEEDBACK_GENERIC], capabilities=9, eventTypes=[TYPE_WINDOW_STATE_CHANGED, TYPE_WINDOWS_CHANGED], notificationTimeout=100, requestA11yBtn=false]}
+     Enabled services:{{com.lonerxone.halo/com.lonerxone.halo.HaloService}}
+[com.google.android.inputmethod.latin][com.google.android.apps.wellbeing][com.lonerxone.halo][com.android.systemui][com.google.android.contacts][com.google.android.apps.nexuslauncher][com.google.android.googlequicksearchbox][com.google.android.apps.nexuslauncher][com.google.android.apps.nexuslauncher][com.google.android.as][com.google.android.googlequicksearchbox][com.google.android.apps.nexuslauncher][com.google.android.youtube][com.google.android.apps.youtube.music][com.google.android.apps.nexuslauncher]}]
+== screen 720x1600 cutout: boundingRect={Bounds=[Rect(0, 0 - 0, 0), Rect(492, 0 - 610, 128), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]
+== camera at 367,42, pill at 360,42
+== shot 01_home
+== shot 02_home_swipe_up
+== shot 03_halo_app
+== shot 04_halo_app_scrolled
+== shot 05_idle_island
+== mark message arrives
+== shot 06_msg_0.4s
+== shot 07_msg_pill
+== mark tap pill
+== shot 08_msg_open
+== mark swipe up dismiss
+== shot 09_msg_dismissed
+== mark download 30
+== shot 10_dl_30
+== shot 11_dl_70
+== mark tap download
+== shot 12_dl_open
+== mark download done
+== shot 13_done_0.25s
+== shot 14_done_0.55s
+== shot 15_done_0.95s
+== shot 16_done_2s
+== shot 17_done_gone
+== mark download on the pill
+== shot 18_pill_dl_40
+== shot 19_pill_done_a
+== shot 20_pill_done_b
+== shot 21_pill_done_c
+== mark notification center
+== shot 22_panel_0.5s
+== shot 23_panel
+== shot 24_panel_closed
+== mark music
+== shot 25_music_pill
+== mark tap music
+== shot 26_music_open
+== shot 27_music_closed
+== mark otp
+== shot 28_otp_pill
+== shot 29_otp_open
+== mark second message
+== shot 30_msg2_pill
+== shot 31_end
+== done

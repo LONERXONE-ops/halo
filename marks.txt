@@ -1,0 +1,12 @@
+2.011601529 message arrives
+6.138910772 tap pill
+11.921698641 swipe up dismiss
+14.685624140 download 30
+19.546625378 tap download
+23.533189210 download done
+32.096788860 download on the pill
+44.589557447 notification center
+51.734566561 music
+56.218274374 tap music
+62.991239883 otp
+71.777185052 second message
