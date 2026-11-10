@@ -614,7 +614,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 val w = compactWidthFor(sides)
                 val cy = cyFor(m, h)
                 swapContent(sides.build(), w.toInt(), h.toInt(), h / 2f, cy)
-                animateTo(w, h, h / 2f, 1f, 0f, 0f, 0f, cy, grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
+                animateTo(w, h, h / 2f, 1f, glassStrength, 0f, 0f, cy, grow = previous.ordinal < Mode.COMPACT.ordinal || content is Content.Popup)
                 if (previous == Mode.EXPANDED || previous == Mode.PANEL || content is Content.Popup) haptic()
                 if (content is Content.Note && (content as Content.Note).note.silent.not() && previous != Mode.EXPANDED) haptic()
             }
@@ -1234,7 +1234,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val edge = v(9).coerceIn(0f, 1f)
         if (mode != Mode.IDLE && mode != Mode.HIDDEN) {
             val grow = growth()
-            val shine = a * grow * max(edge, 0.6f)
+            // The glass light (rim and sheen) comes with the Glass setting; at 0 the island
+            // is clean black with no border.
+            val shine = a * grow * v(4).coerceIn(0f, 1f) * (0.6f + 0.4f * edge)
             if (shine > 0.02f) drawShine(canvas, r, shine)
         } else if (edge > 0.02f) {
             edgePaint.color = Color.argb((26 * edge * a).toInt(), 255, 255, 255)
@@ -1414,8 +1416,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             0f, 0f, 0f, 1f,
             intArrayOf(
                 Color.argb(120, Color.red(c) / 3, Color.green(c) / 3, Color.blue(c) / 3),
-                Color.argb(165, 0, 0, 0),
-                Color.argb(225, 0, 0, 0),
+                Color.argb(120, 0, 0, 0),
+                Color.argb(150, Color.red(c) / 5, Color.green(c) / 5, Color.blue(c) / 5),
             ),
             floatArrayOf(0f, 0.55f, 1f),
             Shader.TileMode.CLAMP,
@@ -2043,6 +2045,11 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * the title slides in, then the right side.
      */
     private fun compactPop(pop: Pop): Sides {
+        // Settings preview: built exactly like a notification pill, so it's the size your pills really are.
+        if (pop.kind == "preview") {
+            val av = roundImage(null, dpf(12f), Colors.GRAPHITE, R.drawable.ic_bell)
+            return Sides(av, null, dp(24))
+        }
         val accent = if (pop.accent == 0) Colors.INK else pop.accent
         // Left: just the icon in a small glowing badge (the right side says what happened).
         val badgeBox = FrameLayout(context).apply { clipChildren = false }
@@ -2860,9 +2867,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (p.getBoolean(Prefs.MP_TINT, true)) {
             root.addView(View(context).apply {
                 background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(
-                    Color.argb(140, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    Color.argb(60, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    Color.argb(20, 0, 0, 0),
+                    Color.argb(130, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Color.argb(55, Color.red(accent), Color.green(accent), Color.blue(accent)),
+                    Color.argb(70, Color.red(accent), Color.green(accent), Color.blue(accent)),
                 ))
             }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
@@ -2872,7 +2879,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 playing = info.playing
             }
             ambient = amb
-            root.addView(amb, LayoutParams(LayoutParams.MATCH_PARENT, dp(64), Gravity.BOTTOM))
+            root.addView(amb, LayoutParams(LayoutParams.MATCH_PARENT, dp(96), Gravity.BOTTOM))
         } else ambient = null
         val col = card()
         val wv = WaveformView(context).apply {
@@ -3939,105 +3946,136 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val items = host.panelItems()
         val col = card()
 
-        val date = text(13f, white70, true).apply { text = DateFormat.format("EEE d MMM", Date()) }
-        val clock = text(14f, Color.WHITE, true)
-        clockText = clock
-        col.addView(cameraRow(date, clock, w, top))
+        // ----- Top: date and battery beside the camera, then a big clock -----
+        val date = text(13f, white70, true).apply { text = DateFormat.format("EEEE, d MMMM", Date()) }
+        val batt = hRow()
+        batt.addView(icon(R.drawable.ic_battery_full, Color.WHITE).apply { tag = "batt" }, LinearLayout.LayoutParams(dp(15), dp(15)))
+        val battText = text(12.5f, Color.WHITE, true).apply { fontFeatureSettings = "tnum" }
+        batt.addView(spaced(battText, 4))
+        batteryText = battText
+        col.addView(cameraRow(date, batt, w, top))
 
+        val hero = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            setPadding(dp(20), dp(2), dp(20), dp(4))
+        }
+        val clock = text(40f, Color.WHITE, true).apply {
+            fontFeatureSettings = "tnum"
+            includeFontPadding = false
+            letterSpacing = -0.02f
+        }
+        clockText = clock
+        hero.addView(clock)
+        hero.addView(text(13f, white55, false).apply {
+            text = when (items.size) {
+                0 -> "Nothing new"
+                1 -> "1 notification"
+                else -> "${items.size} notifications"
+            }
+            setPadding(dp(12), 0, 0, dp(7))
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        col.addView(hero)
+
+        // ----- Your quick controls: round tiles with their names, spread evenly -----
+        val controls = host.controlStates()
+        if (controls.isNotEmpty()) {
+            val grid = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(dp(12), dp(10), dp(12), dp(2))
+            }
+            for (st in controls) {
+                val on = st.on == true
+                val tile = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                }
+                val circle = ImageView(context).apply {
+                    setImageResource(st.def.icon)
+                    setColorFilter(if (on) Color.BLACK else Color.WHITE)
+                    val pad = dp(11)
+                    setPadding(pad, pad, pad, pad)
+                    contentDescription = st.def.label
+                    background = HaloButtons.background(if (on) BtnStyle.MAIN else BtnStyle.CLEAR, dpf(22f))
+                }
+                tile.addView(circle, LinearLayout.LayoutParams(dp(44), dp(44)))
+                tile.addView(text(10.5f, if (on) Color.WHITE else white70, on).apply {
+                    text = st.def.label
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(dp(2), dp(5), dp(2), 0)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                HaloButtons.react(tile, null, { hapticsEnabled }, depth = 0.86f)
+                tile.setOnClickListener {
+                    // Screenshots and Quick Settings taps need the panel out of the way.
+                    if (st.def.id == "screenshot" || st.def.id == "record" || st.def.tile.isNotEmpty()) closePanel()
+                    host.controlTap(st.def.id)
+                }
+                grid.addView(tile, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            col.addView(grid)
+        }
+
+        // ----- What's on right now (flashlight, Do Not Disturb, hotspot…): tap to switch off -----
+        val quick = host.quickStates()
+        if (quick.isNotEmpty()) {
+            val chips = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), dp(10), dp(14), dp(2))
+            }
+            quick.forEachIndexed { i, q ->
+                chips.addView(chip(q.icon, q.label, active = true) {
+                    haptic()
+                    host.quickAction(q.id)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) marginStart = dp(8) })
+            }
+            col.addView(android.widget.HorizontalScrollView(context).apply {
+                isHorizontalFadingEdgeEnabled = true
+                setFadingEdgeLength((24 * resources.displayMetrics.density).toInt())
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(chips)
+            })
+        }
+
+        // ----- "Notifications" with the count, and Clear all on the right -----
+        var listRef: LinearLayout? = null
         val header = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(6), dp(12), dp(2))
+            setPadding(dp(20), dp(14), dp(14), dp(2))
         }
-        // The title shrinks to make room for your control buttons.
-        val nControls = host.controlStates().size
-        header.addView(text(if (nControls >= 3) 16f else 19f, Color.WHITE, true).apply {
-            text = "Notifications"
-            maxLines = 1
-            setAutoSizeTextTypeUniformWithConfiguration(11, if (nControls >= 3) 16 else 19, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
-            gravity = Gravity.CENTER_VERTICAL
-        }, if (nControls == 0) LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)) else LinearLayout.LayoutParams(0, dp(28), 1f))
+        header.addView(text(15f, Color.WHITE, true).apply { text = "Notifications" })
         if (items.isNotEmpty()) {
             header.addView(text(11f, Color.WHITE, true).apply {
                 countText = this
                 text = items.size.toString()
                 gravity = Gravity.CENTER
                 setPadding(dp(7), dp(2), dp(7), dp(2))
-                background = GradientDrawable().apply {
-                    setColor(Colors.GRAPHITE)
-                    cornerRadius = dpf(9f)
-                }
+                background = HaloButtons.background(BtnStyle.CLEAR, dpf(9f))
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         }
-        if (nControls == 0) header.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-        // Your controls: white when on, graphite when off.
-        for (st in host.controlStates()) {
-            val on = st.on == true
-            header.addView(ImageView(context).apply {
-                setImageResource(st.def.icon)
-                setColorFilter(if (on) Color.BLACK else Color.WHITE)
-                val pad = dp(7)
-                setPadding(pad, pad, pad, pad)
-                contentDescription = st.def.label
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(if (on) Colors.INK else Colors.GRAPHITE)
-                }
-                HaloButtons.react(this, null, { hapticsEnabled }, depth = 0.86f)
-                setOnClickListener {
-                    // Screenshots and Quick Settings taps need the panel out of the way.
-                    if (st.def.id == "screenshot" || st.def.id == "record" || st.def.tile.isNotEmpty()) closePanel()
-                    host.controlTap(st.def.id)
-                }
-            }, LinearLayout.LayoutParams(dp(31), dp(31)).apply { marginStart = dp(5) })
+        header.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+        if (items.size > 1) {
+            header.addView(text(12.5f, Color.WHITE, true).apply {
+                text = "Clear all"
+                gravity = Gravity.CENTER
+                setPadding(dp(13), dp(6), dp(13), dp(6))
+                background = HaloButtons.background(BtnStyle.CLEAR, dpf(15f))
+                HaloButtons.react(this, BtnStyle.CLEAR, { hapticsEnabled })
+                setOnClickListener { listRef?.let { clearAllCards(it) } }
+            })
         }
-        header.addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_close)
-            setColorFilter(Color.argb(210, 255, 255, 255))
-            val pad = dp(7)
-            setPadding(pad, pad, pad, pad)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Colors.GRAPHITE)
-            }
-            setOnClickListener {
-                haptic()
-                closePanel()
-            }
-        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginStart = dp(if (nControls > 0) 9 else 0) })
         col.addView(header)
-
-        // Chips: battery first, then everything that's on.
-        val chips = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(2))
-        }
-        val battery = chip(R.drawable.ic_battery_full, "", active = false)
-        batteryText = battery.getChildAt(1) as TextView
-        (battery.getChildAt(0) as ImageView).tag = "batt"
-        chips.addView(battery)
-        for (q in host.quickStates()) {
-            chips.addView(chip(q.icon, q.label, active = true) {
-                haptic()
-                host.quickAction(q.id)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
-        }
-        val chipScroll = android.widget.HorizontalScrollView(context).apply {
-            // Fades out at the edges instead of cutting things off.
-            isHorizontalFadingEdgeEnabled = true
-            setFadingEdgeLength((24 * resources.displayMetrics.density).toInt())
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(chips)
-        }
-        col.addView(chipScroll)
 
         // Cards fade out at the sides as you swipe them away, instead of being cut off by the island's edge.
         val list = EdgeFadeLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(4), dp(12), dp(14))
         }
+        listRef = list
         IslandStore.music?.let { list.addView(miniPlayer(it)) }
         if (items.isEmpty()) {
             val empty = LinearLayout(context).apply {
@@ -4068,44 +4106,22 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val now = entries.take(FIRST_GROUPS)
         val later = entries.drop(FIRST_GROUPS)
         for ((pkg, group) in now) for (v in groupViews(pkg, group, pkg in openGroups)) list.addView(v)
-        if (items.size > 1) {
-            list.addView(pillButton("Clear all", BtnStyle.CLEAR) {
-                if (clearing) return@pillButton
-                clearing = true
-                haptic()
-                // Sweep every card off to the right, one after another, then close.
-                val cards = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.startsWith("g") == true }
-                cards.forEachIndexed { i, v ->
-                    v.animate().translationX(v.width.toFloat() * 1.1f).alpha(0f)
-                        .setStartDelay(i.coerceAtMost(8) * 40L).setDuration(200L)
-                        .setInterpolator(android.view.animation.AccelerateInterpolator(1.4f)).start()
-                }
-                postDelayed({
-                    host.clearAll()
-                    clearing = false
-                    closePanel()
-                }, 200L + cards.size.coerceAtMost(8) * 40L)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(12)
-            }.also { it })
-            list.getChildAt(list.childCount - 1).tag = "clear"
-        }
         if (later.isNotEmpty()) postDelayed({
             if (panelList !== list) return@postDelayed
-            var at = (0 until list.childCount).firstOrNull { list.getChildAt(it).tag == "clear" } ?: list.childCount
-            for ((pkg, group) in later) for (v in groupViews(pkg, group, pkg in openGroups)) list.addView(v, at++)
+            for ((pkg, group) in later) for (v in groupViews(pkg, group, pkg in openGroups)) list.addView(v)
             resizePanel()
         }, 420L)
         val cards = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.let { t -> t.startsWith("g:") || t.startsWith("gc:") } == true }
         // In: the cards rise into place one after another (only when the panel opens).
         if (!panelQuiet) cards.take(8).forEachIndexed { i, v ->
+            // Each card drips in: tall and thin as it rises, a squash as it lands.
             v.alpha = 0f
-            v.translationY = dpf(26f)
-            v.scaleX = 0.92f
-            v.scaleY = 0.92f
-            v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(80L + i * 45L).setDuration(460L)
-                .setInterpolator(android.view.animation.OvershootInterpolator(1.4f)).start()
+            v.translationY = dpf(28f)
+            v.pivotY = 0f
+            v.scaleX = 0.9f
+            v.scaleY = 1.16f
+            v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(80L + i * 42L).setDuration(500L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
         }
         list.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
         col.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
@@ -4127,7 +4143,36 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         panelChromeH = col.measuredHeight
         panelRoom = max(room, dp(90))
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, min(list.measuredHeight, panelRoom)))
+        // A handle at the bottom: swipe up anywhere (or tap it) to put the center away.
+        col.addView(FrameLayout(context).apply {
+            setPadding(0, dp(2), 0, dp(10))
+            addView(View(context).apply {
+                background = HaloButtons.background(BtnStyle.CLEAR, dpf(2.5f))
+            }, LayoutParams(dp(38), dp(5), Gravity.CENTER))
+            setOnClickListener {
+                haptic()
+                closePanel()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24)))
         return col
+    }
+
+    /** Clear all: every card sweeps off to the right, one after another, then the center closes. */
+    private fun clearAllCards(list: LinearLayout) {
+        if (clearing) return
+        clearing = true
+        haptic()
+        val cards = (0 until list.childCount).map { list.getChildAt(it) }.filter { (it.tag as? String)?.startsWith("g") == true }
+        cards.forEachIndexed { i, v ->
+            v.animate().translationX(v.width.toFloat() * 1.1f).alpha(0f).scaleY(0.9f)
+                .setStartDelay(i.coerceAtMost(8) * 40L).setDuration(220L)
+                .setInterpolator(android.view.animation.AccelerateInterpolator(1.4f)).start()
+        }
+        postDelayed({
+            host.clearAll()
+            clearing = false
+            closePanel()
+        }, 220L + cards.size.coerceAtMost(8) * 40L)
     }
 
     /**
@@ -4310,7 +4355,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                 )
                 cornerRadius = dpf(24f)
             }
-            background = android.graphics.drawable.LayerDrawable(arrayOf(ShineDrawable(Color.argb(242, 24, 24, 26), dpf(24f), dpf(1f)), glow))
+            background = android.graphics.drawable.LayerDrawable(arrayOf(ShineDrawable(Color.argb(236, 26, 26, 29), dpf(24f), if (glassStrength > 0.05f) dpf(1f) else 0f), glow))
             setOnClickListener {
                 haptic()
                 panelOpen = false
@@ -4321,7 +4366,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val meta = hRow()
         meta.addView(roundImage(item.rich.appIcon, dpf(5f), Colors.GRAPHITE, R.drawable.ic_bell), LinearLayout.LayoutParams(dp(16), dp(16)))
         meta.addView(spaced(text(12f, Color.argb(215, 255, 255, 255), true).apply { text = item.appName }, 7))
-        val ago = DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+        val ago = if (System.currentTimeMillis() - item.postTime < 60_000L) "now" else DateUtils.getRelativeTimeSpanString(item.postTime, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
         meta.addView(spaced(text(11.5f, white55, false).apply { text = "·  $ago" }, 6), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         meta.addView(icon(R.drawable.ic_chevron, Color.argb(110, 255, 255, 255)), LinearLayout.LayoutParams(dp(14), dp(14)))
         cardView.addView(meta)

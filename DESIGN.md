@@ -78,9 +78,21 @@ Spatial springs, after Material 3 Expressive's tokens:
   ripples out from it like a ping.
 - Tap or pull down: it opens into the full card. Swipe up: dismiss. Hold:
   open the app.
-- Closing an opened alert (time's up, tap outside, Mark as read): the card
-  shrinks back into its pill, holds a beat, then tucks into the camera.
-  A swipe up still flicks it straight off; a call or alarm cuts in at once.
+
+## Notification center
+
+Top to bottom: the date and battery beside the camera; a big clock with
+how many notifications are waiting; your quick controls as round tiles
+with their names, spread evenly (white when on, clear when off); chips for
+what's on right now (tap to switch off); "Notifications" with the count
+and Clear all on the right; the mini player and the cards (they drip in);
+a handle at the bottom (swipe up anywhere or tap it to close).
+
+## Glass
+
+Off by default: the island is clean black with no border. The Glass
+setting adds the light (a rim that catches the light top left and a sheen
+across the top) and a touch of see-through, on pills and cards alike.
 
 ## Quick moments
 

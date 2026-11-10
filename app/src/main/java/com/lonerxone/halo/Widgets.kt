@@ -303,7 +303,17 @@ class ProgressLine(context: Context) : View(context) {
             frontShader = android.graphics.LinearGradient(0f, cy - maxH, 0f, cy, Color.argb(215, Color.red(light), Color.green(light), Color.blue(light)), Color.argb(70, Color.red(c), Color.green(c), Color.blue(c)), android.graphics.Shader.TileMode.CLAMP)
             lineShader = null
         }
-        // The rest of the song: a calm, soft line.
+        // The rest of the song: faint, low hills waiting ahead (so the wave is there
+        // from the very first second), gently rippling, over a calm soft line.
+        if (x < width - 2f) {
+            hillPath(x, width.toFloat(), cy, maxH, 0.42f + 0.08f * breathe, x, 0f, pk)
+            hillPaint.shader = null
+            hillPaint.color = Color.argb(34, 255, 255, 255)
+            canvas.drawPath(path, hillPaint)
+            edgePaint.strokeWidth = 0.8f * density
+            edgePaint.color = Color.argb(46, 255, 255, 255)
+            canvas.drawPath(path, edgePaint)
+        }
         canvas.drawRoundRect(x, cy - th / 2f, width.toFloat(), cy + th / 2f, th / 2f, th / 2f, track)
         if (x > 2f) {
             val lift = 0.6f + 0.4f * breathe
