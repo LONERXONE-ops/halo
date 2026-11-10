@@ -673,7 +673,15 @@ class HaloService : AccessibilityService(), IslandView.Host {
         val p = Prefs.get(this)
         v.idleEnabled = p.getBoolean(Prefs.IDLE, true)
         v.hapticsEnabled = p.getBoolean(Prefs.HAPTICS, true)
-        v.sizeScale = p.getInt(Prefs.SCALE, 100) / 100f
+        // The old overall "Size" setting is folded into the pill's own height and width (once).
+        if (p.contains(Prefs.SCALE)) {
+            val old = p.getInt(Prefs.SCALE, 100)
+            val e = p.edit().remove(Prefs.SCALE)
+            if (old != 100 && !p.contains(Prefs.CAP_H)) e.putInt(Prefs.CAP_H, old.coerceIn(80, 125))
+            if (old != 100 && !p.contains(Prefs.CAP_W)) e.putInt(Prefs.CAP_W, old.coerceIn(85, 125))
+            e.apply()
+        }
+        v.sizeScale = 1f
         v.capH = p.getInt(Prefs.CAP_H, 100).coerceIn(80, 125) / 100f
         v.motionSpeed = HaloTheme.speed(p.getInt(Prefs.MOTION_SPEED, 1))
         v.motionBounce = HaloTheme.bounce(p.getInt(Prefs.MOTION_BOUNCE, 1))
@@ -942,7 +950,7 @@ class HaloService : AccessibilityService(), IslandView.Host {
         false
     }
 
-    private fun connectivityOn() = popsOn() && Prefs.get(this).getBoolean(Prefs.CONNECTIVITY, true)
+    private fun connectivityOn() = popsOn()
 
     // ----- Flashlight -----
     private val main = Handler(Looper.getMainLooper())

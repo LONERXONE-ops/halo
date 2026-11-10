@@ -49,10 +49,20 @@ Spatial springs, after Material 3 Expressive's tokens:
 - Arriving: the pill drops out of the camera with a stretch, then settles.
 - Leaving: a quick bulge, then it tucks back into the lens.
 - Swiped away: it carries the flick up into the camera.
-- Liquid: small shapes squash and stretch as they move (getting wider
-  makes them a little thinner, like a drop keeping its volume), and the
-  side bubble squeezes out of the pill's end like a droplet, joined by a
-  gooey neck that thins and snaps (and is drawn back in the same way).
+- Liquid, in every move (`computeLiquid` in `IslandView.kt`): the shape
+  reads its springs' speeds. Shooting wider makes it thinner and its long
+  edges pinch in like water being pulled; shrinking makes them bulge;
+  shooting taller makes it narrower and its sides pinch; dropping makes the
+  bottom lead and the top trail. As the springs settle it wobbles like
+  jelly. Up to 22% on pills, 8% on open cards (so text stays readable).
+  The content inside squashes and stretches with the shape.
+- Closing a big card, the height and centre settle firmly (no thin sliver
+  rising above the camera); the liquid wobble stays.
+- The side bubble squeezes out of the pill's end like a droplet, joined by
+  a gooey neck that thins and snaps, and is drawn back in the same way.
+- Content pours in squashed (wide and flat) and springs up into shape.
+  Card rows drip in: tall and thin as they rise, a squash as they land.
+  Buttons squash like a drop under a finger and wobble back.
 - Opened cards unfold from the top; rows rise in one after another, 34 ms apart.
 - New content at the same size: a single jelly squish (a spring kicked from
   its own resting place), never two chained animations.

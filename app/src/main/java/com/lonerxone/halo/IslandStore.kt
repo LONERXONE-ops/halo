@@ -468,6 +468,31 @@ object IslandStore {
         dispatch()
     }
 
+    /**
+     * Settings preview: a pill (or a card) that stays on the island while you
+     * adjust, so every step shows as you make it. [replay] plays the arrival
+     * again (for motion speed and bounce).
+     */
+    fun previewPop(card: Boolean, replay: Boolean) {
+        val kind = if (card) "preview_card" else "preview"
+        val cur = pop
+        val title = if (card) "Card preview" else "Preview"
+        if (cur != null && cur.kind == kind && !replay) {
+            handler.removeCallbacks(clearPop)
+            handler.postDelayed(clearPop, 3_500L)
+            dispatch()
+            return
+        }
+        if (replay && cur != null && cur.kind.startsWith("preview")) {
+            pop = null
+            handler.removeCallbacks(clearPop)
+            dispatch()
+            handler.postDelayed({ showPop(title, "Halo", Colors.INK, R.drawable.ic_check, 3_500L, kind) }, 520L)
+            return
+        }
+        showPop(title, "Halo", Colors.INK, R.drawable.ic_check, 3_500L, kind)
+    }
+
     fun showPop(title: String, value: String, accent: Int, icon: Int, durationMs: Long, kind: String = "") {
         pop = Pop(nextId(), title, value, accent, icon, durationMs, kind)
         handler.removeCallbacks(clearPop)

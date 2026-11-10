@@ -350,23 +350,23 @@ class MainActivity : Activity() {
     /** The settings each page owns (what its Reset puts back). Pages without settings have none. */
     private fun resetKeys(p: Page): List<String> = when (p) {
         Page.ISLAND -> listOf(
-            Prefs.MUSIC, Prefs.BEAT, Prefs.CALLS, Prefs.LOCK_MODE, Prefs.LOCK_SHAKE, Prefs.ALARMS, Prefs.TIMERS, Prefs.TRANSFERS,
-            Prefs.NAV, Prefs.TORCH, Prefs.RECORDING, Prefs.NOTIFS, Prefs.HIDE_TEXT, Prefs.DND_PEEK, Prefs.CHARGING,
+            Prefs.MUSIC, Prefs.CALLS, Prefs.LOCK_MODE, Prefs.LOCK_SHAKE, Prefs.ALARMS, Prefs.TIMERS, Prefs.TRANSFERS,
+            Prefs.NAV, Prefs.TORCH, Prefs.RECORDING, Prefs.NOTIFS, Prefs.HIDE_TEXT, Prefs.DND_PEEK,
             Prefs.OTP, Prefs.LIVE,
         )
         Page.MOMENTS -> listOf(
-            Prefs.SYSTEM_POPS, Prefs.CONNECTIVITY, Prefs.EV_RINGER, Prefs.EV_DND, Prefs.EV_BT, Prefs.EV_WIFI, Prefs.EV_HOTSPOT,
+            Prefs.SYSTEM_POPS, Prefs.CHARGING, Prefs.EV_RINGER, Prefs.EV_DND, Prefs.EV_BT, Prefs.EV_WIFI, Prefs.EV_HOTSPOT,
             Prefs.EV_AIRPLANE, Prefs.EV_SAVER, Prefs.EV_BATTERY, Prefs.EV_BUDS,
         )
         Page.LOOK -> listOf(
-            Prefs.IDLE, Prefs.SCALE, Prefs.CAP_H, Prefs.CAP_W, Prefs.CARD_W, Prefs.GLASS, Prefs.ART_BACKDROP,
+            Prefs.IDLE, Prefs.CAP_H, Prefs.CAP_W, Prefs.CARD_W, Prefs.GLASS,
             Prefs.OFFSET_X, Prefs.OFFSET_Y, Prefs.HIDE_FULLSCREEN, Prefs.HAPTICS, Prefs.LOW_POWER, Prefs.IN_SHOTS,
             Prefs.MOTION_SPEED, Prefs.MOTION_BOUNCE,
         )
         Page.CAMERA -> listOf(Prefs.CAM_X, Prefs.CAM_Y, Prefs.CAM_SIZE)
         Page.PICTURES -> listOf(Prefs.PIC_DIM)
         Page.REC_QUALITY -> listOf(Prefs.REC_QUALITY)
-        Page.PLAYER -> listOf(Prefs.MP_TINT, Prefs.MP_AMBIENT, Prefs.MP_WAVY, Prefs.MP_EXTRAS, Prefs.MP_DEVICE)
+        Page.PLAYER -> listOf(Prefs.MP_TINT, Prefs.MP_AMBIENT, Prefs.MP_WAVY, Prefs.MP_EXTRAS, Prefs.MP_DEVICE, Prefs.BEAT, Prefs.ART_BACKDROP)
         Page.REC_SOUND -> listOf(Prefs.REC_AUDIO)
         else -> emptyList()
     }
@@ -380,6 +380,8 @@ class MainActivity : Activity() {
                 keys.forEach { e.remove(it) }
                 e.apply()
                 if (p == Page.CAMERA) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
+                // The island shows the defaults straight away.
+                if (p == Page.LOOK) IslandStore.previewPop(card = false, replay = true)
                 Toast.makeText(this, "${p.title} is back to default", Toast.LENGTH_SHORT).show()
                 render()
             }
@@ -480,7 +482,6 @@ class MainActivity : Activity() {
         col.addView(group(
             switchRow("Music", "Cover art, bars, full player", Prefs.MUSIC),
             navRow("Music player", "Album colours, ambient waves, wave scrubber, the app's buttons") { go(Page.PLAYER) },
-            switchRowDefault("Bars follow the beat", "The music bars move with the real sound", Prefs.BEAT, false),
             switchRow("Calls", "Caller photo, Accept / Decline, Mute, Speaker and End", Prefs.CALLS),
             switchRow("Lock screen", "A padlock on the lock screen that springs open when you unlock", Prefs.LOCK_MODE),
             switchRow("Shake on a wrong try", "The island shakes no when the PIN, pattern or fingerprint is wrong, like an iPhone", Prefs.LOCK_SHAKE),
@@ -504,7 +505,6 @@ class MainActivity : Activity() {
             switchRow("Messages", "WhatsApp, SMS and app alerts", Prefs.NOTIFS),
             switchRowDefault("Hide message text", "Show \"New message\" instead", Prefs.HIDE_TEXT, false),
             switchRowDefault("See messages in Do Not Disturb", "The island still shows new messages, silently. Sounds, vibration and pop-ups keep following Do Not Disturb", Prefs.DND_PEEK, false),
-            switchRow("Charging", "Pop when you plug in", Prefs.CHARGING),
             navRow("System moments", "Ring and silent, Bluetooth, Wi-Fi, hotspot, battery, earbuds, Do Not Disturb and more") { go(Page.MOMENTS) },
         ))
         gap(col, 16)
@@ -672,25 +672,23 @@ class MainActivity : Activity() {
         col.addView(sectionTitle("Island"))
         col.addView(group(
             switchRow("Camera circle", "Rests on the camera; tap it for notifications", Prefs.IDLE),
-            sliderRow("Size", Prefs.SCALE, 100, 80, 130, "%"),
         ))
         col.addView(sectionTitle("Motion"))
         col.addView(group(
             segRow("Speed", Prefs.MOTION_SPEED, listOf("Relaxed", "Normal", "Quick"), 1),
             segRow("Bounce", Prefs.MOTION_BOUNCE, listOf("Subtle", "Normal", "Bouncy"), 1),
         ))
-        col.addView(footnote("How fast the island opens and closes, and how much it springs past and settles. Changes show on the next move."))
+        col.addView(footnote("How fast the island moves, and how much it springs and wobbles like liquid. Every change plays on the island right away."))
         col.addView(sectionTitle("Fine sizing"))
         col.addView(group(
             sliderRow("Pill height", Prefs.CAP_H, 100, 80, 125, "%"),
             sliderRow("Pill width", Prefs.CAP_W, 100, 85, 125, "%"),
             sliderRow("Open card width", Prefs.CARD_W, 100, 80, 100, "%"),
         ))
-        col.addView(footnote("Optional. 100% is the standard size, so nothing changes unless you move these. Use − and + for one step at a time."))
+        col.addView(footnote("Optional. 100% is the standard size. The island shows a preview while you adjust, so you see each step as you make it. Use − and + for one step at a time."))
         col.addView(sectionTitle("Glass"))
         col.addView(group(
             sliderRow("Glass", Prefs.GLASS, 0, 0, 100, "%"),
-            switchRow("Album art background", "Blurred cover behind the player", Prefs.ART_BACKDROP),
         ))
         col.addView(sectionTitle("Position"))
         col.addView(group(
@@ -701,7 +699,7 @@ class MainActivity : Activity() {
         col.addView(group(
             switchRow("Hide in fullscreen", "Videos, games and reels", Prefs.HIDE_FULLSCREEN),
             switchRow("Haptics", "Light tick on taps", Prefs.HAPTICS),
-            switchRowDefault("Low-power mode", "No blur, still bars, slower updates", Prefs.LOW_POWER, false),
+            switchRowDefault("Low-power mode", "Still bars and waves, no cover behind the music, slower clock updates", Prefs.LOW_POWER, false),
             switchRow("Show in screenshots", "Off: the island steps out of the picture when you press the screenshot buttons", Prefs.IN_SHOTS),
         ))
         if (!Prefs.get(this).getBoolean(Prefs.IN_SHOTS, true)) col.addView(footnote("Works with the button screenshot (power and volume down): while volume down is held the island fades out, and it comes back a moment later. Palm swipe and the Quick panel screenshot can't be caught. After this update, turn Halo off and on in Accessibility once so Android lets it see the volume key."))
@@ -1619,8 +1617,10 @@ class MainActivity : Activity() {
             switchRow("Wave scrubber", "Like Samsung's: soft hills rise above the played part, with a glowing thumb", Prefs.MP_WAVY),
             switchRow("App's own buttons", "Like, shuffle, add and the rest, when the app offers them; they change the moment you tap", Prefs.MP_EXTRAS),
             switchRow("Where it's playing", "Your earbuds' or speaker's name at the top", Prefs.MP_DEVICE),
+            switchRow("Cover behind the music", "The song's cover, softly blurred, fills the island while it plays", Prefs.ART_BACKDROP),
+            switchRowDefault("Bars follow the beat", "The bars and waves move with the real sound", Prefs.BEAT, false),
         ))
-        col.addView(footnote("Play a song and open the island to see it. The waves follow the song when Halo is allowed to hear it (Bars follow the beat, on the island page); otherwise they sway gently. Low-power mode keeps them still."))
+        col.addView(footnote("Play a song and open the island to see it. With Bars follow the beat on, the bars and waves follow the song; otherwise they sway gently. Low-power mode keeps them still."))
     }
 
     private fun recQualityPage(col: LinearLayout) {
@@ -1667,6 +1667,21 @@ class MainActivity : Activity() {
 
     private fun switchRow(title: String, summary: String, key: String): View = switchRowDefault(title, summary, key, true)
 
+    /**
+     * A setting changed: the island takes it at once, and the look settings
+     * show it there and then (a preview pill, or a card for the card width;
+     * motion replays the arrival so you feel the new speed and bounce).
+     */
+    private fun applyChange(key: String) {
+        HaloService.instance?.reloadPrefs() ?: return
+        when (key) {
+            Prefs.CAP_H, Prefs.CAP_W, Prefs.OFFSET_X, Prefs.OFFSET_Y, Prefs.GLASS, Prefs.LOW_POWER ->
+                IslandStore.previewPop(card = false, replay = false)
+            Prefs.MOTION_SPEED, Prefs.MOTION_BOUNCE -> IslandStore.previewPop(card = false, replay = true)
+            Prefs.CARD_W -> IslandStore.previewPop(card = true, replay = false)
+        }
+    }
+
     /** A title with a three-way choice under it (one tap picks). */
     private fun segRow(title: String, key: String, names: List<String>, def: Int): View {
         val p = Prefs.get(this)
@@ -1704,7 +1719,7 @@ class MainActivity : Activity() {
                         v.animate().scaleX(1f).scaleY(1f).setDuration(300).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
                     }.start()
                     v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                    HaloService.instance?.reloadPrefs()
+                    applyChange(key)
                 }
             }
             views += t
@@ -1728,7 +1743,7 @@ class MainActivity : Activity() {
             isChecked = prefs.getBoolean(key, def)
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().putBoolean(key, checked).apply()
-                HaloService.instance?.reloadPrefs()
+                applyChange(key)
                 // These switches show or hide more options below them.
                 if (key == Prefs.SYSTEM_POPS || key == Prefs.IN_SHOTS) postDelayedRender()
                 if (key == Prefs.BEAT && checked && !Beat.allowed(this@MainActivity)) {
@@ -1776,7 +1791,7 @@ class MainActivity : Activity() {
                     b.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(android.view.animation.OvershootInterpolator(3f)).start()
                 }.start()
                 b.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                if (camera) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
+                if (camera) HaloService.instance?.redetectCamera() else applyChange(key)
             }
         }
         head.addView(step(-1), LinearLayout.LayoutParams(dp(30), dp(30)))
@@ -1793,7 +1808,7 @@ class MainActivity : Activity() {
                     v.text = "${p + min}$unit"
                     if (fromUser) {
                         prefs.edit().putInt(key, p + min).apply()
-                        if (camera) HaloService.instance?.redetectCamera() else HaloService.instance?.reloadPrefs()
+                        if (camera) HaloService.instance?.redetectCamera() else applyChange(key)
                     }
                 }
 

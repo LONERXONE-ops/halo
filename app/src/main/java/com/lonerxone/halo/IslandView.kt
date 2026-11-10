@@ -447,7 +447,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
             is Content.None -> if (idleEnabled || previewing()) Mode.IDLE else Mode.HIDDEN
             // A new alert arrives as a pill; tap it (or pull it down) for the whole thing.
             is Content.Note -> if (noteOpen) Mode.EXPANDED else Mode.COMPACT
-            is Content.Popup -> if (expanded && c.pop.kind == "charge") Mode.EXPANDED else Mode.COMPACT
+            is Content.Popup -> if ((expanded && c.pop.kind == "charge") || c.pop.kind == "preview_card") Mode.EXPANDED else Mode.COMPACT
             is Content.Torch -> Mode.COMPACT
             is Content.Lock -> Mode.COMPACT
             else -> if (expanded) Mode.EXPANDED else Mode.COMPACT
@@ -607,7 +607,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
                         is Content.Transfer -> buildExpandedTransfer(c.transfer, w.toInt(), top)
                         is Content.Nav -> buildExpandedNav(c.nav, w.toInt(), top)
                         is Content.Rec -> buildExpandedRec(c.rec, w.toInt(), top).also { glowColor = Colors.RED; glow = 0.4f }
-                        is Content.Popup -> buildCharge(w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.6f }
+                        is Content.Popup -> if (c.pop.kind == "preview_card") buildPreviewCard(w.toInt(), top) else buildCharge(w.toInt(), top).also { glowColor = Colors.GREEN; glow = 0.6f }
                         is Content.Alarm -> buildAlarm(c.alarm, w.toInt(), top).also { glowColor = Colors.ORANGE; glow = 0.8f }
                         is Content.Otp -> buildOtp(c.otp, w.toInt(), top).also { glowColor = Colors.INK; glow = 0.5f }
                         is Content.Live -> buildLive(c.live, w.toInt(), top)
@@ -985,7 +985,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val before = t(7)
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
         springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.36f)
-        springs[12].to(if (show) 1f else 0f, k * 0.62f, if (show) 0.42f else 0.62f)
+        springs[12].to(if (show) 1f else 0f, k * 0.45f, if (show) 0.4f else 0.6f)
         if (before != t(7)) {
             updateTouchArea()
             startFrames()
@@ -1034,12 +1034,14 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Tucking back into the camera, the width mustn't dip below the height
         // (a thin upright sliver): it settles with less swing; the height keeps its bounce.
         springs[0].to(w, if (grow) k * 1.15f else k, if (idleLike(mode)) max(zeta, 0.78f) else zeta)
-        springs[1].to(h, if (grow) k else k * 1.2f, zeta)
+        // Closing a big card, the height and centre mustn't swing past the pill (a thin
+        // sliver rising above the camera): they settle firmly; the liquid wobble stays.
+        springs[1].to(h, if (grow) k else k * 1.2f, if (grow) zeta else max(zeta, 0.7f))
         springs[2].to(r, k, zeta)
         springs[3].to(a, k * 1.8f, 0.9f)
         springs[4].to(glass, k, 1f)
         springs[5].to(shadow, k * 0.8f, 1f)
-        springs[6].to(cy, k, zeta)
+        springs[6].to(cy, k, if (grow) zeta else max(zeta, 0.7f))
         springs[10].to(anchorXFor(mode), k, zeta)
         if (scale > 0f) {
             // Swiped away: it carries the flick up into the camera.
@@ -1065,11 +1067,13 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val show = bubble != null && mode == Mode.COMPACT
         springs[7].to(if (show) 1f else 0f, k * 0.9f, 0.7f)
         springs[8].to(if (show) bubbleD() else bubbleD() * 0.4f, k * 0.9f, 0.36f)
-        springs[12].to(if (show) 1f else 0f, k * 0.62f, if (show) 0.42f else 0.62f)
+        springs[12].to(if (show) 1f else 0f, k * 0.45f, if (show) 0.4f else 0.6f)
         updateTouchArea()
 
         if (scale <= 0f || !isAttachedToWindow) {
             for (s in springs) s.snap(s.target)
+            computeLiquid()
+            liquidContent()
             Choreographer.getInstance().removeFrameCallback(frameCallback)
             animating = false
             onSettled()
@@ -1095,6 +1099,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         // Content shows as soon as the shape is half open, so it feels instant.
         if (!revealed && shapeProgress() >= HaloTheme.REVEAL_AT) reveal()
         slot?.translationY = v(6) - t(6)
+        computeLiquid()
+        liquidContent()
         fitOutgoing()
         updateClip()
         if (moving) {
@@ -1159,8 +1165,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         super.onDraw(canvas)
         val a = v(3).coerceIn(0f, 1f)
         if (a <= 0.01f || v(0) < 1f || v(1) < 1f) return
-        val w = v(0)
-        val h = v(1) * liquidSquash(w, v(1))
+        computeLiquid()
+        val w = v(0) * lqW
+        val h = v(1) * lqH
         pillRect(w, h, v(6), rect)
         val r = min(max(v(2), 0f), h / 2f)
         val glass = v(4).coerceIn(0f, 1f)
@@ -1185,7 +1192,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         }
         val fillAlpha = 255 - (80 * glass).toInt()
         fillPaint.color = Color.argb((fillAlpha * a).toInt(), (16 * glass).toInt(), (16 * glass).toInt(), (20 * glass).toInt())
-        canvas.drawRoundRect(rect, r, r, fillPaint)
+        if (liquidBent()) canvas.drawPath(liquidPath(rect, r), fillPaint) else canvas.drawRoundRect(rect, r, r, fillPaint)
         frameFor(v(8), bubbleCenterX(w, v(8)), v(6))
         drawPicture(canvas, r, a)
 
@@ -1401,16 +1408,88 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     private val dropRect = RectF()
     private val neckPath = android.graphics.Path()
 
+    // ----- Liquid: the shape moves like a drop of water, in every move -----
+    /** Width and height factors (volume kept) and how far the edges bow out (+) or pinch in (−), in px. */
+    private var lqW = 1f
+    private var lqH = 1f
+    private var bowTop = 0f
+    private var bowBottom = 0f
+    private var bowSide = 0f
+    private val liquidShape = android.graphics.Path()
+
     /**
-     * Liquid squash and stretch: while the pill is quickly getting wider it
-     * gets a little thinner (and the other way round), like a drop of water
-     * keeping its volume, then springs back. Only the small shapes; cards
-     * stay steady so their content isn't squeezed.
+     * Reads the springs' speeds and turns them into liquid: shooting wider
+     * makes it thinner and its long edges pinch in (like water being pulled),
+     * shrinking makes them bulge; shooting taller makes it narrower and its
+     * sides pinch; dropping down makes the bottom lead and the top trail.
+     * Every move gets it (arrivals, swaps, opening, closing, taps, swipes),
+     * and as the springs wobble to rest the shape wobbles like jelly.
+     * Open cards get a gentler dose so their content stays readable.
      */
-    private fun liquidSquash(w: Float, h: Float): Float {
-        if (h > dpf(90f) || w < 1f) return 1f
-        val st = (springs[0].velocity / max(w, dpf(40f)) * 0.034f).coerceIn(-0.13f, 0.13f)
-        return 1f - st
+    private fun computeLiquid() {
+        val w = v(0)
+        val h = v(1)
+        if (w < 1f || h < 1f || animScale() <= 0f) {
+            lqW = 1f; lqH = 1f; bowTop = 0f; bowBottom = 0f; bowSide = 0f
+            return
+        }
+        val small = h < dpf(90f)
+        val gain = if (small) 1f else 0.45f
+        val lim = if (small) 0.22f else 0.08f
+        val rw = springs[0].velocity / max(w, dpf(30f))
+        val rh = springs[1].velocity / max(h, dpf(30f))
+        lqH = 1f - (rw * 0.05f * gain).coerceIn(-lim, lim)
+        lqW = 1f - (rh * 0.025f * gain).coerceIn(-lim * 0.6f, lim * 0.6f)
+        val cap = min(h * 0.12f, dpf(8f))
+        val capS = min(w * 0.12f, dpf(8f))
+        val tb = (-springs[0].velocity * 0.012f * gain).coerceIn(-cap, cap)
+        val drop = (springs[6].velocity * 0.02f).coerceIn(-dpf(6f), dpf(6f))
+        bowTop = tb - drop
+        bowBottom = tb + drop
+        bowSide = (-springs[1].velocity * 0.012f * gain).coerceIn(-capS, capS)
+    }
+
+    private fun liquidBent() = abs(bowTop) > 0.4f || abs(bowBottom) > 0.4f || abs(bowSide) > 0.4f
+
+    /** The shape with its edges bowed: straight edges become soft curves; corners stay round. */
+    private fun liquidPath(rc: RectF, rr: Float): android.graphics.Path {
+        val l = rc.left
+        val t = rc.top
+        val rt = rc.right
+        val b = rc.bottom
+        val r = min(rr, min(rc.width(), rc.height()) / 2f)
+        val eh = max(0f, rc.width() - 2f * r)
+        val ev = max(0f, rc.height() - 2f * r)
+        val fh = min(1f, eh / dpf(40f))
+        val fv = min(1f, ev / dpf(40f))
+        val bt = bowTop * fh
+        val bb = bowBottom * fh
+        val bs = bowSide * fv
+        val cx = (l + rt) / 2f
+        val cy = (t + b) / 2f
+        val p = liquidShape
+        p.reset()
+        p.moveTo(l + r, t)
+        p.quadTo(cx, t - 2f * bt, rt - r, t)
+        p.arcTo(rt - 2f * r, t, rt, t + 2f * r, 270f, 90f, false)
+        p.quadTo(rt + 2f * bs, cy, rt, b - r)
+        p.arcTo(rt - 2f * r, b - 2f * r, rt, b, 0f, 90f, false)
+        p.quadTo(cx, b + 2f * bb, l + r, b)
+        p.arcTo(l, b - 2f * r, l + 2f * r, b, 90f, 90f, false)
+        p.quadTo(l - 2f * bs, cy, l, t + r)
+        p.arcTo(l, t, l + 2f * r, t + 2f * r, 180f, 90f, false)
+        p.close()
+        return p
+    }
+
+    /** The content moves with the liquid too (squashes and stretches with the shape). */
+    private fun liquidContent() {
+        val root = slot?.getChildAt(0) ?: return
+        val card = mode == Mode.EXPANDED || mode == Mode.PANEL
+        root.pivotX = root.width / 2f
+        root.pivotY = if (card) 0f else root.height / 2f
+        root.scaleX = lqW
+        root.scaleY = lqH
     }
 
     /**
@@ -1474,7 +1553,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val by = v(6)
         // Liquid: the bubble squeezes out of the pill's end like a droplet,
         // joined by a neck that thins and snaps, and is drawn back in the same way.
-        val ph = v(1) * liquidSquash(pillW, v(1))
+        val ph = v(1) * lqH
         pillRect(pillW, ph, by, dropRect)
         val sp = v(12).coerceIn(-0.25f, 1.35f)
         val from = dropRect.right - d / 2f - dpf(1f)
@@ -1482,7 +1561,7 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         bubblePaint.alpha = (255 * ba).toInt()
         if (sp < 0.985f && sp > 0.02f) {
             val r1 = min(ph / 2f, dropRect.width() / 2f)
-            val neck = metaball(dropRect.right - r1, by, r1, bx, by, d / 2f, 0.62f * (1f - sp.coerceIn(0f, 1f)))
+            val neck = metaball(dropRect.right - r1, by, r1, bx, by, d / 2f, 0.8f * (1f - sp.coerceIn(0f, 1f)))
             if (neck != null) canvas.drawPath(neck, bubblePaint)
         }
         canvas.drawCircle(bx, by, d / 2f, bubblePaint)
@@ -1604,8 +1683,9 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         val card = mode == Mode.EXPANDED || mode == Mode.PANEL
         s.pivotX = w / 2f
         s.pivotY = if (card) 0f else h / 2f
-        s.scaleX = if (card) 0.9f else 0.8f
-        s.scaleY = if (card) 0.84f else 0.8f
+        // Liquid: it pours in squashed (wide and flat) and springs up into shape.
+        s.scaleX = if (card) 0.94f else 0.9f
+        s.scaleY = if (card) 0.78f else 0.6f
         updateClip()
         if (slide != 0) {
             // Swiped in: the new alert is already exactly where the swipe left it.
@@ -1648,13 +1728,16 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         for (i in 0 until n) {
             val c = parts.getChildAt(i)
             if (c.visibility != View.VISIBLE) continue
+            // Each row drips in: stretched tall and thin as it rises, it lands with a
+            // squash (wider and flatter for a moment) and wobbles into shape.
             c.alpha = 0f
-            c.translationY = dpf(16f)
-            c.scaleX = 0.92f
-            c.scaleY = 0.92f
+            c.translationY = dpf(18f)
+            c.pivotY = 0f
+            c.scaleX = 0.88f
+            c.scaleY = 1.22f
             c.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
-                .setStartDelay(20L + i * HaloTheme.CASCADE_STEP_MS).setDuration(420L)
-                .setInterpolator(android.view.animation.OvershootInterpolator(2.4f)).start()
+                .setStartDelay(20L + i * HaloTheme.CASCADE_STEP_MS).setDuration(480L)
+                .setInterpolator(android.view.animation.OvershootInterpolator(2.8f)).start()
         }
     }
 
@@ -1701,8 +1784,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
         if (v(0) < 1f || v(1) < 1f) {
             liveRect.setEmpty()
         } else {
-            pillRect(v(0), v(1), v(6), liveRect)
-            liveR = min(max(v(2), 0f), v(1) / 2f)
+            pillRect(v(0) * lqW, v(1) * lqH, v(6), liveRect)
+            liveR = min(max(v(2), 0f), v(1) * lqH / 2f)
         }
         for (i in 0 until childCount) {
             val c = getChildAt(i)
@@ -1854,8 +1937,8 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
     }
 
     private fun bounce(v: View) {
-        v.animate().scaleX(0.86f).scaleY(0.86f).setDuration(70L).setInterpolator(DecelerateInterpolator()).withEndAction {
-            v.animate().scaleX(1f).scaleY(1f).setDuration(320L).setInterpolator(android.view.animation.OvershootInterpolator(3.2f)).start()
+        v.animate().scaleX(0.94f).scaleY(0.8f).setDuration(70L).setInterpolator(DecelerateInterpolator()).withEndAction {
+            v.animate().scaleX(1f).scaleY(1f).setDuration(380L).setInterpolator(android.view.animation.OvershootInterpolator(3.6f)).start()
         }.start()
     }
 
@@ -3534,6 +3617,27 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
      * the app. When it's done the ring becomes a tick and the buttons give
      * way to Open.
      */
+    /** Settings → Open card width: a sample card at the chosen width, live while you adjust. */
+    private fun buildPreviewCard(w: Int, top: Float): View {
+        val col = card()
+        col.addView(cameraRow(appTag(null, "Halo", Colors.GRAPHITE), text(12f, white70, true).apply { text = "Preview" }, w, top))
+        val b = body()
+        b.addView(text(16f, Color.WHITE, true).apply { text = "This is how wide cards open" })
+        b.addView(text(13f, white55, false).apply {
+            text = "Messages, music, downloads and the rest open at this width."
+            setPadding(0, dp(4), 0, 0)
+        })
+        val row = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        row.addView(pillButton("Looks good", BtnStyle.MAIN) { IslandStore.dismissPop() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(pillButton("Close", BtnStyle.CLEAR) { IslandStore.dismissPop() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) })
+        b.addView(row)
+        col.addView(b)
+        return col
+    }
+
     private fun buildExpandedTransfer(t: TransferInfo, w: Int, top: Float): View {
         val col = card()
         val status = text(12f, when {

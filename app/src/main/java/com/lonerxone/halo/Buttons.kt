@@ -77,7 +77,8 @@ object HaloButtons {
             if (!down) return
             down = false
             v.animate().cancel()
-            v.animate().scaleX(1f).scaleY(1f).setDuration(420L).setInterpolator(OvershootInterpolator(3.6f)).start()
+            // Liquid release: it springs back past its shape (taller and thinner) and wobbles home.
+            v.animate().scaleX(1f).scaleY(1f).setDuration(460L).setInterpolator(OvershootInterpolator(3.8f)).start()
             if (style != null) {
                 if (flash) tint(style.pressedBg, 60L, back = style.bg) else tint(style.bg, 220L)
             }
@@ -90,7 +91,8 @@ object HaloButtons {
                     x0 = e.x
                     y0 = e.y
                     view.animate().cancel()
-                    view.animate().scaleX(depth).scaleY(depth).setDuration(90L).setInterpolator(DecelerateInterpolator(1.6f)).start()
+                    // Liquid press: it squashes like a drop under a finger (flatter, a touch wider).
+                    view.animate().scaleX(depth + (1f - depth) * 0.55f).scaleY(depth - (1f - depth) * 0.6f).setDuration(90L).setInterpolator(DecelerateInterpolator(1.6f)).start()
                     style?.let { tint(it.pressedBg, 90L) }
                     if (haptics()) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 }
