@@ -1875,7 +1875,10 @@ class IslandView(context: Context, private val host: Host) : FrameLayout(context
 
     /** Wide enough that each side clears the camera by 10dp, never narrower than the base pill. */
     private fun compactWidthFor(s: Sides): Float {
-        val side = max(widthOf(s.left, s.leftSize) + dp(8) + dp(10), widthOf(s.right, s.rightW) + dp(12) + dp(10))
+        // Below 100% the pill width also tightens the room around the content (the
+        // content itself never gets cut), so the slider keeps working all the way down.
+        val room = capW.coerceIn(0.35f, 1f)
+        val side = max(widthOf(s.left, s.leftSize) + (dp(8) + dp(10)) * room, widthOf(s.right, s.rightW) + (dp(12) + dp(10)) * room)
         return min(max(baseCompactW(), wrapW() + 2f * side * max(capW, 1f)), expandedW())
     }
 
