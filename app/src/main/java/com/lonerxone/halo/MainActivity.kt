@@ -1681,8 +1681,10 @@ class MainActivity : Activity() {
     private fun applyChange(key: String) {
         HaloService.instance?.reloadPrefs() ?: return
         when (key) {
-            Prefs.CAP_H, Prefs.CAP_W, Prefs.OFFSET_X, Prefs.OFFSET_Y, Prefs.GLASS, Prefs.LOW_POWER ->
+            Prefs.CAP_H, Prefs.CAP_W, Prefs.OFFSET_X, Prefs.OFFSET_Y, Prefs.LOW_POWER ->
                 IslandStore.previewPop(card = false, replay = false)
+            // Glass shows best on a big surface: the sample card, live as you slide.
+            Prefs.GLASS -> IslandStore.previewPop(card = true, replay = false)
             Prefs.MOTION_SPEED, Prefs.MOTION_BOUNCE -> IslandStore.previewPop(card = false, replay = true)
             Prefs.CARD_W -> IslandStore.previewPop(card = true, replay = false)
             Prefs.PIC_DIM -> {
